@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["api_version", "kind", "metadata", "packages"],
+  "properties": {
+    "api_version": {"const": "xrobot.io/v1alpha1"},
+    "kind": {"const": "Workspace"},
+    "metadata": {"$ref": "#/$defs/metadata"},
+    "packages": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/packageSource"}
+    }
+  },
+  "$defs": {
+    "metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": {
+        "name": {"type": "string", "pattern": "^[a-z][a-z0-9-]*$"}
+      }
+    },
+    "packageSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "source"],
+      "properties": {
+        "name": {"type": "string", "pattern": "^[a-z][a-z0-9-]*$"},
+        "source": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "path"],
+          "properties": {
+            "type": {"enum": ["path", "git"]},
+            "path": {"type": "string", "minLength": 1},
+            "url": {"type": "string", "minLength": 1},
+            "revision": {"type": "string", "minLength": 1}
+          },
+          "allOf": [
+            {
+              "if": {"properties": {"type": {"const": "git"}}},
+              "then": {"required": ["url", "revision"]}
+            }
+          ]
+        }
+      }
+    }
+  }
+}

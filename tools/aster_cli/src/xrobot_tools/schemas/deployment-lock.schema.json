@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["api_version", "kind", "metadata", "schema_hash", "nodes", "routes"],
+  "properties": {
+    "api_version": {"const": "xrobot.io/v1alpha1"},
+    "kind": {"const": "DeploymentLock"},
+    "metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["deployment"],
+      "properties": {"deployment": {"type": "string", "minLength": 1}}
+    },
+    "schema_hash": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
+    "protocol_version": {"type": "integer", "minimum": 1},
+    "nodes": {
+      "type": "object",
+      "additionalProperties": {"type": "integer", "minimum": 1, "maximum": 255}
+    },
+    "routes": {
+      "type": "object",
+      "additionalProperties": {"type": "integer", "minimum": 1, "maximum": 1023}
+    }
+  }
+}

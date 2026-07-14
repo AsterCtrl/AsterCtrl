@@ -20,6 +20,9 @@ xrctl = "xrobot_tools.cli:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+xrobot_tools = ["schemas/*.json"]
+
 [tool.pytest.ini_options]
 addopts = "-q"
 pythonpath = ["src"]
