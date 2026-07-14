@@ -185,14 +185,16 @@ reserved_bandwidth: {{robot_can: 0.20}}
 def test_compiles_a_deterministic_cross_node_deployment(tmp_path: Path) -> None:
     workspace, deployment = create_workspace(tmp_path)
     output = tmp_path / "generated"
+    authoritative_lock = tmp_path / "deployment.lock.yaml"
 
-    first = compile_deployment(workspace, deployment, output)
+    first = compile_deployment(workspace, deployment, output, authoritative_lock)
     first_lock = (output / "deployment.lock.yaml").read_bytes()
     first_routes = (output / "reports/routes.json").read_bytes()
-    second = compile_deployment(workspace, deployment, output)
+    second = compile_deployment(workspace, deployment, output, authoritative_lock)
 
     assert first == second
     assert (output / "deployment.lock.yaml").read_bytes() == first_lock
+    assert authoritative_lock.read_bytes() == first_lock
     assert (output / "reports/routes.json").read_bytes() == first_routes
     lock = yaml.safe_load(first_lock)
     assert lock["nodes"] == {"node_a": 1, "node_b": 2}
@@ -244,3 +246,21 @@ def test_rejects_a_classic_can_budget_overflow(tmp_path: Path) -> None:
 
     with pytest.raises(DeploymentError, match="robot_can.*utilization"):
         compile_deployment(workspace, deployment, tmp_path / "generated")
+
+
+def test_package_lock_changes_the_whole_deployment_hash(tmp_path: Path) -> None:
+    workspace, deployment = create_workspace(tmp_path)
+    output = tmp_path / "generated"
+    first = compile_deployment(workspace, deployment, output)
+    package_lock = tmp_path / "package.lock.yaml"
+    package_lock.write_text(
+        package_lock.read_text(encoding="utf-8").replace(
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "dddddddddddddddddddddddddddddddddddddddd",
+        ),
+        encoding="utf-8",
+    )
+
+    second = compile_deployment(workspace, deployment, output)
+
+    assert first.deployment_hash != second.deployment_hash

@@ -11,7 +11,6 @@ from xrobot_tools.cpp_codegen import record_wire_sizes
 from xrobot_tools.interface_model import (
     InterfaceError,
     InterfaceModel,
-    canonical_bytes,
     hash16,
 )
 from xrobot_tools.validation import ValidationError, validate_document
@@ -471,6 +470,7 @@ def _build_plan(
         {
             "deployment": deployment,
             "robot": robot,
+            "package_lock": workspace.lock,
             "modules": [item.manifest.document for item in instances],
             "hardware": hardware,
             "schema_hash": model.deployment_schema_hash,
@@ -494,15 +494,17 @@ def compile_deployment(
     workspace_path: str | Path,
     deployment_path: str | Path,
     output_dir: str | Path,
+    lock_path: str | Path | None = None,
 ) -> DeploymentResult:
     workspace = Path(workspace_path).resolve()
     deployment = Path(deployment_path).resolve()
     output = Path(output_dir).resolve()
+    authoritative_lock = Path(lock_path).resolve() if lock_path is not None else None
     try:
         plan = _build_plan(workspace, deployment)
         from xrobot_tools.deployment_output import write_deployment
 
-        write_deployment(plan, output)
+        write_deployment(plan, output, authoritative_lock)
     except (ValidationError, WorkspaceError, InterfaceError) as error:
         raise DeploymentError(str(error)) from error
     return DeploymentResult(

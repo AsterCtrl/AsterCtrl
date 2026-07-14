@@ -34,6 +34,7 @@
           "properties": {
             "type": {"enum": ["path", "git"]},
             "path": {"type": "string", "minLength": 1},
+            "manifest": {"type": "string", "minLength": 1},
             "url": {"type": "string", "minLength": 1},
             "revision": {"type": "string", "minLength": 1}
           },

@@ -51,8 +51,7 @@ def _allocate_ids(
     return dict(sorted(assigned.items()))
 
 
-def _load_existing_lock(output: Path, deployment_name: str) -> dict[str, Any]:
-    path = output / "deployment.lock.yaml"
+def _load_existing_lock(path: Path, deployment_name: str) -> dict[str, Any]:
     if not path.is_file():
         return {}
     lock = validate_document(path)
@@ -200,9 +199,12 @@ def _memory_report(plan: DeploymentPlan) -> dict[str, Any]:
     return {"assumptions": {"mcu_pointer_bytes": 4, "work_item_bytes": 8}, "nodes": nodes}
 
 
-def write_deployment(plan: DeploymentPlan, output: Path) -> None:
+def write_deployment(
+    plan: DeploymentPlan, output: Path, authoritative_lock: Path | None = None
+) -> None:
     output.mkdir(parents=True, exist_ok=True)
-    existing = _load_existing_lock(output, plan.name)
+    lock_path = authoritative_lock or (output / "deployment.lock.yaml")
+    existing = _load_existing_lock(lock_path, plan.name)
     node_ids = _allocate_ids(
         list(plan.deployment["nodes"]), existing.get("nodes", {}), 255
     )
@@ -222,7 +224,10 @@ def write_deployment(plan: DeploymentPlan, output: Path) -> None:
         "types": dict(sorted(plan.type_hashes.items())),
         "backends": {"xrobot-can": "1"},
     }
-    _write_if_changed(output / "deployment.lock.yaml", _yaml(lock))
+    lock_content = _yaml(lock)
+    _write_if_changed(lock_path, lock_content)
+    if lock_path != output / "deployment.lock.yaml":
+        _write_if_changed(output / "deployment.lock.yaml", lock_content)
 
     for directory in (output / "nodes", output / "reports"):
         if directory.exists():
@@ -268,10 +273,10 @@ def write_deployment(plan: DeploymentPlan, output: Path) -> None:
         "links": {
             budget.name: {
                 "bitrate_bps": budget.bitrate_bps,
-                "reserved_utilization": budget.reserved_utilization,
-                "route_utilization": budget.route_utilization,
-                "total_utilization": budget.total_utilization,
-                "utilization_limit": budget.utilization_limit,
+                "reserved_utilization": round(budget.reserved_utilization, 9),
+                "route_utilization": round(budget.route_utilization, 9),
+                "total_utilization": round(budget.total_utilization, 9),
+                "utilization_limit": round(budget.utilization_limit, 9),
                 "within_budget": budget.within_budget,
             }
             for budget in plan.link_budgets

@@ -15,6 +15,11 @@ class WorkspaceError(ValueError):
     """Raised when a workspace or package graph is inconsistent."""
 
 
+def _resolve_workspace_path(root: Path, value: str) -> Path:
+    path = Path(value)
+    return path.resolve() if path.is_absolute() else (root / path).resolve()
+
+
 @dataclass(frozen=True)
 class ModuleManifest:
     package_name: str
@@ -45,6 +50,7 @@ class Workspace:
             raise WorkspaceError("package lock belongs to a different workspace")
 
         self._sources: dict[str, Path] = {}
+        self._manifest_overrides: dict[str, Path] = {}
         for item in self.document["packages"]:
             name = item["name"]
             if name in self._sources:
@@ -53,6 +59,11 @@ class Workspace:
             if not source_path.is_absolute():
                 source_path = self.root / source_path
             self._sources[name] = source_path.resolve()
+            manifest = item["source"].get("manifest")
+            if manifest is not None:
+                self._manifest_overrides[name] = _resolve_workspace_path(
+                    self.root, manifest
+                )
 
         locked = self.lock["packages"]
         missing_locks = sorted(set(self._sources) - set(locked))
@@ -72,7 +83,7 @@ class Workspace:
             raise WorkspaceError(f"cyclic package dependency involving {name!r}")
         self._loading.add(name)
         path = self._sources[name]
-        manifest_path = path / "package.yaml"
+        manifest_path = self._manifest_overrides.get(name, path / "package.yaml")
         if not manifest_path.is_file():
             raise WorkspaceError(f"{manifest_path}: package manifest not found")
         document = validate_document(manifest_path)
