@@ -1,0 +1,9 @@
+api_version: xrobot.io/v1alpha1
+kind: Package
+metadata: {name: xrobot-libxr-backend, version: 0.1.0-dev, license: Apache-2.0}
+spec:
+  build: {system: cmake}
+  exports:
+    libraries:
+      - {name: xrobot::libxr-backend, portable: false}
+  dependencies: [libxr, xrobot-runtime]
