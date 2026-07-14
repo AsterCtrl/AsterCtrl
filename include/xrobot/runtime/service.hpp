@@ -55,6 +55,11 @@ using ServiceCompletion =
              const ServiceCallInfo&, const ExecutionContext&) noexcept;
 
 template <ServiceType Service>
+using ServiceHandler =
+    Status (*)(void*, const ServiceRequest<Service>&, ServiceResponse<Service>&,
+               const ServiceCallInfo&, const ExecutionContext&) noexcept;
+
+template <ServiceType Service>
 class ServiceEndpoint {
  public:
   virtual ~ServiceEndpoint() = default;
@@ -63,6 +68,34 @@ class ServiceEndpoint {
                            ServiceCompletion<Service> completion,
                            void* completion_state,
                            const ExecutionContext& caller) noexcept = 0;
+};
+
+template <ServiceType Service>
+class ServiceServerEndpoint {
+ public:
+  virtual ~ServiceServerEndpoint() = default;
+  virtual Status BindHandler(ServiceHandler<Service> handler,
+                             void* handler_state) noexcept = 0;
+};
+
+template <ServiceType Service>
+class ServiceServer {
+ public:
+  constexpr ServiceServer() noexcept = default;
+  constexpr explicit ServiceServer(
+      ServiceServerEndpoint<Service>& endpoint) noexcept
+      : endpoint_(&endpoint) {}
+
+  Status BindHandler(ServiceHandler<Service> handler,
+                     void* handler_state) const noexcept {
+    if (endpoint_ == nullptr) {
+      return Status::kUnavailable;
+    }
+    return endpoint_->BindHandler(handler, handler_state);
+  }
+
+ private:
+  ServiceServerEndpoint<Service>* endpoint_{};
 };
 
 template <ServiceType Service>
@@ -91,26 +124,40 @@ class ServiceClient {
 };
 
 template <ServiceType Service, std::size_t MaxPending>
-class StaticService final : public ServiceEndpoint<Service> {
+class StaticService final : public ServiceEndpoint<Service>,
+                            public ServiceServerEndpoint<Service> {
  public:
   static_assert(MaxPending > 0);
 
   using Request = ServiceRequest<Service>;
   using Response = ServiceResponse<Service>;
   using Completion = ServiceCompletion<Service>;
-  using Handler = Status (*)(void*, const Request&, Response&,
-                             const ServiceCallInfo&,
-                             const ExecutionContext&) noexcept;
+  using Handler = ServiceHandler<Service>;
 
-  StaticService(std::string_view name, Executor& executor, Handler handler,
-                void* handler_state) noexcept
-      : name_(name),
-        executor_(executor),
-        handler_(handler),
-        handler_state_(handler_state) {
+  StaticService(std::string_view name, Executor& executor) noexcept
+      : name_(name), executor_(executor) {
     for (auto& slot : slots_) {
       slot.owner = this;
     }
+  }
+
+  StaticService(std::string_view name, Executor& executor, Handler handler,
+                void* handler_state) noexcept
+      : StaticService(name, executor) {
+    handler_ = handler;
+    handler_state_ = handler_state;
+  }
+
+  Status BindHandler(Handler handler, void* handler_state) noexcept override {
+    if (handler == nullptr) {
+      return Status::kInvalidArgument;
+    }
+    if (handler_ != nullptr || pending_ != 0) {
+      return Status::kInvalidState;
+    }
+    handler_ = handler;
+    handler_state_ = handler_state;
+    return Status::kOk;
   }
 
   Status CallAsync(const Request& request, Completion completion,
@@ -159,6 +206,9 @@ class StaticService final : public ServiceEndpoint<Service> {
 
   ServiceClient<Service> client() noexcept {
     return ServiceClient<Service>(*this);
+  }
+  ServiceServer<Service> server() noexcept {
+    return ServiceServer<Service>(*this);
   }
   std::string_view name() const noexcept { return name_; }
   std::size_t pending() const noexcept { return pending_; }

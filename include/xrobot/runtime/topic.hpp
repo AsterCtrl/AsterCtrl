@@ -36,12 +36,44 @@ struct TopicStats {
 };
 
 template <MessageType Message>
+using TopicCallback = void (*)(void*, const Message&, const MessageInfo&,
+                               const ExecutionContext&) noexcept;
+
+template <MessageType Message>
 class TopicSink {
  public:
   virtual ~TopicSink() = default;
 
   virtual Status Deliver(const Message& message, const MessageInfo& info,
                          const ExecutionContext& caller) noexcept = 0;
+};
+
+template <MessageType Message>
+class TopicSubscriberEndpoint {
+ public:
+  virtual ~TopicSubscriberEndpoint() = default;
+  virtual Status Bind(TopicCallback<Message> callback,
+                      void* callback_state) noexcept = 0;
+};
+
+template <MessageType Message>
+class TopicSubscriber {
+ public:
+  constexpr TopicSubscriber() noexcept = default;
+  constexpr explicit TopicSubscriber(
+      TopicSubscriberEndpoint<Message>& endpoint) noexcept
+      : endpoint_(&endpoint) {}
+
+  Status Bind(TopicCallback<Message> callback,
+              void* callback_state) const noexcept {
+    if (endpoint_ == nullptr) {
+      return Status::kUnavailable;
+    }
+    return endpoint_->Bind(callback, callback_state);
+  }
+
+ private:
+  TopicSubscriberEndpoint<Message>* endpoint_{};
 };
 
 template <MessageType Message>
@@ -78,12 +110,16 @@ class TopicPublisher {
 };
 
 template <MessageType Message, std::size_t Depth>
-class TopicSubscription final : public TopicSink<Message> {
+class TopicSubscription final : public TopicSink<Message>,
+                                public TopicSubscriberEndpoint<Message> {
  public:
   static_assert(Depth > 0);
 
-  using Callback = void (*)(void*, const Message&, const MessageInfo&,
-                            const ExecutionContext&) noexcept;
+  using Callback = TopicCallback<Message>;
+
+  constexpr TopicSubscription(Executor& executor,
+                              DeliveryPolicy policy) noexcept
+      : executor_(executor), policy_(policy) {}
 
   constexpr TopicSubscription(Executor& executor, DeliveryPolicy policy,
                               Callback callback, void* callback_state) noexcept
@@ -91,6 +127,18 @@ class TopicSubscription final : public TopicSink<Message> {
         policy_(policy),
         callback_(callback),
         callback_state_(callback_state) {}
+
+  Status Bind(Callback callback, void* callback_state) noexcept override {
+    if (callback == nullptr) {
+      return Status::kInvalidArgument;
+    }
+    if (callback_ != nullptr || size_ != 0 || stats_.received != 0) {
+      return Status::kInvalidState;
+    }
+    callback_ = callback;
+    callback_state_ = callback_state;
+    return Status::kOk;
+  }
 
   Status Deliver(const Message& message, const MessageInfo& info,
                  const ExecutionContext& caller) noexcept override {
@@ -183,8 +231,8 @@ class TopicSubscription final : public TopicSink<Message> {
 
   Executor& executor_;
   DeliveryPolicy policy_;
-  Callback callback_;
-  void* callback_state_;
+  Callback callback_{};
+  void* callback_state_{};
   std::array<Envelope, Depth> queue_{};
   std::size_t head_{};
   std::size_t tail_{};

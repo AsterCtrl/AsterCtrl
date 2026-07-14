@@ -69,6 +69,15 @@ struct ActionCallbacks {
   void* state{};
 };
 
+template <ActionType Action>
+using ActionGoalHandler =
+    Status (*)(void*, const ActionGoal<Action>&, ActionGoalHandle,
+               const ExecutionContext&) noexcept;
+
+template <ActionType Action>
+using ActionCancelHandler =
+    Status (*)(void*, ActionGoalHandle, const ExecutionContext&) noexcept;
+
 struct ActionStats {
   std::uint32_t goals_submitted{};
   std::uint32_t goals_accepted{};
@@ -132,6 +141,10 @@ class ActionServerEndpoint {
  public:
   virtual ~ActionServerEndpoint() = default;
 
+  virtual Status BindHandlers(ActionGoalHandler<Action> goal_handler,
+                              ActionCancelHandler<Action> cancel_handler,
+                              void* handler_state) noexcept = 0;
+
   virtual Status PublishFeedback(
       ActionGoalHandle handle, const ActionFeedback<Action>& feedback,
       const ExecutionContext& caller) noexcept = 0;
@@ -147,6 +160,15 @@ class ActionServer {
   constexpr explicit ActionServer(
       ActionServerEndpoint<Action>& endpoint) noexcept
       : endpoint_(&endpoint) {}
+
+  Status BindHandlers(ActionGoalHandler<Action> goal_handler,
+                      ActionCancelHandler<Action> cancel_handler,
+                      void* handler_state) const noexcept {
+    if (endpoint_ == nullptr) {
+      return Status::kUnavailable;
+    }
+    return endpoint_->BindHandlers(goal_handler, cancel_handler, handler_state);
+  }
 
   Status PublishFeedback(ActionGoalHandle handle,
                          const ActionFeedback<Action>& feedback,
@@ -179,22 +201,37 @@ class StaticAction final : public ActionClientEndpoint<Action>,
   using Goal = ActionGoal<Action>;
   using Feedback = ActionFeedback<Action>;
   using Result = ActionResult<Action>;
-  using GoalHandler = Status (*)(void*, const Goal&, ActionGoalHandle,
-                                 const ExecutionContext&) noexcept;
-  using CancelHandler = Status (*)(void*, ActionGoalHandle,
-                                   const ExecutionContext&) noexcept;
+  using GoalHandler = ActionGoalHandler<Action>;
+  using CancelHandler = ActionCancelHandler<Action>;
+
+  StaticAction(std::string_view name, Executor& executor) noexcept
+      : name_(name), executor_(executor) {
+    for (auto& slot : slots_) {
+      slot.owner = this;
+    }
+  }
 
   StaticAction(std::string_view name, Executor& executor,
                GoalHandler goal_handler, CancelHandler cancel_handler,
                void* handler_state) noexcept
-      : name_(name),
-        executor_(executor),
-        goal_handler_(goal_handler),
-        cancel_handler_(cancel_handler),
-        handler_state_(handler_state) {
-    for (auto& slot : slots_) {
-      slot.owner = this;
+      : StaticAction(name, executor) {
+    goal_handler_ = goal_handler;
+    cancel_handler_ = cancel_handler;
+    handler_state_ = handler_state;
+  }
+
+  Status BindHandlers(GoalHandler goal_handler, CancelHandler cancel_handler,
+                      void* handler_state) noexcept override {
+    if (goal_handler == nullptr) {
+      return Status::kInvalidArgument;
     }
+    if (goal_handler_ != nullptr || active_goals_ != 0) {
+      return Status::kInvalidState;
+    }
+    goal_handler_ = goal_handler;
+    cancel_handler_ = cancel_handler;
+    handler_state_ = handler_state;
+    return Status::kOk;
   }
 
   Status SendGoal(const Goal& goal, ActionCallbacks<Action> callbacks,
