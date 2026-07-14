@@ -1,0 +1,227 @@
+#include <array>
+#include <cassert>
+#include <cstddef>
+#include <cstdint>
+#include <span>
+#include <string_view>
+
+#include "xrobot/runtime/cooperative_executor.hpp"
+#include "xrobot/runtime/topic.hpp"
+
+namespace test {
+
+struct Command {
+  std::int16_t target{};
+};
+
+}  // namespace test
+
+namespace xrobot::runtime {
+
+template <>
+struct TypeSupport<test::Command> {
+  static constexpr TypeDescriptor descriptor() noexcept {
+    return {"test.msg.Command",
+            SchemaHash{{std::byte{0x10}, std::byte{0x20}, std::byte{0x30},
+                        std::byte{0x40}}},
+            2};
+  }
+
+  static Status Encode(const test::Command& message,
+                       std::span<std::byte> output,
+                       std::size_t& written) noexcept {
+    if (output.size() < 2) {
+      written = 0;
+      return Status::kCapacityExceeded;
+    }
+    const auto value = static_cast<std::uint16_t>(message.target);
+    output[0] = static_cast<std::byte>(value & 0xffU);
+    output[1] = static_cast<std::byte>((value >> 8U) & 0xffU);
+    written = 2;
+    return Status::kOk;
+  }
+
+  static Status Decode(std::span<const std::byte> input,
+                       test::Command& message) noexcept {
+    if (input.size() != 2) {
+      return Status::kInvalidArgument;
+    }
+    const auto value = static_cast<std::uint16_t>(input[0]) |
+                       (static_cast<std::uint16_t>(input[1]) << 8U);
+    message.target = static_cast<std::int16_t>(value);
+    return Status::kOk;
+  }
+};
+
+}  // namespace xrobot::runtime
+
+namespace {
+
+using xrobot::runtime::CooperativeExecutor;
+using xrobot::runtime::DeliveryPolicy;
+using xrobot::runtime::ExecutionContext;
+using xrobot::runtime::ExecutionKind;
+using xrobot::runtime::MessageInfo;
+using xrobot::runtime::StaticTopic;
+using xrobot::runtime::Status;
+using xrobot::runtime::TopicPublisher;
+using xrobot::runtime::TopicSubscription;
+
+struct Recorder {
+  std::array<std::int16_t, 4> values{};
+  std::array<std::uint32_t, 4> sequences{};
+  std::size_t size{};
+  ExecutionKind execution_kind{ExecutionKind::kInterrupt};
+};
+
+struct CongestedRecorder {
+  Recorder recorder;
+  xrobot::runtime::Executor* executor{};
+  TopicPublisher<test::Command> publisher;
+  bool reentered{};
+};
+
+void NoOp(void*, const ExecutionContext&) noexcept {}
+
+void Record(void* state, const test::Command& message, const MessageInfo& info,
+            const ExecutionContext& context) noexcept {
+  auto& recorder = *static_cast<Recorder*>(state);
+  recorder.values[recorder.size] = message.target;
+  recorder.sequences[recorder.size] = info.sequence;
+  ++recorder.size;
+  recorder.execution_kind = context.kind();
+}
+
+void RecordAndFillExecutor(void* state, const test::Command& message,
+                           const MessageInfo& info,
+                           const ExecutionContext& context) noexcept {
+  auto& congested = *static_cast<CongestedRecorder*>(state);
+  Record(&congested.recorder, message, info, context);
+  if (!congested.reentered) {
+    congested.reentered = true;
+    assert(congested.publisher.Publish(test::Command{20}, 2'000, context) ==
+           Status::kOk);
+  }
+  assert(congested.executor->TryPost({NoOp, nullptr}, context) == Status::kOk);
+}
+
+void GeneratedTypeSupportDefinesTheWireContract() {
+  constexpr auto descriptor =
+      xrobot::runtime::TypeSupport<test::Command>::descriptor();
+  static_assert(xrobot::runtime::MessageType<test::Command>);
+  static_assert(descriptor.max_serialized_size == 2);
+  assert(descriptor.name == "test.msg.Command");
+
+  std::array<std::byte, 2> bytes{};
+  std::size_t written{};
+  assert(xrobot::runtime::TypeSupport<test::Command>::Encode(
+             test::Command{-300}, bytes, written) == Status::kOk);
+  assert(written == 2);
+  test::Command decoded;
+  assert(xrobot::runtime::TypeSupport<test::Command>::Decode(bytes, decoded) ==
+         Status::kOk);
+  assert(decoded.target == -300);
+}
+
+void LatestDeliveryCoalescesWithoutInlineCallbacks() {
+  CooperativeExecutor<2> executor("control", 5);
+  Recorder recorder;
+  TopicSubscription<test::Command, 1> subscription(
+      executor, DeliveryPolicy::kLatest, Record, &recorder);
+  StaticTopic<test::Command, 1> topic("robot/command");
+  const ExecutionContext publisher("input", ExecutionKind::kThread, 4);
+
+  assert(executor.Initialize() == Status::kOk);
+  assert(executor.Start() == Status::kOk);
+  assert(topic.Connect(subscription) == Status::kOk);
+  assert(topic.Seal() == Status::kOk);
+  const auto output = topic.publisher();
+
+  assert(output.Publish(test::Command{10}, 1'000, publisher) == Status::kOk);
+  assert(output.Publish(test::Command{20}, 2'000, publisher) == Status::kOk);
+  assert(recorder.size == 0);
+  assert(executor.pending() == 1);
+
+  assert(executor.RunOne() == Status::kOk);
+  assert(recorder.size == 1);
+  assert(recorder.values[0] == 20);
+  assert(recorder.sequences[0] == 2);
+  assert(recorder.execution_kind == ExecutionKind::kThread);
+  assert(subscription.stats().overwritten == 1);
+}
+
+void KeepAllDeliveryAppliesBoundedBackpressure() {
+  CooperativeExecutor<2> executor("control", 5);
+  Recorder recorder;
+  TopicSubscription<test::Command, 2> subscription(
+      executor, DeliveryPolicy::kKeepAll, Record, &recorder);
+  StaticTopic<test::Command, 1> topic("robot/events");
+  const ExecutionContext publisher("input", ExecutionKind::kThread, 4);
+
+  assert(executor.Initialize() == Status::kOk);
+  assert(executor.Start() == Status::kOk);
+  assert(topic.Connect(subscription) == Status::kOk);
+  assert(topic.Seal() == Status::kOk);
+
+  assert(topic.publisher().Publish(test::Command{10}, 1'000, publisher) ==
+         Status::kOk);
+  assert(topic.publisher().Publish(test::Command{20}, 2'000, publisher) ==
+         Status::kOk);
+  assert(topic.publisher().Publish(test::Command{30}, 3'000, publisher) ==
+         Status::kCapacityExceeded);
+
+  assert(executor.RunOne() == Status::kOk);
+  assert(executor.RunOne() == Status::kOk);
+  assert(recorder.size == 2);
+  assert(recorder.values[0] == 10);
+  assert(recorder.values[1] == 20);
+  assert(subscription.stats().dropped == 1);
+}
+
+void TopicMustBeSealedBeforePublishing() {
+  CooperativeExecutor<1> executor("control", 5);
+  Recorder recorder;
+  TopicSubscription<test::Command, 1> subscription(
+      executor, DeliveryPolicy::kLatest, Record, &recorder);
+  StaticTopic<test::Command, 1> topic("robot/command");
+  const ExecutionContext publisher("input", ExecutionKind::kThread, 4);
+
+  assert(topic.publisher().Publish(test::Command{10}, 1'000, publisher) ==
+         Status::kInvalidState);
+  assert(topic.Seal() == Status::kOk);
+  assert(topic.Connect(subscription) == Status::kInvalidState);
+}
+
+void SchedulingFailureCannotLeaveSilentlyStuckLatestData() {
+  CooperativeExecutor<1> executor("control", 5);
+  CongestedRecorder recorder{{}, &executor, {}, false};
+  TopicSubscription<test::Command, 1> subscription(
+      executor, DeliveryPolicy::kLatest, RecordAndFillExecutor, &recorder);
+  StaticTopic<test::Command, 1> topic("robot/command");
+  const ExecutionContext publisher("input", ExecutionKind::kThread, 4);
+
+  assert(executor.Initialize() == Status::kOk);
+  assert(executor.Start() == Status::kOk);
+  assert(topic.Connect(subscription) == Status::kOk);
+  assert(topic.Seal() == Status::kOk);
+  recorder.publisher = topic.publisher();
+  assert(topic.publisher().Publish(test::Command{10}, 1'000, publisher) ==
+         Status::kOk);
+
+  assert(executor.RunOne() == Status::kOk);
+  assert(subscription.pending() == 1);
+  assert(topic.publisher().Publish(test::Command{30}, 3'000, publisher) ==
+         Status::kCapacityExceeded);
+  assert(subscription.pending() == 0);
+}
+
+}  // namespace
+
+int main() {
+  GeneratedTypeSupportDefinesTheWireContract();
+  LatestDeliveryCoalescesWithoutInlineCallbacks();
+  KeepAllDeliveryAppliesBoundedBackpressure();
+  TopicMustBeSealedBeforePublishing();
+  SchedulingFailureCannotLeaveSilentlyStuckLatestData();
+  return 0;
+}

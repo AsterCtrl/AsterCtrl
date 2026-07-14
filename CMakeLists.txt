@@ -31,4 +31,20 @@ if(XROBOT_RUNTIME_BUILD_TESTS)
   add_executable(xrobot_runtime_executor_test tests/executor_test.cpp)
   target_link_libraries(xrobot_runtime_executor_test PRIVATE xrobot::runtime)
   add_test(NAME xrobot_runtime_executor_test COMMAND xrobot_runtime_executor_test)
+
+  add_executable(xrobot_runtime_topic_test tests/topic_test.cpp)
+  target_link_libraries(xrobot_runtime_topic_test PRIVATE xrobot::runtime)
+  add_test(NAME xrobot_runtime_topic_test COMMAND xrobot_runtime_topic_test)
+
+  add_executable(xrobot_runtime_service_test tests/service_test.cpp)
+  target_link_libraries(xrobot_runtime_service_test PRIVATE xrobot::runtime)
+  add_test(NAME xrobot_runtime_service_test COMMAND xrobot_runtime_service_test)
+
+  add_executable(xrobot_runtime_action_test tests/action_test.cpp)
+  target_link_libraries(xrobot_runtime_action_test PRIVATE xrobot::runtime)
+  add_test(NAME xrobot_runtime_action_test COMMAND xrobot_runtime_action_test)
+
+  add_executable(xrobot_runtime_parameter_test tests/parameter_test.cpp)
+  target_link_libraries(xrobot_runtime_parameter_test PRIVATE xrobot::runtime)
+  add_test(NAME xrobot_runtime_parameter_test COMMAND xrobot_runtime_parameter_test)
 endif()
