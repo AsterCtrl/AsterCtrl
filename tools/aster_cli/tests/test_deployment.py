@@ -198,7 +198,7 @@ def test_compiles_a_deterministic_cross_node_deployment(tmp_path: Path) -> None:
     assert (output / "reports/routes.json").read_bytes() == first_routes
     lock = yaml.safe_load(first_lock)
     assert lock["nodes"] == {"node_a": 1, "node_b": 2}
-    assert lock["routes"] == {"/control/command": 1}
+    assert lock["routes"] == {"/control/command": 8}
     assert first.cross_node_route_count == 1
     assert first.node_count == 2
     assert (output / "nodes/node_a/generated_main.cpp").is_file()

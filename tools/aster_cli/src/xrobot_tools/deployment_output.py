@@ -34,11 +34,15 @@ def _json(document: Any) -> str:
 
 
 def _allocate_ids(
-    names: list[str], existing: dict[str, int], maximum: int
+    names: list[str], existing: dict[str, int], minimum: int, maximum: int
 ) -> dict[str, int]:
-    assigned = {name: value for name, value in existing.items() if name in names}
+    assigned = {
+        name: value
+        for name, value in existing.items()
+        if name in names and minimum <= value <= maximum
+    }
     used = set(assigned.values())
-    candidate = 1
+    candidate = minimum
     for name in sorted(names):
         if name in assigned:
             continue
@@ -206,10 +210,10 @@ def write_deployment(
     lock_path = authoritative_lock or (output / "deployment.lock.yaml")
     existing = _load_existing_lock(lock_path, plan.name)
     node_ids = _allocate_ids(
-        list(plan.deployment["nodes"]), existing.get("nodes", {}), 255
+        list(plan.deployment["nodes"]), existing.get("nodes", {}), 1, 255
     )
     route_ids = _allocate_ids(
-        [route.name for route in plan.routes], existing.get("routes", {}), 1023
+        [route.name for route in plan.routes], existing.get("routes", {}), 8, 511
     )
 
     lock = {

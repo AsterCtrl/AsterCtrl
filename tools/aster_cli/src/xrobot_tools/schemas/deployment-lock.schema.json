@@ -21,7 +21,7 @@
     },
     "routes": {
       "type": "object",
-      "additionalProperties": {"type": "integer", "minimum": 1, "maximum": 1023}
+      "additionalProperties": {"type": "integer", "minimum": 8, "maximum": 511}
     },
     "types": {
       "type": "object",
