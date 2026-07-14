@@ -77,11 +77,13 @@ def test_generates_deterministic_cpp_typesupport_and_lock(tmp_path: Path) -> Non
     first = generate_interfaces(schema_root, output)
     first_header = (output / "include/robot_msgs/robot_msgs.hpp").read_bytes()
     first_lock = (output / "schema.lock.yaml").read_bytes()
+    first_vectors = (output / "test_vectors.yaml").read_bytes()
     second = generate_interfaces(schema_root, output)
 
     assert first == second
     assert (output / "include/robot_msgs/robot_msgs.hpp").read_bytes() == first_header
     assert (output / "schema.lock.yaml").read_bytes() == first_lock
+    assert (output / "test_vectors.yaml").read_bytes() == first_vectors
     text = first_header.decode()
     assert "enum class Mode : std::uint8_t" in text
     assert "struct Command" in text
@@ -90,6 +92,7 @@ def test_generates_deterministic_cpp_typesupport_and_lock(tmp_path: Path) -> Non
     assert "ActionTypeSupport<::test::action::Move>" in text
     assert first.interface_count == 3
     assert first.record_count == 6
+    assert "encoded_hex: '000000000000000000'" in first_vectors.decode()
 
 
 def test_rejects_unbounded_or_unknown_field_types(tmp_path: Path) -> None:

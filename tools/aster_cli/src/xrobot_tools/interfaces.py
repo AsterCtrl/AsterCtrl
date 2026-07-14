@@ -14,6 +14,7 @@ from xrobot_tools.interface_model import (
     InterfaceModel,
     load_interface_model,
 )
+from xrobot_tools.wire_vectors import render_test_vectors
 
 __all__ = ["GenerationResult", "InterfaceError", "generate_interfaces"]
 
@@ -25,6 +26,7 @@ class GenerationResult:
     deployment_schema_hash: str
     header: Path
     lock: Path
+    vectors: Path
 
 
 def _write_if_changed(path: Path, content: str) -> None:
@@ -90,8 +92,10 @@ def generate_interfaces(
     output = Path(output_dir)
     header = output / "include" / "robot_msgs" / "robot_msgs.hpp"
     lock = output / "schema.lock.yaml"
+    vectors = output / "test_vectors.yaml"
     _write_if_changed(header, render_header(model))
     _write_if_changed(lock, _schema_lock(model))
+    _write_if_changed(vectors, render_test_vectors(model))
     _write_if_changed(output / "CMakeLists.txt", GENERATED_CMAKE)
     return GenerationResult(
         interface_count=len(model.interfaces),
@@ -99,4 +103,5 @@ def generate_interfaces(
         deployment_schema_hash=model.deployment_schema_hash,
         header=header,
         lock=lock,
+        vectors=vectors,
     )
