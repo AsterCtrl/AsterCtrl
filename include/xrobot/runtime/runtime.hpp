@@ -5,6 +5,7 @@
 #include <span>
 #include <string_view>
 
+#include "xrobot/runtime/executor.hpp"
 #include "xrobot/runtime/module.hpp"
 #include "xrobot/runtime/status.hpp"
 
@@ -27,9 +28,15 @@ enum class LifecycleOperation {
   kStart,
 };
 
+enum class LifecycleSubject {
+  kExecutor,
+  kModule,
+};
+
 struct RuntimeFailure {
-  std::size_t module_index{};
-  std::string_view module_name;
+  LifecycleSubject subject{LifecycleSubject::kModule};
+  std::size_t index{};
+  std::string_view name;
   LifecycleOperation operation{LifecycleOperation::kValidation};
   Status status{Status::kOk};
 };
@@ -37,6 +44,9 @@ struct RuntimeFailure {
 class Runtime {
  public:
   explicit Runtime(std::span<ModuleSlot> modules) noexcept : modules_(modules) {}
+  Runtime(std::span<ExecutorSlot> executors,
+          std::span<ModuleSlot> modules) noexcept
+      : executors_(executors), modules_(modules) {}
 
   Status Initialize() noexcept;
   Status Start() noexcept;
@@ -47,12 +57,15 @@ class Runtime {
 
  private:
   Status ValidateSlots() noexcept;
-  void ShutdownInitialized() noexcept;
-  void RecordFailure(std::size_t index, LifecycleOperation operation,
-                     Status status) noexcept;
+  void ShutdownInitializedModules() noexcept;
+  void ShutdownInitializedExecutors() noexcept;
+  void RecordFailure(LifecycleSubject subject, std::size_t index,
+                     LifecycleOperation operation, Status status) noexcept;
 
+  std::span<ExecutorSlot> executors_;
   std::span<ModuleSlot> modules_;
-  std::size_t initialized_count_{};
+  std::size_t initialized_executor_count_{};
+  std::size_t initialized_module_count_{};
   RuntimeState state_{RuntimeState::kConstructed};
   std::optional<RuntimeFailure> failure_;
 };

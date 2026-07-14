@@ -27,4 +27,8 @@ if(XROBOT_RUNTIME_BUILD_TESTS)
   add_executable(xrobot_runtime_lifecycle_test tests/runtime_lifecycle_test.cpp)
   target_link_libraries(xrobot_runtime_lifecycle_test PRIVATE xrobot::runtime)
   add_test(NAME xrobot_runtime_lifecycle_test COMMAND xrobot_runtime_lifecycle_test)
+
+  add_executable(xrobot_runtime_executor_test tests/executor_test.cpp)
+  target_link_libraries(xrobot_runtime_executor_test PRIVATE xrobot::runtime)
+  add_test(NAME xrobot_runtime_executor_test COMMAND xrobot_runtime_executor_test)
 endif()
