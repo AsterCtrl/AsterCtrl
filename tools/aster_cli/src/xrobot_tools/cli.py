@@ -28,6 +28,17 @@ def generate_schema(args: argparse.Namespace) -> int:
     return 0
 
 
+def compile_robot_deployment(args: argparse.Namespace) -> int:
+    from xrobot_tools.deployment import compile_deployment
+
+    result = compile_deployment(args.workspace, args.deployment, args.output)
+    print(
+        f"compiled {result.node_count} nodes and "
+        f"{result.cross_node_route_count} cross-node routes into {args.output}"
+    )
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="xrctl")
     parser.add_argument("--version", action="version", version=__version__)
@@ -45,6 +56,16 @@ def build_parser() -> argparse.ArgumentParser:
     generate.add_argument("schema_root", type=Path)
     generate.add_argument("output", type=Path)
     generate.set_defaults(handler=generate_schema)
+
+    deploy = commands.add_parser("deploy", help="compile a static robot deployment")
+    deploy_commands = deploy.add_subparsers(dest="deploy_command")
+    compile_command = deploy_commands.add_parser(
+        "compile", help="validate and generate one deployment"
+    )
+    compile_command.add_argument("workspace", type=Path)
+    compile_command.add_argument("deployment", type=Path)
+    compile_command.add_argument("output", type=Path)
+    compile_command.set_defaults(handler=compile_robot_deployment)
     return parser
 
 
