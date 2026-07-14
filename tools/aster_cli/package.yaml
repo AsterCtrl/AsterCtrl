@@ -1,0 +1,15 @@
+api_version: xrobot.io/v1alpha1
+kind: Package
+
+metadata:
+  name: xrobot-tools
+  version: 0.1.0-dev
+  license: Apache-2.0
+
+spec:
+  build:
+    system: python
+  exports:
+    tools:
+      - xrctl
+  dependencies: []
