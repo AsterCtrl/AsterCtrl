@@ -3,6 +3,7 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <span>
 
 #include "spsc_queue.hpp"
 #include "xrobot/backend/libxr/classic_can_endpoint.hpp"
@@ -20,6 +21,11 @@ struct CanAdapterStats {
   std::uint32_t dispatch_failures{};
 };
 
+struct CanFilterRange {
+  std::uint16_t first_id{};
+  std::uint16_t last_id{};
+};
+
 template <std::size_t ReceiveQueueCapacity>
 class CanAdapter {
  public:
@@ -29,6 +35,12 @@ class CanAdapter {
 
   explicit CanAdapter(ClassicCanEndpoint& endpoint)
       : endpoint_(endpoint), receive_queue_(ReceiveQueueCapacity) {}
+
+  CanAdapter(ClassicCanEndpoint& endpoint,
+             std::span<const CanFilterRange> filters) noexcept
+      : endpoint_(endpoint),
+        filters_(filters),
+        receive_queue_(ReceiveQueueCapacity) {}
 
   CanAdapter(const CanAdapter&) = delete;
   CanAdapter& operator=(const CanAdapter&) = delete;
@@ -57,9 +69,25 @@ class CanAdapter {
     if (!receiver_bound_) {
       return xrobot::runtime::Status::kInvalidState;
     }
-    const auto status = endpoint_.Subscribe(1, 0x7ffU,
-                                            {ReceiveThunk, this});
-    if (status != xrobot::runtime::Status::kOk) return status;
+    if (filters_.empty()) {
+      const auto status = endpoint_.Subscribe(1U, 0x7ffU,
+                                              {ReceiveThunk, this});
+      if (status != xrobot::runtime::Status::kOk) return status;
+    } else {
+      std::uint16_t previous_last{};
+      for (const auto& filter : filters_) {
+        if (filter.first_id == 0U || filter.first_id > filter.last_id ||
+            filter.last_id > 0x7ffU || filter.first_id <= previous_last) {
+          return xrobot::runtime::Status::kInvalidArgument;
+        }
+        previous_last = filter.last_id;
+      }
+      for (const auto& filter : filters_) {
+        const auto status = endpoint_.Subscribe(
+            filter.first_id, filter.last_id, {ReceiveThunk, this});
+        if (status != xrobot::runtime::Status::kOk) return status;
+      }
+    }
     initialized_ = true;
     return xrobot::runtime::Status::kOk;
   }
@@ -92,7 +120,8 @@ class CanAdapter {
         dispatched_.fetch_add(1, std::memory_order_relaxed);
       } else {
         dispatch_failures_.fetch_add(1, std::memory_order_relaxed);
-        if (result == Status::kOk) {
+        if (result == Status::kOk &&
+            (status == Status::kInvalidState || status == Status::kInternal)) {
           result = status;
         }
       }
@@ -186,6 +215,7 @@ class CanAdapter {
   }
 
   ClassicCanEndpoint& endpoint_;
+  std::span<const CanFilterRange> filters_;
   xrobot::transport::can::CanFrameReceiver receiver_;
   LibXR::SPSCQueue<QueuedFrame> receive_queue_;
   bool receiver_bound_{};

@@ -1,3 +1,4 @@
+#include <array>
 #include <atomic>
 #include <cassert>
 #include <cstddef>
@@ -67,6 +68,7 @@ void operator delete[](void* memory, std::size_t, std::align_val_t) noexcept {
 namespace {
 
 using xrobot::backend::libxr::CanAdapter;
+using xrobot::backend::libxr::CanFilterRange;
 using xrobot::backend::libxr::LibxrClassicCanEndpoint;
 using xrobot::runtime::ExecutionContext;
 using xrobot::runtime::ExecutionKind;
@@ -106,6 +108,7 @@ struct Receiver {
   CanFrame frame;
   std::uint64_t receive_time_ns{};
   std::uint32_t count{};
+  Status status{Status::kOk};
 };
 
 Status Receive(void* state, const CanFrame& frame,
@@ -116,7 +119,7 @@ Status Receive(void* state, const CanFrame& frame,
   receiver.frame = frame;
   receiver.receive_time_ns = receive_time_ns;
   ++receiver.count;
-  return Status::kOk;
+  return receiver.status;
 }
 
 LibXR::CAN::ClassicPack MakePack(std::uint16_t route_id,
@@ -206,10 +209,54 @@ void AdapterBoundsQueueAndMapsDriverBackpressure() {
   assert(adapter.stats().tx_failures == 1);
 }
 
+void AdapterSubscribesOnlyConfiguredRanges() {
+  FakeCan can;
+  Clock clock;
+  Receiver receiver;
+  LibxrClassicCanEndpoint<2> endpoint(can, {ReadClock, &clock});
+  constexpr std::array filters{CanFilterRange{0x208U, 0x208U}};
+  CanAdapter<2> adapter(endpoint, filters);
+  const ExecutionContext context("can-rx", ExecutionKind::kThread, 3);
+  assert(adapter.BindReceiver({Receive, &receiver}) == Status::kOk);
+  assert(adapter.Initialize() == Status::kOk);
+  assert(endpoint.Initialize() == Status::kOk);
+
+  can.Emit(MakePack(9, 1));
+  can.Emit(MakePack(8, 2));
+  assert(adapter.Drain(context) == Status::kOk);
+  assert(receiver.count == 1);
+  assert(receiver.frame.data[1] == std::byte{2});
+  assert(adapter.stats().rx_frames == 1);
+}
+
+void AdapterContainsMalformedApplicationFrames() {
+  FakeCan can;
+  Clock clock;
+  Receiver receiver;
+  LibxrClassicCanEndpoint<2> endpoint(can, {ReadClock, &clock});
+  CanAdapter<2> adapter(endpoint);
+  const ExecutionContext context("can-rx", ExecutionKind::kThread, 3);
+  assert(adapter.BindReceiver({Receive, &receiver}) == Status::kOk);
+  assert(adapter.Initialize() == Status::kOk);
+  assert(endpoint.Initialize() == Status::kOk);
+
+  receiver.status = Status::kTypeMismatch;
+  can.Emit(MakePack(8, 1));
+  assert(adapter.Drain(context) == Status::kOk);
+  assert(adapter.stats().dispatch_failures == 1);
+
+  receiver.status = Status::kInternal;
+  can.Emit(MakePack(8, 2));
+  assert(adapter.Drain(context) == Status::kInternal);
+  assert(adapter.stats().dispatch_failures == 2);
+}
+
 }  // namespace
 
 int main() {
   AdapterDefersIsrReceiveAndWritesThroughLibxr();
   AdapterBoundsQueueAndMapsDriverBackpressure();
+  AdapterSubscribesOnlyConfiguredRanges();
+  AdapterContainsMalformedApplicationFrames();
   return 0;
 }
