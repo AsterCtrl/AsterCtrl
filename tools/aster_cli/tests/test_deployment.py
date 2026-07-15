@@ -767,7 +767,6 @@ int main() {
     )
     subprocess.run([str(executable)], check=True)
 
-
 def test_generated_composition_runs_local_service_and_action(tmp_path: Path) -> None:
     workspace, deployment = create_workspace(tmp_path)
     write(
@@ -1145,6 +1144,163 @@ int main() {
         text=True,
     )
     subprocess.run([str(executable)], check=True)
+
+    deployment_document = yaml.safe_load(deployment.read_text(encoding="utf-8"))
+    for instance in ("local_service_client", "local_action_client"):
+        deployment_document["nodes"]["node_b"]["instances"].remove(instance)
+        deployment_document["nodes"]["node_a"]["instances"].append(instance)
+    deployment_document["qos_profiles"]["rpc"] = {
+        "class": "event",
+        "delivery": "queue",
+        "reliability": "reliable",
+        "history_depth": 1,
+        "max_rate_hz": 10,
+    }
+    deployment_document["route_rules"].extend(
+        [
+            {"match": {"topic": "/service/**"}, "qos": "rpc"},
+            {"match": {"topic": "/action/**"}, "qos": "rpc"},
+        ]
+    )
+    deployment.write_text(yaml.safe_dump(deployment_document, sort_keys=False))
+    cross_output = tmp_path / "generated-cross-rpc"
+    compile_deployment(workspace, deployment, cross_output)
+    first_node_a_ports = (cross_output / "nodes/node_a/node_ports.hpp").read_bytes()
+    first_node_b_ports = (cross_output / "nodes/node_b/node_ports.hpp").read_bytes()
+    compile_deployment(workspace, deployment, cross_output)
+    assert (cross_output / "nodes/node_a/node_ports.hpp").read_bytes() == first_node_a_ports
+    assert (cross_output / "nodes/node_b/node_ports.hpp").read_bytes() == first_node_b_ports
+    write(
+        tmp_path,
+        "cross_rpc_test.cpp",
+        """\
+#include <array>
+#include <cassert>
+#include <cstddef>
+#include <cstdint>
+
+#include "node_a/node_composition.hpp"
+#include "node_b/node_composition.hpp"
+#include "xrobot/runtime/hardware_registry.hpp"
+
+namespace {
+
+class Clock final : public xrobot::runtime::SteadyClock {
+ public:
+  std::uint64_t NowNs() const noexcept override { return now_ns; }
+  std::uint64_t now_ns{1'000'000};
+};
+
+struct Wire {
+  xrobot::transport::can::CanFrameReceiver receiver;
+  const xrobot::runtime::ExecutionContext* context{};
+  std::uint64_t receive_time_ns{};
+  std::size_t drop_index{static_cast<std::size_t>(-1)};
+  std::size_t frame_index{};
+};
+
+xrobot::runtime::Status SendFrame(
+    void* state, const xrobot::transport::can::CanFrame& frame,
+    const xrobot::runtime::ExecutionContext&) noexcept {
+  auto& wire = *static_cast<Wire*>(state);
+  const auto frame_index = wire.frame_index++;
+  if (frame_index == wire.drop_index) return xrobot::runtime::Status::kOk;
+  const auto status = wire.receiver.Accept(
+      frame, wire.receive_time_ns, *wire.context);
+  return status == xrobot::runtime::Status::kUnavailable
+             ? xrobot::runtime::Status::kOk
+             : status;
+}
+
+}  // namespace
+
+int main() {
+  using namespace xrobot::runtime;
+  Clock clock;
+  const ExecutionContext can_context("can-rx", ExecutionKind::kThread, 6);
+  Wire a_to_b{{}, &can_context, clock.now_ns};
+  Wire b_to_a{{}, &can_context, clock.now_ns};
+  a_to_b.drop_index = 1;
+  std::array<xrobot::generated::CanLinkWriter, 1> a_links{{
+      {"robot_can", {SendFrame, &a_to_b}},
+  }};
+  std::array<xrobot::generated::CanLinkWriter, 1> b_links{{
+      {"robot_can", {SendFrame, &b_to_a}},
+  }};
+  xrobot::generated::node_a::NodeComposition node_a(clock, a_links);
+  xrobot::generated::node_b::NodeComposition node_b(clock, b_links);
+  a_to_b.receiver = node_b.CanReceiver("robot_can");
+  b_to_a.receiver = node_a.CanReceiver("robot_can");
+
+  StaticHardwareRegistry<1> source_hardware;
+  test::Device device;
+  device.bias = 7;
+  assert(source_hardware.Add("source_device", device) == Status::kOk);
+  assert(source_hardware.Seal() == Status::kOk);
+  assert(node_a.Configure(&source_hardware) == Status::kOk);
+  assert(node_b.Configure() == Status::kOk);
+  assert(node_a.Initialize() == Status::kOk);
+  assert(node_b.Initialize() == Status::kOk);
+  assert(node_b.Start() == Status::kOk);
+  assert(node_a.Start() == Status::kOk);
+
+  std::size_t executed{};
+  assert(node_b.DrainExecutors(4, executed) == Status::kOk);
+  assert(executed == 1);
+  assert(test::ServiceServerModule::calls == 1);
+  assert(test::ServiceClientModule::completions == 1);
+  assert(test::ServiceClientModule::accepted);
+  assert(test::ActionServerModule::goals == 0);
+  assert(test::ActionClientModule::accepted == 0);
+
+  clock.now_ns += 6'000'000;
+  const ExecutionContext runtime_context(
+      "runtime", ExecutionKind::kThread, 9);
+  assert(node_a.Poll(clock.now_ns, runtime_context) == Status::kOk);
+  assert(node_b.DrainExecutors(4, executed) == Status::kOk);
+  assert(executed == 1);
+  assert(test::ActionServerModule::goals == 1);
+  assert(test::ActionClientModule::accepted == 1);
+  node_a.Shutdown();
+  node_b.Shutdown();
+}
+""",
+    )
+    cross_executable = tmp_path / "cross_rpc_test"
+    subprocess.run(
+        [
+            "/usr/bin/c++",
+            "-std=c++20",
+            "-Wall",
+            "-Wextra",
+            "-Wpedantic",
+            "-Wconversion",
+            "-Wsign-conversion",
+            "-Werror",
+            "-I",
+            str(cross_output / "nodes"),
+            "-I",
+            str(generated_messages / "include"),
+            "-I",
+            str(runtime / "include"),
+            "-I",
+            str(transports / "include"),
+            "-I",
+            str(tmp_path / "source/include"),
+            "-I",
+            str(tmp_path / "sink/include"),
+            "-I",
+            str(tmp_path / "rpc/include"),
+            str(tmp_path / "cross_rpc_test.cpp"),
+            str(runtime / "src/runtime.cpp"),
+            "-o",
+            str(cross_executable),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    subprocess.run([str(cross_executable)], check=True)
 
 
 def test_rejects_an_instance_placed_more_than_once(tmp_path: Path) -> None:

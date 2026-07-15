@@ -489,9 +489,10 @@ def _node_topic_specs(
     return specs
 
 
-def _node_local_rpc_specs(
-    plan: DeploymentPlan, node_name: str
+def _node_rpc_specs(
+    plan: DeploymentPlan, node_name: str, route_ids: dict[str, int]
 ) -> list[dict[str, Any]]:
+    routes = {route.name: route for route in plan.routes}
     specs: list[dict[str, Any]] = []
     for name, endpoints in plan.bindings.items():
         kinds = {endpoint.kind for endpoint in endpoints}
@@ -506,19 +507,33 @@ def _node_local_rpc_specs(
         else:
             continue
         server = next(endpoint for endpoint in endpoints if endpoint.kind == server_kind)
-        if server.node != node_name:
+        local_server = server.node == node_name
+        local_client = any(
+            endpoint.node == node_name and endpoint.kind == client_kind
+            for endpoint in endpoints
+        )
+        if not local_server and not local_client:
             continue
+        route = routes.get(name)
+        qos = (
+            plan.deployment["qos_profiles"][route.qos]
+            if route is not None
+            else {"class": "event", "history_depth": 1}
+        )
         specs.append(
             {
                 "name": name,
                 "kind": kind,
                 "type": server.type_name,
                 "server_instance": server.instance,
-                "client": any(
-                    endpoint.node == node_name and endpoint.kind == client_kind
-                    for endpoint in endpoints
-                ),
-                "capacity": 1,
+                "local_server": local_server,
+                "local_client": local_client,
+                "remote_server": local_server and route is not None,
+                "remote_client": local_client and not local_server,
+                "capacity": int(qos["history_depth"]),
+                "route": route,
+                "route_id": route_ids[name] if route is not None else None,
+                "qos": qos,
             }
         )
     return specs
@@ -547,47 +562,71 @@ def _node_ports(
     namespace = f"xrobot::generated::{node_name}"
     links = _node_can_links(plan, node_name)
     topics = _node_topic_specs(plan, node_name, route_ids)
-    local_rpcs = _node_local_rpc_specs(plan, node_name)
+    rpcs = _node_rpc_specs(plan, node_name, route_ids)
     registry_entries = sum(
         int(topic["publisher"]) + int(topic["subscriber"]) for topic in topics
-    ) + sum(1 + int(rpc["client"]) for rpc in local_rpcs)
+    ) + sum(
+        int(rpc["local_server"]) + int(rpc["local_client"]) for rpc in rpcs
+    )
 
     constructor_parameters = [
+        "      xrobot::runtime::SteadyClock& clock",
         "      std::span<const CanLinkWriter> writers",
         *[
             f"      xrobot::runtime::Executor& rpc_{index}_executor"
-            for index, _ in enumerate(local_rpcs)
+            for index, rpc in enumerate(rpcs)
+            if rpc["local_server"]
         ],
     ]
+    clock_initializer = "        clock_({ReadClock, &clock})"
     writer_initializers = [
         f"        writer_{index}_(FindWriter(writers, {_cpp_string(link)}))"
         for index, link in enumerate(links)
     ]
-    rpc_initializers = [
-        f"        rpc_{index}_({_cpp_string(rpc['name'])}, rpc_{index}_executor)"
-        for index, rpc in enumerate(local_rpcs)
-    ]
+    rpc_initializers: list[str] = []
+    bridge_initializers: list[str] = []
+    for index, rpc in enumerate(rpcs):
+        if rpc["local_server"]:
+            rpc_initializers.append(
+                f"        rpc_{index}_({_cpp_string(rpc['name'])}, rpc_{index}_executor)"
+            )
+            if rpc["remote_server"]:
+                route = rpc["route"]
+                link_index = links.index(route.link)
+                priority = _CAN_PRIORITIES[rpc["qos"]["class"]]
+                bridge_initializers.append(
+                    f"        rpc_bridge_{index}_({rpc['route_id']}, "
+                    f"xrobot::transport::can::CanPriority::{priority}, "
+                    f"rpc_{index}_.client(), writer_{link_index}_, clock_)"
+                )
+        else:
+            route = rpc["route"]
+            link_index = links.index(route.link)
+            priority = _CAN_PRIORITIES[rpc["qos"]["class"]]
+            rpc_initializers.append(
+                f"        rpc_{index}_({rpc['route_id']}, "
+                f"xrobot::transport::can::CanPriority::{priority}, "
+                f"writer_{link_index}_, clock_)"
+            )
     writer_validity = " &&\n        ".join(
         f"HasOneWriter(writers, {_cpp_string(link)})" for link in links
     )
-    initializers = [*writer_initializers, *rpc_initializers]
-    if initializers:
-        if links:
-            initializers.append(f"        writers_valid_({writer_validity})")
-        constructor = (
-            "  explicit NodePorts(\n"
-            + ",\n".join(constructor_parameters)
-            + ") noexcept\n"
-            "      :\n"
-            + ",\n".join(initializers)
-            + " {}"
-        )
-    else:
-        constructor = (
-            "  explicit NodePorts(std::span<const CanLinkWriter> writers) noexcept {\n"
-            "    (void)writers;\n"
-            "  }"
-        )
+    initializers = [
+        clock_initializer,
+        *writer_initializers,
+        *rpc_initializers,
+        *bridge_initializers,
+    ]
+    if links:
+        initializers.append(f"        writers_valid_({writer_validity})")
+    constructor = (
+        "  explicit NodePorts(\n"
+        + ",\n".join(constructor_parameters)
+        + ") noexcept\n"
+        "      :\n"
+        + ",\n".join(initializers)
+        + " {}"
+    )
 
     configure_lines = [
         "  xrobot::runtime::Status Configure() noexcept {",
@@ -621,16 +660,17 @@ def _node_ports(
                     "        !IsOk(status)) return status;",
                 ]
             )
-    for index, rpc in enumerate(local_rpcs):
+    for index, rpc in enumerate(rpcs):
         suffix = "Service" if rpc["kind"] == "service" else "Action"
-        configure_lines.extend(
-            [
-                f"    if (const auto status = ports_.Add{suffix}Server(",
-                f"            {_cpp_string(rpc['name'])}, rpc_{index}_);",
-                "        !IsOk(status)) return status;",
-            ]
-        )
-        if rpc["client"]:
+        if rpc["local_server"]:
+            configure_lines.extend(
+                [
+                    f"    if (const auto status = ports_.Add{suffix}Server(",
+                    f"            {_cpp_string(rpc['name'])}, rpc_{index}_);",
+                    "        !IsOk(status)) return status;",
+                ]
+            )
+        if rpc["local_client"]:
             configure_lines.extend(
                 [
                     f"    if (const auto status = ports_.Add{suffix}Client(",
@@ -679,7 +719,45 @@ def _node_ports(
             "    return {};",
             "  }",
             "",
+            "  xrobot::runtime::Status Poll(",
+            "      std::uint64_t now_ns,",
+            "      const xrobot::runtime::ExecutionContext& caller) noexcept {",
+            "    using xrobot::runtime::Status;",
+            "    if (!sealed_) return Status::kInvalidState;",
+            "    (void)now_ns;",
+            "    (void)caller;",
+            "    Status result = Status::kUnavailable;",
+        ]
+    )
+    for index, rpc in enumerate(rpcs):
+        if rpc["local_server"] and rpc["kind"] == "action":
+            configure_lines.append(
+                f"    (void)rpc_{index}_.ExpireDeadlines(now_ns, caller);"
+            )
+        if rpc["remote_client"] or rpc["remote_server"]:
+            target = (
+                f"rpc_bridge_{index}_" if rpc["remote_server"] else f"rpc_{index}_"
+            )
+            configure_lines.extend(
+                [
+                    f"    if (const auto status = {target}.Poll(now_ns, caller);",
+                    "        status == Status::kOk) {",
+                    "      result = Status::kOk;",
+                    "    } else if (status != Status::kUnavailable) {",
+                    "      return status;",
+                    "    }",
+                ]
+            )
+    configure_lines.extend(
+        [
+            "    return result;",
+            "  }",
+            "",
             " private:",
+            "  static std::uint64_t ReadClock(void* state) noexcept {",
+            "    return static_cast<xrobot::runtime::SteadyClock*>(state)->NowNs();",
+            "  }",
+            "",
             "  static xrobot::transport::can::CanFrameWriter FindWriter(",
             "      std::span<const CanLinkWriter> writers,",
             "      std::string_view link) noexcept {",
@@ -745,6 +823,25 @@ def _node_ports(
                     "            frame, receive_time_ns, caller);",
                 ]
             )
+        for rpc_index, rpc in enumerate(rpcs):
+            route = rpc["route"]
+            if route is None or route.link != link:
+                continue
+            priority = _CAN_PRIORITIES[rpc["qos"]["class"]]
+            target = (
+                f"rpc_bridge_{rpc_index}_"
+                if rpc["remote_server"]
+                else f"rpc_{rpc_index}_"
+            )
+            dispatch_lines.extend(
+                [
+                    f"      case {rpc['route_id']}:",
+                    f"        if (id->priority != CanPriority::{priority})",
+                    "          return Status::kInvalidArgument;",
+                    f"        return {target}.Accept(",
+                    "            frame, receive_time_ns, caller);",
+                ]
+            )
         dispatch_lines.extend(
             [
                 "      default: return Status::kUnavailable;",
@@ -754,7 +851,9 @@ def _node_ports(
             ]
         )
 
-    field_lines: list[str] = []
+    field_lines: list[str] = [
+        "  xrobot::transport::can::CanClockReader clock_;"
+    ]
     for index, _ in enumerate(links):
         field_lines.append(
             f"  xrobot::transport::can::CanFrameWriter writer_{index}_;"
@@ -793,11 +892,35 @@ def _node_ports(
                     f"          xrobot::transport::can::RearmPolicy::{rearm}}}}};",
                 ]
             )
-    for index, rpc in enumerate(local_rpcs):
+    for index, rpc in enumerate(rpcs):
         cpp_type = _cpp_type_name(rpc["type"])
-        runtime_type = "StaticService" if rpc["kind"] == "service" else "StaticAction"
+        if rpc["local_server"]:
+            runtime_type = (
+                "StaticService" if rpc["kind"] == "service" else "StaticAction"
+            )
+            field_lines.append(
+                f"  xrobot::runtime::{runtime_type}<{cpp_type}, "
+                f"{rpc['capacity']}> rpc_{index}_;"
+            )
+        else:
+            transport_type = (
+                "CanServiceClient"
+                if rpc["kind"] == "service"
+                else "CanActionClient"
+            )
+            field_lines.append(
+                f"  xrobot::transport::can::{transport_type}<{cpp_type}> rpc_{index}_;"
+            )
+    for index, rpc in enumerate(rpcs):
+        if not rpc["remote_server"]:
+            continue
+        cpp_type = _cpp_type_name(rpc["type"])
+        transport_type = (
+            "CanServiceServer" if rpc["kind"] == "service" else "CanActionServer"
+        )
         field_lines.append(
-            f"  xrobot::runtime::{runtime_type}<{cpp_type}, {rpc['capacity']}> rpc_{index}_;"
+            f"  xrobot::transport::can::{transport_type}<{cpp_type}> "
+            f"rpc_bridge_{index}_;"
         )
     field_lines.extend(
         [
@@ -821,8 +944,11 @@ def _node_ports(
 #include "can_link.hpp"
 #include "robot_msgs/robot_msgs.hpp"
 #include "xrobot/runtime/port_registry.hpp"
+#include "xrobot/runtime/runtime_services.hpp"
 #include "xrobot/runtime/topic.hpp"
+#include "xrobot/transport/can/action_bridge.hpp"
 #include "xrobot/transport/can/protocol.hpp"
+#include "xrobot/transport/can/service_bridge.hpp"
 #include "xrobot/transport/can/topic_bridge.hpp"
 
 // Generated by xrctl. Do not edit.
@@ -909,7 +1035,9 @@ def _parameter_declaration(
     )
 
 
-def _node_composition(plan: DeploymentPlan, node_name: str) -> str:
+def _node_composition(
+    plan: DeploymentPlan, node_name: str, route_ids: dict[str, int]
+) -> str:
     instances = _node_instances(plan, node_name)
     namespace = f"xrobot::generated::{node_name}"
     headers = sorted(
@@ -943,8 +1071,10 @@ def _node_composition(plan: DeploymentPlan, node_name: str) -> str:
         ),
     )
     instances_by_name = {instance.name: instance for instance in instances}
-    port_arguments = ["links"]
-    for rpc in _node_local_rpc_specs(plan, node_name):
+    port_arguments = ["clock", "links"]
+    for rpc in _node_rpc_specs(plan, node_name, route_ids):
+        if not rpc["local_server"]:
+            continue
         server_instance = instances_by_name[rpc["server_instance"]]
         default_executor = _default_executor(server_instance)
         port_arguments.append(
@@ -1084,7 +1214,16 @@ def _node_composition(plan: DeploymentPlan, node_name: str) -> str:
             "  xrobot::runtime::Status Poll(",
             "      std::uint64_t now_ns,",
             "      const xrobot::runtime::ExecutionContext& caller) noexcept {",
-            "    return runtime_.Poll(now_ns, caller);",
+            "    using xrobot::runtime::Status;",
+            "    const auto runtime_status = runtime_.Poll(now_ns, caller);",
+            "    if (runtime_status != Status::kOk &&",
+            "        runtime_status != Status::kUnavailable) return runtime_status;",
+            "    if (!seal_generated_ports_) return runtime_status;",
+            "    const auto port_status = ports_.Poll(now_ns, caller);",
+            "    if (port_status != Status::kOk &&",
+            "        port_status != Status::kUnavailable) return port_status;",
+            "    return runtime_status == Status::kOk || port_status == Status::kOk",
+            "               ? Status::kOk : Status::kUnavailable;",
             "  }",
             "  void Shutdown() noexcept { runtime_.Shutdown(); }",
             "",
@@ -1447,5 +1586,5 @@ def write_deployment(
         if not composition_blockers[node_name]:
             _write_if_changed(
                 node_dir / "node_composition.hpp",
-                _node_composition(plan, node_name),
+                _node_composition(plan, node_name, route_ids),
             )

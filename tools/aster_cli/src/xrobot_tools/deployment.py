@@ -571,6 +571,20 @@ def _compile_routes(
             kind, source.type_name, model, sizes
         )
         qos_name, qos, via = _select_qos(name, deployment)
+        if kind == "topic" and qos["reliability"] != "best_effort":
+            raise DeploymentError(
+                f"xrobot-can Fast Topic route {name!r} requires best_effort reliability"
+            )
+        if kind in {"service", "action"}:
+            if qos["reliability"] != "reliable":
+                raise DeploymentError(
+                    f"xrobot-can {kind} route {name!r} requires reliable reliability"
+                )
+            if len(destination_nodes) != 1:
+                raise DeploymentError(
+                    f"xrobot-can {kind} route {name!r} requires exactly one "
+                    "remote client node in v1"
+                )
         link_name, link = _select_link(
             name, {source.node, *destination_nodes}, deployment, via
         )
