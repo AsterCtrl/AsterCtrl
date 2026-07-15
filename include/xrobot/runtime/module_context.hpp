@@ -4,6 +4,7 @@
 #include <string_view>
 
 #include "xrobot/runtime/executor.hpp"
+#include "xrobot/runtime/hardware_registry.hpp"
 #include "xrobot/runtime/parameter_registry.hpp"
 #include "xrobot/runtime/periodic_scheduler.hpp"
 #include "xrobot/runtime/port_registry.hpp"
@@ -30,6 +31,7 @@ struct ModuleServices {
   PortResolver* ports{};
   ParameterResolver* parameters{};
   PeriodicTaskBinder* periodic_tasks{};
+  HardwareResolver* hardware{};
 };
 
 class ModuleContext {
@@ -93,6 +95,21 @@ class ModuleContext {
       return Status::kUnavailable;
     }
     return services_.periodic_tasks->BindPeriodicTask(module_name_, name, work);
+  }
+
+  template <HardwareDevice Device>
+  Status ResolveHardware(std::string_view name, Device*& device) const noexcept {
+    device = nullptr;
+    if (services_.hardware == nullptr) {
+      return Status::kUnavailable;
+    }
+    void* resolved{};
+    const auto status =
+        services_.hardware->Resolve(name, Device::TypeName(), resolved);
+    if (IsOk(status)) {
+      device = static_cast<Device*>(resolved);
+    }
+    return status;
   }
 
   template <MessageType Message>

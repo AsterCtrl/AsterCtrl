@@ -5,6 +5,7 @@
 #include <string_view>
 
 #include "xrobot/runtime/cooperative_executor.hpp"
+#include "xrobot/runtime/hardware_registry.hpp"
 #include "xrobot/runtime/module_context.hpp"
 #include "xrobot/runtime/parameter_registry.hpp"
 #include "xrobot/runtime/port_registry.hpp"
@@ -67,6 +68,7 @@ using xrobot::runtime::ParameterDescriptor;
 using xrobot::runtime::ParameterMutability;
 using xrobot::runtime::ParameterPersistence;
 using xrobot::runtime::StaticParameterRegistry;
+using xrobot::runtime::StaticHardwareRegistry;
 using xrobot::runtime::StaticPortRegistry;
 using xrobot::runtime::StaticTopic;
 using xrobot::runtime::Status;
@@ -106,6 +108,22 @@ class RecordingDiagnostics final : public DiagnosticSink {
   int count{};
 };
 
+class TestHardware {
+ public:
+  static constexpr std::string_view TypeName() noexcept {
+    return "test.hardware.Device/v1";
+  }
+
+  int value{};
+};
+
+class OtherHardware {
+ public:
+  static constexpr std::string_view TypeName() noexcept {
+    return "test.hardware.Other/v1";
+  }
+};
+
 struct Receiver {
   std::uint8_t value{};
 };
@@ -126,6 +144,8 @@ void ContextResolvesGeneratedResourcesWithoutOwningThem() {
       ParameterMutability::kRuntime, ParameterPersistence::kVolatile};
   Parameter gain(gain_descriptor);
   StaticParameterRegistry<1> parameters;
+  StaticHardwareRegistry<1> hardware;
+  TestHardware device{7};
   FakeClock clock;
   RecordingLog log;
   RecordingDiagnostics diagnostics;
@@ -141,13 +161,22 @@ void ContextResolvesGeneratedResourcesWithoutOwningThem() {
   assert(ports.Seal() == Status::kOk);
   assert(parameters.Add(gain) == Status::kOk);
   assert(parameters.Seal() == Status::kOk);
+  assert(hardware.Add("drive", device) == Status::kOk);
+  assert(hardware.Seal() == Status::kOk);
 
-  ModuleServices services{&executor, &clock, &log, &diagnostics, &ports,
-                          &parameters};
+  ModuleServices services{.executor = &executor,
+                          .clock = &clock,
+                          .log = &log,
+                          .diagnostics = &diagnostics,
+                          .ports = &ports,
+                          .parameters = &parameters,
+                          .hardware = &hardware};
   ModuleContext context("node", "controller", services);
   TopicPublisher<test::Command> publisher;
   TopicSubscriber<test::Command> subscriber;
   Parameter<float>* resolved_gain{};
+  TestHardware* resolved_device{};
+  OtherHardware* wrong_device{};
 
   assert(context.ResolveTopicPublisher("command_out", publisher) ==
          Status::kOk);
@@ -156,6 +185,12 @@ void ContextResolvesGeneratedResourcesWithoutOwningThem() {
   assert(subscriber.Bind(Receive, &receiver) == Status::kOk);
   assert(context.ResolveParameter("gain", resolved_gain) == Status::kOk);
   assert(resolved_gain == &gain);
+  assert(context.ResolveHardware("drive", resolved_device) == Status::kOk);
+  assert(resolved_device == &device);
+  assert(resolved_device->value == 7);
+  assert(context.ResolveHardware("drive", wrong_device) ==
+         Status::kTypeMismatch);
+  assert(wrong_device == nullptr);
   assert(publisher.Publish({7}, context.NowNs(), caller) == Status::kOk);
   assert(executor.RunOne() == Status::kOk);
   assert(receiver.value == 7);
@@ -176,12 +211,15 @@ void MissingCapabilitiesReturnUnavailable() {
   ModuleContext context("node", "minimal");
   TopicPublisher<test::Command> publisher;
   Parameter<float>* parameter{};
+  TestHardware* hardware{};
   const ExecutionContext caller("main", ExecutionKind::kThread, 1);
 
   assert(context.NowNs() == 0);
   assert(context.ResolveTopicPublisher("missing", publisher) ==
          Status::kUnavailable);
   assert(context.ResolveParameter("missing", parameter) ==
+         Status::kUnavailable);
+  assert(context.ResolveHardware("missing", hardware) ==
          Status::kUnavailable);
   assert(context.Log(LogLevel::kInfo, "ignored", caller) ==
          Status::kUnavailable);
