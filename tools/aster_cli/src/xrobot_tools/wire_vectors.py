@@ -8,7 +8,6 @@ import yaml
 
 from xrobot_tools.cpp_codegen import record_wire_sizes, topological_records
 from xrobot_tools.interface_model import (
-    PRIMITIVE_SIZES,
     FieldDefinition,
     InterfaceError,
     InterfaceModel,

@@ -106,7 +106,11 @@ def _allocate_ids(
         for name, value in existing.items()
         if name in names and minimum <= value <= maximum
     }
-    used = set(assigned.values())
+    used: set[int] = set()
+    for name, value in assigned.items():
+        if value in used:
+            raise DeploymentError(f"locked ID {value} is assigned more than once")
+        used.add(value)
     candidate = minimum
     for name in sorted(names):
         if name in assigned:
@@ -117,6 +121,103 @@ def _allocate_ids(
             raise DeploymentError(f"cannot allocate ID for {name!r}; limit is {maximum}")
         assigned[name] = candidate
         used.add(candidate)
+    return dict(sorted(assigned.items()))
+
+
+_CAN_PRIORITY_BITS = {
+    "control": 1,
+    "state": 2,
+    "event": 2,
+    "background": 3,
+}
+_XROBOT_CAN_CONTROL_IDS = range(1, 8)
+
+
+def _link_reserved_standard_ids(
+    plan: DeploymentPlan, link_name: str
+) -> dict[int, list[str]]:
+    reservations: dict[int, list[str]] = {}
+    link = plan.deployment["links"][link_name]
+    for endpoint in link["endpoints"]:
+        node_name = endpoint["node"]
+        resource_name = endpoint["resource"]
+        resource = plan.hardware[node_name]["spec"]["resources"][resource_name]
+        for reservation in resource.get("reserved_standard_ids", []):
+            arbitration_id = int(reservation["id"])
+            reservations.setdefault(arbitration_id, []).append(
+                f"{node_name}.{resource_name}:{reservation['owner']}"
+            )
+    return reservations
+
+
+def _route_arbitration_id(
+    plan: DeploymentPlan, route: Route, route_id: int
+) -> int:
+    qos_class = plan.deployment["qos_profiles"][route.qos]["class"]
+    return (_CAN_PRIORITY_BITS[qos_class] << 9) | route_id
+
+
+def _reservation_owners(owners: list[str]) -> str:
+    return ", ".join(repr(owner) for owner in sorted(owners))
+
+
+def _allocate_route_ids(
+    plan: DeploymentPlan, existing: dict[str, int]
+) -> dict[str, int]:
+    routes = {route.name: route for route in plan.routes}
+    reservations = {
+        link_name: _link_reserved_standard_ids(plan, link_name)
+        for link_name, link in plan.deployment["links"].items()
+        if link["transport"] == "xrobot-can"
+    }
+    for link_name, link_reservations in reservations.items():
+        for arbitration_id in _XROBOT_CAN_CONTROL_IDS:
+            owners = link_reservations.get(arbitration_id)
+            if owners:
+                raise DeploymentError(
+                    f"link {link_name!r} standard CAN ID "
+                    f"0x{arbitration_id:03x}, reserved by "
+                    f"{_reservation_owners(owners)}, conflicts with the "
+                    "xrobot-can control plane"
+                )
+
+    assigned = {
+        name: value
+        for name, value in existing.items()
+        if name in routes and 8 <= value <= 511
+    }
+    used: set[int] = set()
+    for name, route_id in assigned.items():
+        if route_id in used:
+            raise DeploymentError(
+                f"locked route ID {route_id} is assigned more than once"
+            )
+        used.add(route_id)
+        route = routes[name]
+        arbitration_id = _route_arbitration_id(plan, route, route_id)
+        owners = reservations[route.link].get(arbitration_id)
+        if owners:
+            raise DeploymentError(
+                f"locked route {name!r} ID {route_id} maps to standard CAN ID "
+                f"0x{arbitration_id:03x} on link {route.link!r}, reserved by "
+                f"{_reservation_owners(owners)}"
+            )
+
+    for name in sorted(routes):
+        if name in assigned:
+            continue
+        route = routes[name]
+        for candidate in range(8, 512):
+            if candidate in used:
+                continue
+            arbitration_id = _route_arbitration_id(plan, route, candidate)
+            if arbitration_id in reservations[route.link]:
+                continue
+            assigned[name] = candidate
+            used.add(candidate)
+            break
+        else:
+            raise DeploymentError(f"cannot allocate route ID for {name!r}; limit is 511")
     return dict(sorted(assigned.items()))
 
 
@@ -556,8 +657,19 @@ def _duration_ns(value_ms: Any) -> int:
     return int(round(float(value_ms) * 1_000_000))
 
 
+def _cpp_hash_array(value: str) -> str:
+    values = ", ".join(
+        f"std::byte{{0x{value[index:index + 2]}}}"
+        for index in range(0, len(value), 2)
+    )
+    return "{{" + values + "}}"
+
+
 def _node_ports(
-    plan: DeploymentPlan, node_name: str, route_ids: dict[str, int]
+    plan: DeploymentPlan,
+    node_name: str,
+    node_ids: dict[str, int],
+    route_ids: dict[str, int],
 ) -> str:
     namespace = f"xrobot::generated::{node_name}"
     links = _node_can_links(plan, node_name)
@@ -583,6 +695,41 @@ def _node_ports(
         f"        writer_{index}_(FindWriter(writers, {_cpp_string(link)}))"
         for index, link in enumerate(links)
     ]
+    control_initializers: list[str] = []
+    for index, link_name in enumerate(links):
+        link = plan.deployment["links"][link_name]
+        peer_node = next(
+            endpoint["node"]
+            for endpoint in link["endpoints"]
+            if endpoint["node"] != node_name
+        )
+        options = link["options"]
+        control_initializers.append(
+            f"        control_{index}_(\n"
+            "            xrobot::transport::can::CanLinkControlConfig{\n"
+            "                .local = xrobot::transport::can::Handshake{\n"
+            f"                    1, {node_ids[node_name]},\n"
+            f"                    {_cpp_hash_array(plan.deployment_hash)},\n"
+            f"                    {_cpp_hash_array(plan.schema_hash)}}},\n"
+            f"                .peer_node_id = {node_ids[peer_node]},\n"
+            "                .time_authority = "
+            f"{str(plan.deployment.get('time_authority') == node_name).lower()},\n"
+            "                .handshake_period_ns = "
+            f"{_duration_ns(options.get('handshake_period_ms', 1000))}ULL,\n"
+            "                .heartbeat_period_ns = "
+            f"{_duration_ns(options.get('heartbeat_period_ms', 100))}ULL,\n"
+            "                .heartbeat_timeout_ns = "
+            f"{_duration_ns(options.get('heartbeat_timeout_ms', 300))}ULL,\n"
+            "                .time_sync_period_ns = "
+            f"{_duration_ns(options.get('time_sync_period_ms', 10))}ULL,\n"
+            "                .recovery_samples = "
+            f"{int(options.get('recovery_samples', 3))},\n"
+            "                .retry_timeout_ns = "
+            f"{_duration_ns(options.get('control_retry_timeout_ms', 20))}ULL,\n"
+            "                .maximum_retries = "
+            f"{int(options.get('control_maximum_retries', 2))}}},\n"
+            f"            writer_{index}_, clock_)"
+        )
     rpc_initializers: list[str] = []
     bridge_initializers: list[str] = []
     for index, rpc in enumerate(rpcs):
@@ -597,7 +744,8 @@ def _node_ports(
                 bridge_initializers.append(
                     f"        rpc_bridge_{index}_({rpc['route_id']}, "
                     f"xrobot::transport::can::CanPriority::{priority}, "
-                    f"rpc_{index}_.client(), writer_{link_index}_, clock_)"
+                    f"rpc_{index}_.client(), control_{link_index}_.application_writer(), "
+                    "clock_)"
                 )
         else:
             route = rpc["route"]
@@ -606,7 +754,7 @@ def _node_ports(
             rpc_initializers.append(
                 f"        rpc_{index}_({rpc['route_id']}, "
                 f"xrobot::transport::can::CanPriority::{priority}, "
-                f"writer_{link_index}_, clock_)"
+                f"control_{link_index}_.application_writer(), clock_)"
             )
     writer_validity = " &&\n        ".join(
         f"HasOneWriter(writers, {_cpp_string(link)})" for link in links
@@ -614,6 +762,7 @@ def _node_ports(
     initializers = [
         clock_initializer,
         *writer_initializers,
+        *control_initializers,
         *rpc_initializers,
         *bridge_initializers,
     ]
@@ -706,6 +855,21 @@ def _node_ports(
             "",
             "  xrobot::runtime::PortResolver& resolver() noexcept { return ports_; }",
             "",
+            "  bool Ready() const noexcept {",
+        ]
+    )
+    if links:
+        readiness = " &&\n        ".join(
+            f"control_{index}_.application_enabled()"
+            for index, _ in enumerate(links)
+        )
+        configure_lines.append(f"    return {readiness};")
+    else:
+        configure_lines.append("    return true;")
+    configure_lines.extend(
+        [
+            "  }",
+            "",
             "  xrobot::transport::can::CanFrameReceiver CanReceiver(",
             "      std::string_view link) noexcept {",
         ]
@@ -729,6 +893,14 @@ def _node_ports(
             "    Status result = Status::kUnavailable;",
         ]
     )
+    for index, _ in enumerate(links):
+        configure_lines.extend(
+            [
+                f"    if (const auto status = control_{index}_.Poll(now_ns, caller);",
+                "        status != Status::kOk) return status;",
+                "    result = Status::kOk;",
+            ]
+        )
     for index, rpc in enumerate(rpcs):
         if rpc["local_server"] and rpc["kind"] == "action":
             configure_lines.append(
@@ -801,11 +973,19 @@ def _node_ports(
                 "      const xrobot::runtime::ExecutionContext& caller) noexcept {",
                 "    using xrobot::runtime::Status;",
                 "    using namespace xrobot::transport::can;",
-                "    (void)receive_time_ns;",
-                "    (void)caller;",
                 "    if (!sealed_) return Status::kInvalidState;",
                 "    const auto id = CanArbitrationId::Decode(frame.arbitration_id);",
                 "    if (!id.has_value()) return Status::kInvalidArgument;",
+                "    if (id->route_id <= kFaultRouteId)",
+                f"      return control_{link_index}_.Accept(",
+                "          frame, receive_time_ns, caller);",
+                "    if (id->route_id < kFirstApplicationRouteId)",
+                "      return Status::kUnavailable;",
+                f"    if (!control_{link_index}_.application_enabled())",
+                "      return Status::kUnavailable;",
+                f"    const auto network_time_ns = control_{link_index}_.ToNetworkTime(",
+                "        receive_time_ns);",
+                "    (void)network_time_ns;",
                 "    switch (id->route_id) {",
             ]
         )
@@ -820,7 +1000,7 @@ def _node_ports(
                     f"        if (id->priority != CanPriority::{priority})",
                     "          return Status::kInvalidArgument;",
                     f"        return ingress_{topic_index}_.Accept(",
-                    "            frame, receive_time_ns, caller);",
+                    "            frame, network_time_ns, caller);",
                 ]
             )
         for rpc_index, rpc in enumerate(rpcs):
@@ -839,7 +1019,7 @@ def _node_ports(
                     f"        if (id->priority != CanPriority::{priority})",
                     "          return Status::kInvalidArgument;",
                     f"        return {target}.Accept(",
-                    "            frame, receive_time_ns, caller);",
+                    "            frame, network_time_ns, caller);",
                 ]
             )
         dispatch_lines.extend(
@@ -857,6 +1037,10 @@ def _node_ports(
     for index, _ in enumerate(links):
         field_lines.append(
             f"  xrobot::transport::can::CanFrameWriter writer_{index}_;"
+        )
+    for index, _ in enumerate(links):
+        field_lines.append(
+            f"  xrobot::transport::can::CanLinkControlPlane control_{index}_;"
         )
     for index, topic in enumerate(topics):
         cpp_type = _cpp_type_name(topic["type"])
@@ -876,7 +1060,8 @@ def _node_ports(
                 [
                     f"  xrobot::transport::can::FastTopicEgress<{cpp_type}> egress_{index}_{{",
                     f"      {topic['route_id']}, xrobot::transport::can::CanPriority::{priority},",
-                    f"      writer_{link_index}_}};",
+                    f"      control_{link_index}_.application_writer(),",
+                    f"      control_{link_index}_.time_converter()}};",
                 ]
             )
         if topic["incoming"]:
@@ -947,6 +1132,7 @@ def _node_ports(
 #include "xrobot/runtime/runtime_services.hpp"
 #include "xrobot/runtime/topic.hpp"
 #include "xrobot/transport/can/action_bridge.hpp"
+#include "xrobot/transport/can/link_control.hpp"
 #include "xrobot/transport/can/protocol.hpp"
 #include "xrobot/transport/can/service_bridge.hpp"
 #include "xrobot/transport/can/topic_bridge.hpp"
@@ -1210,12 +1396,22 @@ def _node_composition(
             "    if (!IsOk(status) || !seal_generated_ports_) return status;",
             "    return ports_.Seal();",
             "  }",
-            "  xrobot::runtime::Status Start() noexcept { return runtime_.Start(); }",
+            "  xrobot::runtime::Status Start() noexcept {",
+            "    if (seal_generated_ports_ && !ports_.Ready())",
+            "      return xrobot::runtime::Status::kUnavailable;",
+            "    return runtime_.Start();",
+            "  }",
             "  xrobot::runtime::Status Poll(",
             "      std::uint64_t now_ns,",
             "      const xrobot::runtime::ExecutionContext& caller) noexcept {",
             "    using xrobot::runtime::Status;",
-            "    const auto runtime_status = runtime_.Poll(now_ns, caller);",
+            "    auto runtime_status = Status::kUnavailable;",
+            "    if (runtime_.state() == xrobot::runtime::RuntimeState::kRunning) {",
+            "      runtime_status = runtime_.Poll(now_ns, caller);",
+            "    } else if (runtime_.state() !=",
+            "               xrobot::runtime::RuntimeState::kInitialized) {",
+            "      return Status::kInvalidState;",
+            "    }",
             "    if (runtime_status != Status::kOk &&",
             "        runtime_status != Status::kUnavailable) return runtime_status;",
             "    if (!seal_generated_ports_) return runtime_status;",
@@ -1470,9 +1666,7 @@ def write_deployment(
     node_ids = _allocate_ids(
         list(plan.deployment["nodes"]), existing.get("nodes", {}), 1, 255
     )
-    route_ids = _allocate_ids(
-        [route.name for route in plan.routes], existing.get("routes", {}), 8, 511
-    )
+    route_ids = _allocate_route_ids(plan, existing.get("routes", {}))
 
     lock = {
         "api_version": "xrobot.io/v1alpha1",
@@ -1538,6 +1732,7 @@ def write_deployment(
             budget.name: {
                 "bitrate_bps": budget.bitrate_bps,
                 "reserved_utilization": round(budget.reserved_utilization, 9),
+                "control_utilization": round(budget.control_utilization, 9),
                 "route_utilization": round(budget.route_utilization, 9),
                 "total_utilization": round(budget.total_utilization, 9),
                 "utilization_limit": round(budget.utilization_limit, 9),
@@ -1581,7 +1776,7 @@ def write_deployment(
         )
         _write_if_changed(
             node_dir / "node_ports.hpp",
-            _node_ports(plan, node_name, route_ids),
+            _node_ports(plan, node_name, node_ids, route_ids),
         )
         if not composition_blockers[node_name]:
             _write_if_changed(

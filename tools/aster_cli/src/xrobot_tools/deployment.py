@@ -78,6 +78,7 @@ class LinkBudget:
     name: str
     bitrate_bps: int
     reserved_utilization: float
+    control_utilization: float
     route_utilization: float
     total_utilization: float
     utilization_limit: float
@@ -151,7 +152,31 @@ def _load_hardware(
             deployment_path.parent, node["target"]["hardware"]
         )
         profiles[node_name] = validate_document(hardware_path)
+        for resource_name, resource in profiles[node_name]["spec"][
+            "resources"
+        ].items():
+            reservations = resource.get("reserved_standard_ids", [])
+            if reservations and resource["kind"] != "can":
+                raise DeploymentError(
+                    f"hardware {node_name!r} resource {resource_name!r}: "
+                    "reserved_standard_ids requires a CAN resource"
+                )
+            owners_by_id: dict[int, str] = {}
+            for reservation in reservations:
+                arbitration_id = int(reservation["id"])
+                if arbitration_id in owners_by_id:
+                    raise DeploymentError(
+                        f"hardware {node_name!r} resource {resource_name!r}: "
+                        f"standard CAN ID 0x{arbitration_id:03x} is reserved by "
+                        f"both {owners_by_id[arbitration_id]!r} and "
+                        f"{reservation['owner']!r}"
+                    )
+                owners_by_id[arbitration_id] = reservation["owner"]
     for link_name, link in deployment["links"].items():
+        if link["transport"] == "xrobot-can" and len(link["endpoints"]) != 2:
+            raise DeploymentError(
+                f"xrobot-can link {link_name!r} requires exactly two endpoints in v1"
+            )
         endpoint_nodes: set[str] = set()
         for endpoint in link["endpoints"]:
             node_name = endpoint["node"]
@@ -174,6 +199,17 @@ def _load_hardware(
             if link["transport"] == "xrobot-can" and resources[resource_name]["kind"] != "can":
                 raise DeploymentError(
                     f"link {link_name!r}: resource {resource_name!r} is not CAN"
+                )
+        if link["transport"] == "xrobot-can":
+            authority = deployment.get("time_authority")
+            if authority is None:
+                raise DeploymentError(
+                    f"xrobot-can link {link_name!r} requires time_authority"
+                )
+            if authority not in endpoint_nodes:
+                raise DeploymentError(
+                    f"xrobot-can link {link_name!r} does not include time authority "
+                    f"node {authority!r}"
                 )
     return profiles
 
@@ -636,15 +672,53 @@ def _compile_budgets(
             for route in routes
             if route.link == name
         )
+        options = link["options"]
+        handshake_period_ms = float(options.get("handshake_period_ms", 1000))
+        heartbeat_period_ms = float(options.get("heartbeat_period_ms", 100))
+        heartbeat_timeout_ms = float(options.get("heartbeat_timeout_ms", 300))
+        time_sync_period_ms = float(options.get("time_sync_period_ms", 10))
+        retry_timeout_ms = float(options.get("control_retry_timeout_ms", 20))
+        recovery_samples = int(options.get("recovery_samples", 3))
+        maximum_retries = int(options.get("control_maximum_retries", 2))
+        if (
+            handshake_period_ms <= 0
+            or heartbeat_period_ms <= 0
+            or heartbeat_timeout_ms <= heartbeat_period_ms
+            or time_sync_period_ms <= 0
+            or retry_timeout_ms <= 0
+            or recovery_samples <= 0
+            or recovery_samples > 255
+            or maximum_retries < 0
+            or maximum_retries > 255
+        ):
+            raise DeploymentError(f"link {name!r} has invalid control-plane timing")
+        _, handshake_bits = _reliable_can_cost([34], 8)
+        endpoint_count = len(link["endpoints"])
+        control_bits_per_second = (
+            handshake_bits
+            * endpoint_count
+            * (maximum_retries + 1)
+            * 1000.0
+            / handshake_period_ms
+            + _classic_frame_bits(8)
+            * endpoint_count
+            * 1000.0
+            / heartbeat_period_ms
+            + _classic_frame_bits(8) * 1000.0 / time_sync_period_ms
+        )
         route_utilization = route_bits_per_second / bitrate
+        control_utilization = control_bits_per_second / bitrate
         reserved_utilization = float(reserved.get(name, 0.0))
         limit = float(link["budget"]["utilization_limit"])
         budget = LinkBudget(
             name=name,
             bitrate_bps=bitrate,
             reserved_utilization=reserved_utilization,
+            control_utilization=control_utilization,
             route_utilization=route_utilization,
-            total_utilization=reserved_utilization + route_utilization,
+            total_utilization=(
+                reserved_utilization + control_utilization + route_utilization
+            ),
             utilization_limit=limit,
         )
         if not budget.within_budget:

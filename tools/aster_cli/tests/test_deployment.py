@@ -542,6 +542,7 @@ int main() {
     subprocess.run([str(composition_executable)], check=True)
     budget = yaml.safe_load((output / "reports/link_budget.yaml").read_text())
     assert budget["links"]["robot_can"]["within_budget"] is True
+    assert budget["links"]["robot_can"]["control_utilization"] > 0
     executors = yaml.safe_load((output / "reports/executors.yaml").read_text())
     assert executors["nodes"]["node_a"][0]["name"] == "command_source__control"
     module_graph = yaml.safe_load(
@@ -631,12 +632,7 @@ using xrobot::runtime::Status;
 using xrobot::transport::can::CanFrame;
 using xrobot::transport::can::CanFrameReceiver;
 
-Status DiscardFrame(void*, const CanFrame&,
-                    const ExecutionContext&) noexcept {
-  return Status::kOk;
-}
-
-struct LoopbackBus {
+struct Wire {
   CanFrameReceiver receiver;
   const ExecutionContext* receive_context{};
   std::uint64_t receive_time_ns{};
@@ -655,9 +651,9 @@ void RecordPriority(void* state,
 
 Status SendFrame(void* state, const CanFrame& frame,
                  const ExecutionContext&) noexcept {
-  auto& bus = *static_cast<LoopbackBus*>(state);
-  const auto status = bus.receiver.Accept(
-      frame, bus.receive_time_ns, *bus.receive_context);
+  auto& wire = *static_cast<Wire*>(state);
+  const auto status = wire.receiver.Accept(
+      frame, wire.receive_time_ns, *wire.receive_context);
   return status == Status::kUnavailable ? Status::kOk : status;
 }
 
@@ -670,16 +666,18 @@ int main() {
   const ExecutionContext receive_context(
       "can-rx", ExecutionKind::kThread, 6);
 
+  Wire source_to_sink{{}, &receive_context, clock.now_ns};
+  Wire sink_to_source{{}, &receive_context, clock.now_ns};
   std::array<CanLinkWriter, 1> sink_links{{
-      {"robot_can", {DiscardFrame, nullptr}},
+      {"robot_can", {SendFrame, &sink_to_source}},
+  }};
+  std::array<CanLinkWriter, 1> source_links{{
+      {"robot_can", {SendFrame, &source_to_sink}},
   }};
   xrobot::generated::node_b::NodeComposition sink(clock, sink_links);
-  LoopbackBus bus{
-      sink.CanReceiver("robot_can"), &receive_context, clock.now_ns};
-  std::array<CanLinkWriter, 1> source_links{{
-      {"robot_can", {SendFrame, &bus}},
-  }};
   xrobot::generated::node_a::NodeComposition source(clock, source_links);
+  source_to_sink.receiver = sink.CanReceiver("robot_can");
+  sink_to_source.receiver = source.CanReceiver("robot_can");
 
   StaticHardwareRegistry<1> source_hardware;
   test::Device device;
@@ -693,11 +691,21 @@ int main() {
   assert(sink.Configure() == Status::kOk);
   assert(source.Initialize() == Status::kOk);
   assert(sink.Initialize() == Status::kOk);
-  assert(source.Start() == Status::kOk);
-  assert(sink.Start() == Status::kOk);
+  assert(source.Start() == Status::kUnavailable);
+  assert(sink.Start() == Status::kUnavailable);
 
   const ExecutionContext runtime_context(
       "runtime", ExecutionKind::kThread, 9);
+  for (std::size_t sample = 0; sample < 3; ++sample) {
+    source_to_sink.receive_time_ns = clock.now_ns;
+    sink_to_source.receive_time_ns = clock.now_ns;
+    assert(source.Poll(clock.now_ns, runtime_context) == Status::kOk);
+    assert(sink.Poll(clock.now_ns, runtime_context) == Status::kOk);
+    clock.now_ns += 100'000'000;
+  }
+  assert(source.Start() == Status::kOk);
+  assert(sink.Start() == Status::kOk);
+
   auto* const high = source.FindExecutor("command_source__control");
   auto* const low = source.FindExecutor("command_observer__control");
   assert(high != nullptr);
@@ -1065,19 +1073,33 @@ spec:
 #include <cassert>
 #include <cstddef>
 
+#include "node_a/node_composition.hpp"
 #include "node_b/node_composition.hpp"
+#include "xrobot/runtime/hardware_registry.hpp"
 
 namespace {
 
 class Clock final : public xrobot::runtime::SteadyClock {
  public:
-  std::uint64_t NowNs() const noexcept override { return 1'000'000; }
+  std::uint64_t NowNs() const noexcept override { return now_ns; }
+  std::uint64_t now_ns{1'000'000};
 };
 
-xrobot::runtime::Status DiscardFrame(
-    void*, const xrobot::transport::can::CanFrame&,
+struct Wire {
+  xrobot::transport::can::CanFrameReceiver receiver;
+  const xrobot::runtime::ExecutionContext* context{};
+  std::uint64_t receive_time_ns{};
+};
+
+xrobot::runtime::Status SendFrame(
+    void* state, const xrobot::transport::can::CanFrame& frame,
     const xrobot::runtime::ExecutionContext&) noexcept {
-  return xrobot::runtime::Status::kOk;
+  auto& wire = *static_cast<Wire*>(state);
+  const auto status = wire.receiver.Accept(
+      frame, wire.receive_time_ns, *wire.context);
+  return status == xrobot::runtime::Status::kUnavailable
+             ? xrobot::runtime::Status::kOk
+             : status;
 }
 
 }  // namespace
@@ -1085,23 +1107,51 @@ xrobot::runtime::Status DiscardFrame(
 int main() {
   using namespace xrobot::runtime;
   Clock clock;
-  std::array<xrobot::generated::CanLinkWriter, 1> links{{
-      {"robot_can", {DiscardFrame, nullptr}},
+  const ExecutionContext can_context("can-rx", ExecutionKind::kThread, 6);
+  const ExecutionContext runtime_context(
+      "runtime", ExecutionKind::kThread, 9);
+  Wire a_to_b{{}, &can_context, clock.now_ns};
+  Wire b_to_a{{}, &can_context, clock.now_ns};
+  std::array<xrobot::generated::CanLinkWriter, 1> a_links{{
+      {"robot_can", {SendFrame, &a_to_b}},
   }};
-  xrobot::generated::node_b::NodeComposition node(clock, links);
-  assert(node.Configure() == Status::kOk);
-  assert(node.Initialize() == Status::kOk);
-  assert(node.Start() == Status::kOk);
+  std::array<xrobot::generated::CanLinkWriter, 1> b_links{{
+      {"robot_can", {SendFrame, &b_to_a}},
+  }};
+  xrobot::generated::node_a::NodeComposition node_a(clock, a_links);
+  xrobot::generated::node_b::NodeComposition node_b(clock, b_links);
+  a_to_b.receiver = node_b.CanReceiver("robot_can");
+  b_to_a.receiver = node_a.CanReceiver("robot_can");
+
+  StaticHardwareRegistry<1> source_hardware;
+  test::Device device;
+  device.bias = 7;
+  assert(source_hardware.Add("source_device", device) == Status::kOk);
+  assert(source_hardware.Seal() == Status::kOk);
+  assert(node_a.Configure(&source_hardware) == Status::kOk);
+  assert(node_b.Configure() == Status::kOk);
+  assert(node_a.Initialize() == Status::kOk);
+  assert(node_b.Initialize() == Status::kOk);
+  for (std::size_t sample = 0; sample < 3; ++sample) {
+    a_to_b.receive_time_ns = clock.now_ns;
+    b_to_a.receive_time_ns = clock.now_ns;
+    assert(node_a.Poll(clock.now_ns, runtime_context) == Status::kOk);
+    assert(node_b.Poll(clock.now_ns, runtime_context) == Status::kOk);
+    clock.now_ns += 100'000'000;
+  }
+  assert(node_b.Start() == Status::kOk);
+  assert(node_a.Start() == Status::kOk);
 
   std::size_t executed{};
-  assert(node.DrainExecutors(4, executed) == Status::kOk);
+  assert(node_b.DrainExecutors(4, executed) == Status::kOk);
   assert(executed == 2);
   assert(test::ServiceServerModule::calls == 1);
   assert(test::ServiceClientModule::completions == 1);
   assert(test::ServiceClientModule::accepted);
   assert(test::ActionServerModule::goals == 1);
   assert(test::ActionClientModule::accepted == 1);
-  node.Shutdown();
+  node_a.Shutdown();
+  node_b.Shutdown();
 }
 """,
     )
@@ -1218,9 +1268,10 @@ int main() {
   using namespace xrobot::runtime;
   Clock clock;
   const ExecutionContext can_context("can-rx", ExecutionKind::kThread, 6);
+  const ExecutionContext runtime_context(
+      "runtime", ExecutionKind::kThread, 9);
   Wire a_to_b{{}, &can_context, clock.now_ns};
   Wire b_to_a{{}, &can_context, clock.now_ns};
-  a_to_b.drop_index = 1;
   std::array<xrobot::generated::CanLinkWriter, 1> a_links{{
       {"robot_can", {SendFrame, &a_to_b}},
   }};
@@ -1241,6 +1292,16 @@ int main() {
   assert(node_b.Configure() == Status::kOk);
   assert(node_a.Initialize() == Status::kOk);
   assert(node_b.Initialize() == Status::kOk);
+  assert(node_a.Start() == Status::kUnavailable);
+  assert(node_b.Start() == Status::kUnavailable);
+  for (std::size_t sample = 0; sample < 3; ++sample) {
+    a_to_b.receive_time_ns = clock.now_ns;
+    b_to_a.receive_time_ns = clock.now_ns;
+    assert(node_a.Poll(clock.now_ns, runtime_context) == Status::kOk);
+    assert(node_b.Poll(clock.now_ns, runtime_context) == Status::kOk);
+    clock.now_ns += 100'000'000;
+  }
+  a_to_b.drop_index = a_to_b.frame_index + 1;
   assert(node_b.Start() == Status::kOk);
   assert(node_a.Start() == Status::kOk);
 
@@ -1254,8 +1315,8 @@ int main() {
   assert(test::ActionClientModule::accepted == 0);
 
   clock.now_ns += 6'000'000;
-  const ExecutionContext runtime_context(
-      "runtime", ExecutionKind::kThread, 9);
+  a_to_b.receive_time_ns = clock.now_ns;
+  b_to_a.receive_time_ns = clock.now_ns;
   assert(node_a.Poll(clock.now_ns, runtime_context) == Status::kOk);
   assert(node_b.DrainExecutors(4, executed) == Status::kOk);
   assert(executed == 1);
@@ -1370,6 +1431,65 @@ def test_rejects_a_classic_can_budget_overflow(tmp_path: Path) -> None:
 
     with pytest.raises(DeploymentError, match="robot_can.*utilization"):
         compile_deployment(workspace, deployment, tmp_path / "generated")
+
+
+def test_route_ids_avoid_reserved_standard_can_ids(tmp_path: Path) -> None:
+    workspace, deployment = create_workspace(tmp_path)
+    hardware = tmp_path / "hardware/node_a.yaml"
+    hardware.write_text(
+        hardware.read_text(encoding="utf-8").replace(
+            "robot_bus: {kind: can, backend: libxr, resource: can1, options: {}}",
+            "robot_bus: {kind: can, backend: libxr, resource: can1, "
+            "options: {}, reserved_standard_ids: [{id: 0x208, owner: legacy}]}"
+        ),
+        encoding="utf-8",
+    )
+
+    output = tmp_path / "generated"
+    compile_deployment(workspace, deployment, output)
+
+    lock = yaml.safe_load((output / "deployment.lock.yaml").read_text())
+    assert lock["routes"] == {"/control/command": 9}
+
+
+def test_rejects_reserved_xrobot_can_control_plane_id(tmp_path: Path) -> None:
+    workspace, deployment = create_workspace(tmp_path)
+    hardware = tmp_path / "hardware/node_a.yaml"
+    hardware.write_text(
+        hardware.read_text(encoding="utf-8").replace(
+            "robot_bus: {kind: can, backend: libxr, resource: can1, options: {}}",
+            "robot_bus: {kind: can, backend: libxr, resource: can1, "
+            "options: {}, reserved_standard_ids: [{id: 1, owner: legacy}]}"
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(DeploymentError, match="0x001.*legacy.*control plane"):
+        compile_deployment(workspace, deployment, tmp_path / "generated")
+
+
+def test_rejects_a_locked_route_that_conflicts_with_reserved_can_id(
+    tmp_path: Path,
+) -> None:
+    workspace, deployment = create_workspace(tmp_path)
+    output = tmp_path / "generated"
+    lock = tmp_path / "deployment.lock.yaml"
+    compile_deployment(workspace, deployment, output, lock)
+    hardware = tmp_path / "hardware/node_a.yaml"
+    hardware.write_text(
+        hardware.read_text(encoding="utf-8").replace(
+            "robot_bus: {kind: can, backend: libxr, resource: can1, options: {}}",
+            "robot_bus: {kind: can, backend: libxr, resource: can1, "
+            "options: {}, reserved_standard_ids: [{id: 0x208, owner: legacy}]}"
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        DeploymentError,
+        match="locked route '/control/command'.*0x208.*legacy",
+    ):
+        compile_deployment(workspace, deployment, output, lock)
 
 
 def test_classic_can_cost_includes_reliable_ack_and_operation_envelopes() -> None:

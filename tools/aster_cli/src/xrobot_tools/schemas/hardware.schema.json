@@ -40,7 +40,20 @@
         "kind": {"type": "string", "minLength": 1},
         "backend": {"type": "string", "minLength": 1},
         "resource": {"type": "string", "minLength": 1},
-        "options": {"type": "object", "additionalProperties": true}
+        "options": {"type": "object", "additionalProperties": true},
+        "reserved_standard_ids": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/canStandardIdReservation"}
+        }
+      }
+    },
+    "canStandardIdReservation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "owner"],
+      "properties": {
+        "id": {"type": "integer", "minimum": 0, "maximum": 2047},
+        "owner": {"type": "string", "minLength": 1}
       }
     },
     "device": {
