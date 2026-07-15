@@ -64,6 +64,13 @@ if(XROBOT_RUNTIME_BUILD_TESTS)
   target_link_libraries(xrobot_runtime_module_context_test PRIVATE xrobot::runtime)
   add_test(NAME xrobot_runtime_module_context_test COMMAND xrobot_runtime_module_context_test)
 
+  add_executable(xrobot_runtime_mapped_resolver_test
+                 tests/mapped_resolver_test.cpp)
+  target_link_libraries(xrobot_runtime_mapped_resolver_test
+                        PRIVATE xrobot::runtime)
+  add_test(NAME xrobot_runtime_mapped_resolver_test
+           COMMAND xrobot_runtime_mapped_resolver_test)
+
   add_executable(xrobot_runtime_legacy_adapter_test tests/legacy_adapter_test.cpp)
   target_link_libraries(xrobot_runtime_legacy_adapter_test PRIVATE xrobot::runtime)
   add_test(NAME xrobot_runtime_legacy_adapter_test COMMAND xrobot_runtime_legacy_adapter_test)
