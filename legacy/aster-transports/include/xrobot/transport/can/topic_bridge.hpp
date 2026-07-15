@@ -15,6 +15,7 @@ namespace xrobot::transport::can {
 struct TopicEgressStats {
   std::uint32_t messages{};
   std::uint32_t frames{};
+  std::uint32_t rate_limited{};
   std::uint32_t encode_failures{};
   std::uint32_t send_failures{};
 };
@@ -30,14 +31,24 @@ class FastTopicEgress final : public xrobot::runtime::TopicSink<Message> {
 
   constexpr FastTopicEgress(std::uint16_t route_id, CanPriority priority,
                             CanFrameWriter writer,
-                            CanTimeConverter time = {}) noexcept
-      : route_id_(route_id), priority_(priority), writer_(writer), time_(time) {}
+                            CanTimeConverter time = {},
+                            std::uint64_t minimum_period_ns = 0U) noexcept
+      : route_id_(route_id),
+        priority_(priority),
+        writer_(writer),
+        time_(time),
+        minimum_period_ns_(minimum_period_ns) {}
 
   Status Deliver(
       const Message& message, const xrobot::runtime::MessageInfo& info,
       const xrobot::runtime::ExecutionContext& caller) noexcept override {
-    const auto source_ms =
-        time_.ToNetworkTime(info.source_timestamp_ns) / 1'000'000U;
+    const auto source_time_ns = time_.ToNetworkTime(info.source_timestamp_ns);
+    if (has_last_send_ && source_time_ns >= last_send_time_ns_ &&
+        source_time_ns - last_send_time_ns_ < minimum_period_ns_) {
+      ++stats_.rate_limited;
+      return Status::kOk;
+    }
+    const auto source_ms = source_time_ns / 1'000'000U;
     const auto tick = static_cast<std::uint16_t>(source_ms & 0xffffU);
     payload_[0] = static_cast<std::byte>(tick & 0xffU);
     payload_[1] = static_cast<std::byte>(tick >> 8U);
@@ -65,6 +76,8 @@ class FastTopicEgress final : public xrobot::runtime::TopicSink<Message> {
       ++stats_.frames;
     }
     sequence_ = static_cast<std::uint8_t>((sequence_ + 1U) & 0x3fU);
+    last_send_time_ns_ = source_time_ns;
+    has_last_send_ = true;
     ++stats_.messages;
     return Status::kOk;
   }
@@ -76,9 +89,12 @@ class FastTopicEgress final : public xrobot::runtime::TopicSink<Message> {
   CanPriority priority_{CanPriority::kBackground};
   CanFrameWriter writer_;
   CanTimeConverter time_;
+  std::uint64_t minimum_period_ns_{};
+  std::uint64_t last_send_time_ns_{};
   std::array<std::byte, kPayloadSize> payload_{};
   std::array<CanFrame, kMaximumFrames> frames_{};
   std::uint8_t sequence_{};
+  bool has_last_send_{};
   TopicEgressStats stats_{};
 };
 

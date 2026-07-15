@@ -181,12 +181,49 @@ void MissingFragmentDoesNotLeakAPartialMessageAndLatestRecovers() {
   assert(ingress.reassembly_stats().superseded == 1);
 }
 
+void EgressEnforcesTheConfiguredMaximumRate() {
+  CooperativeExecutor<4> destination_executor("destination", 4);
+  StaticTopic<test::Command, 1> source_topic("/state/command");
+  StaticTopic<test::Command, 1> destination_topic("/state/command");
+  Receiver receiver;
+  TopicSubscription<test::Command, 1> destination_subscription(
+      destination_executor, DeliveryPolicy::kLatest, Receive, &receiver);
+  const ExecutionContext source_context("source", ExecutionKind::kThread, 4);
+  const ExecutionContext destination_context("destination",
+                                             ExecutionKind::kThread, 4);
+  FastTopicIngress<test::Command> ingress(
+      8, destination_topic.publisher(), {20'000'000, 50'000'000,
+                                         RearmPolicy::kAutomatic});
+  LoopbackBus bus{&ingress, &destination_context, 3'000'000'000};
+  FastTopicEgress<test::Command> egress(
+      8, CanPriority::kState, {SendFrame, &bus}, {}, 10'000'000U);
+
+  assert(destination_executor.Initialize() == Status::kOk);
+  assert(destination_executor.Start() == Status::kOk);
+  assert(destination_topic.Connect(destination_subscription) == Status::kOk);
+  assert(destination_topic.Seal() == Status::kOk);
+  assert(source_topic.Connect(egress) == Status::kOk);
+  assert(source_topic.Seal() == Status::kOk);
+
+  assert(source_topic.publisher().Publish({{1, 2, 3, 4}}, 3'000'000'000,
+                                          source_context) == Status::kOk);
+  assert(source_topic.publisher().Publish({{5, 6, 7, 8}}, 3'005'000'000,
+                                          source_context) == Status::kOk);
+  assert(source_topic.publisher().Publish({{9, 10, 11, 12}}, 3'010'000'000,
+                                          source_context) == Status::kOk);
+  assert(egress.stats().messages == 2);
+  assert(egress.stats().rate_limited == 1);
+  assert(destination_executor.RunOne() == Status::kOk);
+  assert(receiver.command.values[0] == 9);
+}
+
 }  // namespace
 
 int main() {
   const auto allocations = xrobot_test::AllocationCount();
   SameTopicContractCrossesTheSimulatedCanLink();
   MissingFragmentDoesNotLeakAPartialMessageAndLatestRecovers();
+  EgressEnforcesTheConfiguredMaximumRate();
   assert(xrobot_test::AllocationCount() == allocations);
   return 0;
 }
