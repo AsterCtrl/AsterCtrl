@@ -6,4 +6,4 @@ spec:
   exports:
     libraries:
       - {name: xrobot::libxr-backend, portable: false}
-  dependencies: [libxr, xrobot-runtime]
+  dependencies: [libxr, xrobot-runtime, xrobot-transports]
