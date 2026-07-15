@@ -100,6 +100,10 @@ Status SendFrame(void* state, const CanFrame& frame,
   return Status::kOk;
 }
 
+std::uint64_t AddTimeOffset(void* state, std::uint64_t local_time_ns) noexcept {
+  return local_time_ns + *static_cast<std::uint64_t*>(state);
+}
+
 void SameTopicContractCrossesTheSimulatedCanLink() {
   CooperativeExecutor<4> source_executor("source", 4);
   CooperativeExecutor<4> destination_executor("destination", 4);
@@ -114,9 +118,11 @@ void SameTopicContractCrossesTheSimulatedCanLink() {
   FastTopicIngress<test::Command> ingress(
       8, destination_topic.publisher(), {10'000'000, 30'000'000,
                                          RearmPolicy::kFreshSample});
-  LoopbackBus bus{&ingress, &destination_context, 1'005'000'000};
+  LoopbackBus bus{&ingress, &destination_context, 1'010'000'000};
+  std::uint64_t time_offset_ns{5'000'000};
   FastTopicEgress<test::Command> egress(
-      8, CanPriority::kControl, {SendFrame, &bus});
+      8, CanPriority::kControl, {SendFrame, &bus},
+      {AddTimeOffset, &time_offset_ns});
 
   assert(source_executor.Initialize() == Status::kOk);
   assert(source_executor.Start() == Status::kOk);
@@ -134,7 +140,7 @@ void SameTopicContractCrossesTheSimulatedCanLink() {
   assert(destination_executor.RunOne() == Status::kOk);
   assert(receiver.count == 1);
   assert(receiver.command.values == command.values);
-  assert(receiver.info.source_timestamp_ns == 1'000'000'000);
+  assert(receiver.info.source_timestamp_ns == 1'005'000'000);
   assert(ingress.freshness().state() == FreshnessState::kFresh);
 }
 

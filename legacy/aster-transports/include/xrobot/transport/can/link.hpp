@@ -32,6 +32,17 @@ struct CanClockReader {
   }
 };
 
+using CanTimeConvert = std::uint64_t (*)(void*, std::uint64_t) noexcept;
+
+struct CanTimeConverter {
+  CanTimeConvert convert{};
+  void* state{};
+
+  std::uint64_t ToNetworkTime(std::uint64_t local_time_ns) const noexcept {
+    return convert == nullptr ? local_time_ns : convert(state, local_time_ns);
+  }
+};
+
 using CanFrameReceive = Status (*)(
     void*, const CanFrame&, std::uint64_t,
     const xrobot::runtime::ExecutionContext&) noexcept;

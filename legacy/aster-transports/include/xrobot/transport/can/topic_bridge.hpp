@@ -29,13 +29,15 @@ class FastTopicEgress final : public xrobot::runtime::TopicSink<Message> {
       kPayloadSize <= 7 ? 1 : (kPayloadSize + 5) / 6;
 
   constexpr FastTopicEgress(std::uint16_t route_id, CanPriority priority,
-                            CanFrameWriter writer) noexcept
-      : route_id_(route_id), priority_(priority), writer_(writer) {}
+                            CanFrameWriter writer,
+                            CanTimeConverter time = {}) noexcept
+      : route_id_(route_id), priority_(priority), writer_(writer), time_(time) {}
 
   Status Deliver(
       const Message& message, const xrobot::runtime::MessageInfo& info,
       const xrobot::runtime::ExecutionContext& caller) noexcept override {
-    const auto source_ms = info.source_timestamp_ns / 1'000'000U;
+    const auto source_ms =
+        time_.ToNetworkTime(info.source_timestamp_ns) / 1'000'000U;
     const auto tick = static_cast<std::uint16_t>(source_ms & 0xffffU);
     payload_[0] = static_cast<std::byte>(tick & 0xffU);
     payload_[1] = static_cast<std::byte>(tick >> 8U);
@@ -73,6 +75,7 @@ class FastTopicEgress final : public xrobot::runtime::TopicSink<Message> {
   std::uint16_t route_id_{};
   CanPriority priority_{CanPriority::kBackground};
   CanFrameWriter writer_;
+  CanTimeConverter time_;
   std::array<std::byte, kPayloadSize> payload_{};
   std::array<CanFrame, kMaximumFrames> frames_{};
   std::uint8_t sequence_{};

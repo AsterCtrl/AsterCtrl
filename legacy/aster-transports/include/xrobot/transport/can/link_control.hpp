@@ -179,6 +179,9 @@ class CanLinkControlPlane {
   CanFrameWriter application_writer() noexcept {
     return {WriteApplication, this};
   }
+  CanTimeConverter time_converter() noexcept {
+    return {ConvertTime, this};
+  }
 
   bool compatible() const noexcept {
     return handshake_received_ &&
@@ -303,6 +306,11 @@ class CanLinkControlPlane {
       ++self.stats_.forwarded_application_frames;
     }
     return status;
+  }
+
+  static std::uint64_t ConvertTime(void* state,
+                                   std::uint64_t local_time_ns) noexcept {
+    return static_cast<CanLinkControlPlane*>(state)->ToNetworkTime(local_time_ns);
   }
 
   Status InvalidControlFrame() noexcept {
