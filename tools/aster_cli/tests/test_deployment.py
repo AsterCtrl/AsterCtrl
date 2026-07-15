@@ -1656,7 +1656,7 @@ def test_classic_can_cost_includes_reliable_ack_and_operation_envelopes() -> Non
         _can_route_cost("topic", [95], 8)
 
 
-def test_package_lock_changes_the_whole_deployment_hash(tmp_path: Path) -> None:
+def test_resolved_package_lock_changes_the_deployment_hash(tmp_path: Path) -> None:
     workspace, deployment = create_workspace(tmp_path)
     output = tmp_path / "generated"
     first = compile_deployment(workspace, deployment, output)
@@ -1665,6 +1665,79 @@ def test_package_lock_changes_the_whole_deployment_hash(tmp_path: Path) -> None:
         package_lock.read_text(encoding="utf-8").replace(
             "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
             "dddddddddddddddddddddddddddddddddddddddd",
+        ),
+        encoding="utf-8",
+    )
+
+    second = compile_deployment(workspace, deployment, output)
+
+    assert first.deployment_hash != second.deployment_hash
+
+
+def test_unrelated_package_lock_does_not_change_deployment_hash(
+    tmp_path: Path,
+) -> None:
+    workspace, deployment = create_workspace(tmp_path)
+    workspace.write_text(
+        workspace.read_text(encoding="utf-8")
+        + "  - {name: docs, source: {type: path, path: docs}}\n",
+        encoding="utf-8",
+    )
+    package_lock = tmp_path / "package.lock.yaml"
+    package_lock.write_text(
+        package_lock.read_text(encoding="utf-8")
+        + "  docs: {source: docs, commit: "
+        + "dddddddddddddddddddddddddddddddddddddddd}\n",
+        encoding="utf-8",
+    )
+    output = tmp_path / "generated"
+    first = compile_deployment(workspace, deployment, output)
+    package_lock.write_text(
+        package_lock.read_text(encoding="utf-8").replace(
+            "dddddddddddddddddddddddddddddddddddddddd",
+            "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        ),
+        encoding="utf-8",
+    )
+
+    second = compile_deployment(workspace, deployment, output)
+
+    assert first.deployment_hash == second.deployment_hash
+
+
+def test_deployment_compiler_lock_changes_deployment_hash(tmp_path: Path) -> None:
+    workspace, deployment = create_workspace(tmp_path)
+    write(
+        tmp_path,
+        "xrobot-tools/package.yaml",
+        """\
+api_version: xrobot.io/v1alpha1
+kind: Package
+metadata: {name: xrobot-tools, version: 0.1.0, license: Apache-2.0}
+spec:
+  build: {system: python}
+  exports: {tools: [xrctl]}
+  dependencies: []
+""",
+    )
+    workspace.write_text(
+        workspace.read_text(encoding="utf-8")
+        + "  - {name: xrobot-tools, source: {type: path, path: xrobot-tools}}\n",
+        encoding="utf-8",
+    )
+    package_lock = tmp_path / "package.lock.yaml"
+    package_lock.write_text(
+        package_lock.read_text(encoding="utf-8")
+        + "  xrobot-tools: {source: xrobot-tools, commit: "
+        + "dddddddddddddddddddddddddddddddddddddddd}\n",
+        encoding="utf-8",
+    )
+    output = tmp_path / "generated"
+    first = compile_deployment(workspace, deployment, output)
+    package_lock.write_text(
+        package_lock.read_text(encoding="utf-8").replace(
+            "dddddddddddddddddddddddddddddddddddddddd",
+            "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
         ),
         encoding="utf-8",
     )

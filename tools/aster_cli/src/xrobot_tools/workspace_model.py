@@ -163,6 +163,13 @@ class Workspace:
     def package_paths(self) -> dict[str, Path]:
         return dict(self._sources)
 
+    @property
+    def resolved_package_lock(self) -> dict[str, dict[str, str]]:
+        return {
+            name: dict(self.lock["packages"][name])
+            for name in sorted(self._packages)
+        }
+
     def board(self, reference: str) -> BoardExport:
         package_name, separator, board_name = reference.partition("/")
         if not separator or not package_name or not board_name:

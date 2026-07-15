@@ -799,6 +799,8 @@ def _build_plan(
         for name, endpoints in sorted(_collect_ports(instances).items())
     }
     model = workspace.interface_model()
+    if workspace.has_package("xrobot-tools"):
+        workspace.package("xrobot-tools")
     routes = _compile_routes(bindings, deployment, model)
     budgets = _compile_budgets(deployment, routes)
     type_hashes = {route.type_name: route.type_hash for route in routes}
@@ -806,7 +808,7 @@ def _build_plan(
         {
             "deployment": deployment,
             "robot": robot,
-            "package_lock": workspace.lock,
+            "package_lock": workspace.resolved_package_lock,
             "modules": [item.manifest.document for item in instances],
             "hardware": hardware,
             "boards": {
