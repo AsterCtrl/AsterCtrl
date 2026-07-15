@@ -259,7 +259,7 @@ def test_rejects_a_classic_can_budget_overflow(tmp_path: Path) -> None:
 
 
 def test_classic_can_cost_includes_reliable_ack_and_operation_envelopes() -> None:
-    assert _can_route_cost("service", [2, 4], 8) == (5, 4, 360)
+    assert _can_route_cost("service", [2, 4], 8) == (9, 5, 505)
     assert _can_route_cost("action", [2, 1, 2], 8) == (15, 15, 1525)
 
     with pytest.raises(DeploymentError, match="16 classic CAN fragments"):

@@ -396,7 +396,7 @@ def _wire_payload_sizes(kind: str, record_sizes: list[int]) -> list[int]:
         return [record_sizes[0] + 2]  # Source timestamp tick.
     if kind == "service":
         request_size, response_size = record_sizes
-        return [request_size + 1, response_size + 1]  # Operation/status byte.
+        return [request_size + 4, response_size + 5]  # Request ID and status.
     if kind == "action":
         goal_size, feedback_size, result_size = record_sizes
         return [
