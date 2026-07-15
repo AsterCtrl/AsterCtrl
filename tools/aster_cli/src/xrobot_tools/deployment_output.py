@@ -489,6 +489,41 @@ def _node_topic_specs(
     return specs
 
 
+def _node_local_rpc_specs(
+    plan: DeploymentPlan, node_name: str
+) -> list[dict[str, Any]]:
+    specs: list[dict[str, Any]] = []
+    for name, endpoints in plan.bindings.items():
+        kinds = {endpoint.kind for endpoint in endpoints}
+        if kinds <= {"service_client", "service_server"}:
+            kind = "service"
+            server_kind = "service_server"
+            client_kind = "service_client"
+        elif kinds <= {"action_client", "action_server"}:
+            kind = "action"
+            server_kind = "action_server"
+            client_kind = "action_client"
+        else:
+            continue
+        server = next(endpoint for endpoint in endpoints if endpoint.kind == server_kind)
+        if server.node != node_name:
+            continue
+        specs.append(
+            {
+                "name": name,
+                "kind": kind,
+                "type": server.type_name,
+                "server_instance": server.instance,
+                "client": any(
+                    endpoint.node == node_name and endpoint.kind == client_kind
+                    for endpoint in endpoints
+                ),
+                "capacity": 1,
+            }
+        )
+    return specs
+
+
 _CAN_PRIORITIES = {
     "control": "kControl",
     "state": "kState",
@@ -512,24 +547,40 @@ def _node_ports(
     namespace = f"xrobot::generated::{node_name}"
     links = _node_can_links(plan, node_name)
     topics = _node_topic_specs(plan, node_name, route_ids)
+    local_rpcs = _node_local_rpc_specs(plan, node_name)
     registry_entries = sum(
         int(topic["publisher"]) + int(topic["subscriber"]) for topic in topics
-    )
+    ) + sum(1 + int(rpc["client"]) for rpc in local_rpcs)
 
+    constructor_parameters = [
+        "      std::span<const CanLinkWriter> writers",
+        *[
+            f"      xrobot::runtime::Executor& rpc_{index}_executor"
+            for index, _ in enumerate(local_rpcs)
+        ],
+    ]
     writer_initializers = [
         f"        writer_{index}_(FindWriter(writers, {_cpp_string(link)}))"
         for index, link in enumerate(links)
     ]
+    rpc_initializers = [
+        f"        rpc_{index}_({_cpp_string(rpc['name'])}, rpc_{index}_executor)"
+        for index, rpc in enumerate(local_rpcs)
+    ]
     writer_validity = " &&\n        ".join(
         f"HasOneWriter(writers, {_cpp_string(link)})" for link in links
     )
-    if writer_initializers:
+    initializers = [*writer_initializers, *rpc_initializers]
+    if initializers:
+        if links:
+            initializers.append(f"        writers_valid_({writer_validity})")
         constructor = (
-            "  explicit NodePorts(std::span<const CanLinkWriter> writers) noexcept\n"
+            "  explicit NodePorts(\n"
+            + ",\n".join(constructor_parameters)
+            + ") noexcept\n"
             "      :\n"
-            + ",\n".join(writer_initializers)
-            + ",\n"
-            f"        writers_valid_({writer_validity}) {{}}"
+            + ",\n".join(initializers)
+            + " {}"
         )
     else:
         constructor = (
@@ -567,6 +618,23 @@ def _node_ports(
                 [
                     "    if (const auto status = ports_.AddTopicSubscriber(",
                     f"            {_cpp_string(topic['name'])}, topic_{index}_);",
+                    "        !IsOk(status)) return status;",
+                ]
+            )
+    for index, rpc in enumerate(local_rpcs):
+        suffix = "Service" if rpc["kind"] == "service" else "Action"
+        configure_lines.extend(
+            [
+                f"    if (const auto status = ports_.Add{suffix}Server(",
+                f"            {_cpp_string(rpc['name'])}, rpc_{index}_);",
+                "        !IsOk(status)) return status;",
+            ]
+        )
+        if rpc["client"]:
+            configure_lines.extend(
+                [
+                    f"    if (const auto status = ports_.Add{suffix}Client(",
+                    f"            {_cpp_string(rpc['name'])}, rpc_{index}_);",
                     "        !IsOk(status)) return status;",
                 ]
             )
@@ -725,6 +793,12 @@ def _node_ports(
                     f"          xrobot::transport::can::RearmPolicy::{rearm}}}}};",
                 ]
             )
+    for index, rpc in enumerate(local_rpcs):
+        cpp_type = _cpp_type_name(rpc["type"])
+        runtime_type = "StaticService" if rpc["kind"] == "service" else "StaticAction"
+        field_lines.append(
+            f"  xrobot::runtime::{runtime_type}<{cpp_type}, {rpc['capacity']}> rpc_{index}_;"
+        )
     field_lines.extend(
         [
             f"  xrobot::runtime::StaticPortRegistry<{max(1, registry_entries)}> ports_;",
@@ -868,6 +942,14 @@ def _node_composition(plan: DeploymentPlan, node_name: str) -> str:
             executor_specs[index][2],
         ),
     )
+    instances_by_name = {instance.name: instance for instance in instances}
+    port_arguments = ["links"]
+    for rpc in _node_local_rpc_specs(plan, node_name):
+        server_instance = instances_by_name[rpc["server_instance"]]
+        default_executor = _default_executor(server_instance)
+        port_arguments.append(
+            executor_fields[(server_instance.name, default_executor["name"])]
+        )
     has_hardware = any(instance.config.get("hardware") for instance in instances)
 
     public_lines = [
@@ -887,7 +969,7 @@ def _node_composition(plan: DeploymentPlan, node_name: str) -> str:
         "      xrobot::runtime::DiagnosticSink* diagnostics = nullptr) noexcept",
         "      :",
     ]
-    context_initializers = ["        ports_(links)"]
+    context_initializers = [f"        ports_({', '.join(port_arguments)})"]
     for index, instance in enumerate(instances):
         default_executor = _default_executor(instance)
         executor_field = executor_fields[(instance.name, default_executor["name"])]

@@ -768,6 +768,385 @@ int main() {
     subprocess.run([str(executable)], check=True)
 
 
+def test_generated_composition_runs_local_service_and_action(tmp_path: Path) -> None:
+    workspace, deployment = create_workspace(tmp_path)
+    write(
+        tmp_path,
+        "robot-msgs/schemas/srv/SetEnabled.srv.yaml",
+        """\
+api_version: xrobot.io/schema/v1alpha1
+kind: Service
+metadata: {name: SetEnabled, namespace: test.srv}
+spec:
+  request:
+    fields: [{name: enabled, type: bool}]
+  response:
+    fields: [{name: accepted, type: bool}]
+""",
+    )
+    write(
+        tmp_path,
+        "robot-msgs/schemas/action/Move.action.yaml",
+        """\
+api_version: xrobot.io/schema/v1alpha1
+kind: Action
+metadata: {name: Move, namespace: test.action}
+spec:
+  goal:
+    fields: [{name: distance, type: float32}]
+  feedback:
+    fields: [{name: progress, type: uint8}]
+  result:
+    fields: [{name: travelled, type: float32}]
+""",
+    )
+    write(
+        tmp_path,
+        "rpc/package.yaml",
+        """\
+api_version: xrobot.io/v1alpha1
+kind: Package
+metadata: {name: rpc, version: 0.1.0, license: Apache-2.0}
+spec:
+  build: {system: cmake}
+  exports:
+    modules:
+      - {name: service-server, manifest: service-server.module.yaml}
+      - {name: service-client, manifest: service-client.module.yaml}
+      - {name: action-server, manifest: action-server.module.yaml}
+      - {name: action-client, manifest: action-client.module.yaml}
+  dependencies: [robot-msgs]
+""",
+    )
+    write(
+        tmp_path,
+        "rpc/include/test/rpc.hpp",
+        """\
+#pragma once
+
+#include <cstdint>
+#include <string_view>
+
+#include "robot_msgs/robot_msgs.hpp"
+#include "xrobot/runtime/module.hpp"
+
+namespace test {
+
+class ServiceServerModule final : public xrobot::runtime::Module {
+ public:
+  explicit ServiceServerModule(std::string_view name) noexcept : name_(name) {}
+  std::string_view Name() const noexcept override { return name_; }
+
+  xrobot::runtime::Status Initialize(
+      xrobot::runtime::ModuleContext& context) noexcept override {
+    if (const auto status = context.ResolveServiceServer("service", server_);
+        status != xrobot::runtime::Status::kOk) return status;
+    return server_.BindHandler(Handle, this);
+  }
+  xrobot::runtime::Status Start() noexcept override {
+    return xrobot::runtime::Status::kOk;
+  }
+  void Shutdown() noexcept override {}
+
+  inline static std::uint32_t calls{};
+
+ private:
+  static xrobot::runtime::Status Handle(
+      void*, const test::srv::SetEnabledRequest& request,
+      test::srv::SetEnabledResponse& response,
+      const xrobot::runtime::ServiceCallInfo&,
+      const xrobot::runtime::ExecutionContext&) noexcept {
+    ++calls;
+    response.accepted = request.enabled;
+    return xrobot::runtime::Status::kOk;
+  }
+
+  std::string_view name_;
+  xrobot::runtime::ServiceServer<test::srv::SetEnabled> server_;
+};
+
+class ServiceClientModule final : public xrobot::runtime::Module {
+ public:
+  explicit ServiceClientModule(std::string_view name) noexcept : name_(name) {}
+  std::string_view Name() const noexcept override { return name_; }
+
+  xrobot::runtime::Status Initialize(
+      xrobot::runtime::ModuleContext& context) noexcept override {
+    context_ = &context;
+    return context.ResolveServiceClient("service", client_);
+  }
+  xrobot::runtime::Status Start() noexcept override {
+    return client_.CallAsync({true}, Complete, this,
+                             context_->executor()->context());
+  }
+  void Shutdown() noexcept override {}
+
+  inline static std::uint32_t completions{};
+  inline static bool accepted{};
+
+ private:
+  static void Complete(
+      void*, xrobot::runtime::Status status,
+      const test::srv::SetEnabledResponse& response,
+      const xrobot::runtime::ServiceCallInfo&,
+      const xrobot::runtime::ExecutionContext&) noexcept {
+    if (status == xrobot::runtime::Status::kOk) {
+      ++completions;
+      accepted = response.accepted;
+    }
+  }
+
+  std::string_view name_;
+  xrobot::runtime::ModuleContext* context_{};
+  xrobot::runtime::ServiceClient<test::srv::SetEnabled> client_;
+};
+
+class ActionServerModule final : public xrobot::runtime::Module {
+ public:
+  explicit ActionServerModule(std::string_view name) noexcept : name_(name) {}
+  std::string_view Name() const noexcept override { return name_; }
+
+  xrobot::runtime::Status Initialize(
+      xrobot::runtime::ModuleContext& context) noexcept override {
+    if (const auto status = context.ResolveActionServer("action", server_);
+        status != xrobot::runtime::Status::kOk) return status;
+    return server_.BindHandlers(Accept, Cancel, this);
+  }
+  xrobot::runtime::Status Start() noexcept override {
+    return xrobot::runtime::Status::kOk;
+  }
+  void Shutdown() noexcept override {}
+
+  inline static std::uint32_t goals{};
+
+ private:
+  static xrobot::runtime::Status Accept(
+      void*, const test::action::MoveGoal&,
+      xrobot::runtime::ActionGoalHandle,
+      const xrobot::runtime::ExecutionContext&) noexcept {
+    ++goals;
+    return xrobot::runtime::Status::kOk;
+  }
+  static xrobot::runtime::Status Cancel(
+      void*, xrobot::runtime::ActionGoalHandle,
+      const xrobot::runtime::ExecutionContext&) noexcept {
+    return xrobot::runtime::Status::kOk;
+  }
+
+  std::string_view name_;
+  xrobot::runtime::ActionServer<test::action::Move> server_;
+};
+
+class ActionClientModule final : public xrobot::runtime::Module {
+ public:
+  explicit ActionClientModule(std::string_view name) noexcept : name_(name) {}
+  std::string_view Name() const noexcept override { return name_; }
+
+  xrobot::runtime::Status Initialize(
+      xrobot::runtime::ModuleContext& context) noexcept override {
+    context_ = &context;
+    return context.ResolveActionClient("action", client_);
+  }
+  xrobot::runtime::Status Start() noexcept override {
+    xrobot::runtime::ActionCallbacks<test::action::Move> callbacks{
+        GoalResponse, nullptr, Result, nullptr, this};
+    return client_.SendGoal({1.5F}, callbacks, 0,
+                            context_->executor()->context(), handle_);
+  }
+  void Shutdown() noexcept override {}
+
+  inline static std::uint32_t accepted{};
+
+ private:
+  static void GoalResponse(
+      void*, xrobot::runtime::ActionGoalHandle,
+      xrobot::runtime::Status status,
+      const xrobot::runtime::ExecutionContext&) noexcept {
+    if (status == xrobot::runtime::Status::kOk) ++accepted;
+  }
+  static void Result(
+      void*, xrobot::runtime::ActionGoalHandle,
+      xrobot::runtime::Status, const test::action::MoveResult&,
+      const xrobot::runtime::ExecutionContext&) noexcept {}
+
+  std::string_view name_;
+  xrobot::runtime::ModuleContext* context_{};
+  xrobot::runtime::ActionClient<test::action::Move> client_;
+  xrobot::runtime::ActionGoalHandle handle_{};
+};
+
+}  // namespace test
+""",
+    )
+    modules = {
+        "service-server": ("ServiceServerModule", "service_server", "test.srv.SetEnabled"),
+        "service-client": ("ServiceClientModule", "service_client", "test.srv.SetEnabled"),
+        "action-server": ("ActionServerModule", "action_server", "test.action.Move"),
+        "action-client": ("ActionClientModule", "action_client", "test.action.Move"),
+    }
+    for name, (class_name, kind, type_name) in modules.items():
+        write(
+            tmp_path,
+            f"rpc/{name}.module.yaml",
+            f"""\
+api_version: xrobot.io/v1alpha1
+kind: Module
+metadata: {{name: {name}, version: 0.1.0}}
+spec:
+  implementation: {{target: rpc, class: test::{class_name}, header: test/rpc.hpp}}
+  dependencies: []
+  ports:
+    - {{name: {'service' if kind.startswith('service') else 'action'}, kind: {kind}, type: {type_name}, required: true}}
+  executors:
+    - {{name: rpc, priority: 5, stack_bytes: 1024, queue_depth: 4}}
+  parameters: []
+  hardware: []
+""",
+        )
+
+    workspace_document = yaml.safe_load(workspace.read_text(encoding="utf-8"))
+    workspace_document["packages"].append(
+        {"name": "rpc", "source": {"type": "path", "path": "rpc"}}
+    )
+    workspace.write_text(yaml.safe_dump(workspace_document, sort_keys=False))
+    lock_path = tmp_path / "package.lock.yaml"
+    lock = yaml.safe_load(lock_path.read_text(encoding="utf-8"))
+    lock["packages"]["rpc"] = {
+        "source": "rpc",
+        "commit": "dddddddddddddddddddddddddddddddddddddddd",
+    }
+    lock_path.write_text(yaml.safe_dump(lock, sort_keys=False))
+    robot_path = tmp_path / "robot.yaml"
+    robot = yaml.safe_load(robot_path.read_text(encoding="utf-8"))
+    robot["instances"].update(
+        {
+            "local_service_server": {
+                "package": "rpc",
+                "module": "service-server",
+                "ports": {"service": "/service/enabled"},
+            },
+            "local_service_client": {
+                "package": "rpc",
+                "module": "service-client",
+                "ports": {"service": "/service/enabled"},
+            },
+            "local_action_server": {
+                "package": "rpc",
+                "module": "action-server",
+                "ports": {"action": "/action/move"},
+            },
+            "local_action_client": {
+                "package": "rpc",
+                "module": "action-client",
+                "ports": {"action": "/action/move"},
+            },
+        }
+    )
+    robot_path.write_text(yaml.safe_dump(robot, sort_keys=False))
+    deployment_document = yaml.safe_load(deployment.read_text(encoding="utf-8"))
+    deployment_document["nodes"]["node_b"]["instances"].extend(
+        [
+            "local_service_server",
+            "local_service_client",
+            "local_action_server",
+            "local_action_client",
+        ]
+    )
+    deployment.write_text(yaml.safe_dump(deployment_document, sort_keys=False))
+
+    output = tmp_path / "generated"
+    compile_deployment(workspace, deployment, output)
+    generated_messages = tmp_path / "generated-messages"
+    generate_interfaces(tmp_path / "robot-msgs/schemas", generated_messages)
+    write(
+        tmp_path,
+        "local_rpc_test.cpp",
+        """\
+#include <array>
+#include <cassert>
+#include <cstddef>
+
+#include "node_b/node_composition.hpp"
+
+namespace {
+
+class Clock final : public xrobot::runtime::SteadyClock {
+ public:
+  std::uint64_t NowNs() const noexcept override { return 1'000'000; }
+};
+
+xrobot::runtime::Status DiscardFrame(
+    void*, const xrobot::transport::can::CanFrame&,
+    const xrobot::runtime::ExecutionContext&) noexcept {
+  return xrobot::runtime::Status::kOk;
+}
+
+}  // namespace
+
+int main() {
+  using namespace xrobot::runtime;
+  Clock clock;
+  std::array<xrobot::generated::CanLinkWriter, 1> links{{
+      {"robot_can", {DiscardFrame, nullptr}},
+  }};
+  xrobot::generated::node_b::NodeComposition node(clock, links);
+  assert(node.Configure() == Status::kOk);
+  assert(node.Initialize() == Status::kOk);
+  assert(node.Start() == Status::kOk);
+
+  std::size_t executed{};
+  assert(node.DrainExecutors(4, executed) == Status::kOk);
+  assert(executed == 2);
+  assert(test::ServiceServerModule::calls == 1);
+  assert(test::ServiceClientModule::completions == 1);
+  assert(test::ServiceClientModule::accepted);
+  assert(test::ActionServerModule::goals == 1);
+  assert(test::ActionClientModule::accepted == 1);
+  node.Shutdown();
+}
+""",
+    )
+
+    repository_root = Path(__file__).parents[2]
+    runtime = repository_root / "xrobot-runtime"
+    transports = repository_root / "xrobot-transports"
+    executable = tmp_path / "local_rpc_test"
+    subprocess.run(
+        [
+            "/usr/bin/c++",
+            "-std=c++20",
+            "-Wall",
+            "-Wextra",
+            "-Wpedantic",
+            "-Wconversion",
+            "-Wsign-conversion",
+            "-Werror",
+            "-I",
+            str(output / "nodes"),
+            "-I",
+            str(generated_messages / "include"),
+            "-I",
+            str(runtime / "include"),
+            "-I",
+            str(transports / "include"),
+            "-I",
+            str(tmp_path / "source/include"),
+            "-I",
+            str(tmp_path / "sink/include"),
+            "-I",
+            str(tmp_path / "rpc/include"),
+            str(tmp_path / "local_rpc_test.cpp"),
+            str(runtime / "src/runtime.cpp"),
+            "-o",
+            str(executable),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    subprocess.run([str(executable)], check=True)
+
+
 def test_rejects_an_instance_placed_more_than_once(tmp_path: Path) -> None:
     workspace, deployment = create_workspace(tmp_path)
     text = deployment.read_text(encoding="utf-8")
