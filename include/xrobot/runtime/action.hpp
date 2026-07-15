@@ -465,9 +465,9 @@ class StaticAction final : public ActionClientEndpoint<Action>,
 
   std::string_view name_;
   Executor& executor_;
-  GoalHandler goal_handler_;
-  CancelHandler cancel_handler_;
-  void* handler_state_;
+  GoalHandler goal_handler_{};
+  CancelHandler cancel_handler_{};
+  void* handler_state_{};
   std::array<Slot, MaxGoals> slots_{};
   std::size_t active_goals_{};
   std::uint32_t next_goal_id_{};

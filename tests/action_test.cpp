@@ -1,6 +1,8 @@
+#include <array>
 #include <cassert>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <span>
 #include <string_view>
 
@@ -193,6 +195,23 @@ ActionCallbacks<test::Move> Callbacks(ClientState& state) {
   return {OnGoal, OnFeedback, OnResult, OnCancel, &state};
 }
 
+void UnboundActionCanBindHandlersAfterConstruction() {
+  CooperativeExecutor<1> executor("action", 4);
+  ServerState server_state;
+  using Action = StaticAction<test::Move, 1>;
+  alignas(Action) std::array<std::byte, sizeof(Action)> storage;
+  storage.fill(std::byte{0xa5});
+  auto* action = std::construct_at(reinterpret_cast<Action*>(storage.data()),
+                                   "robot/move", executor);
+
+  assert(action->server().BindHandlers(AcceptGoal, AcceptCancel,
+                                       &server_state) == Status::kOk);
+  assert(action->server().BindHandlers(AcceptGoal, AcceptCancel,
+                                       &server_state) ==
+         Status::kInvalidState);
+  std::destroy_at(action);
+}
+
 void GoalFeedbackAndResultFollowTheActionStateMachine() {
   CooperativeExecutor<2> executor("action", 4);
   ServerState server_state;
@@ -277,6 +296,7 @@ void DeadlineExpiresAnAcceptedGoal() {
 
 int main() {
   static_assert(xrobot::runtime::ActionType<test::Move>);
+  UnboundActionCanBindHandlersAfterConstruction();
   GoalFeedbackAndResultFollowTheActionStateMachine();
   CancellationIsRequestedOnTheServerExecutor();
   DeadlineExpiresAnAcceptedGoal();
