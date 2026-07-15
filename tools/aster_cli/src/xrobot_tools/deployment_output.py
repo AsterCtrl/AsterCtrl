@@ -80,6 +80,7 @@ def _route_document(route: Route, route_id: int) -> dict[str, Any]:
         "qos": route.qos,
         "max_rate_hz": route.max_rate_hz,
         "max_serialized_size": route.max_serialized_size,
+        "max_wire_payload_size": route.max_wire_payload_size,
         "frame_count": route.frame_count,
         "bits_per_message": route.bits_per_message,
     }
@@ -103,7 +104,8 @@ def _node_header(
         entries.append(
             "    GeneratedRoute{"
             f"{route_ids[route.name]}, \"{route.name}\", \"{route.type_name}\", "
-            f"{direction}, {route.max_serialized_size}, {route.frame_count}"
+            f"{direction}, {route.max_serialized_size}, "
+            f"{route.max_wire_payload_size}, {route.frame_count}"
             "},"
         )
     route_lines = "\n".join(entries)
@@ -124,6 +126,7 @@ struct GeneratedRoute {{
   std::string_view type;
   bool publishes;
   std::size_t max_serialized_size;
+  std::size_t max_wire_payload_size;
   std::uint8_t frame_count;
 }};
 
@@ -197,7 +200,7 @@ def _memory_report(plan: DeploymentPlan) -> dict[str, Any]:
             "executor_queue_bytes_estimate": queue_slots * 8,
             "route_count": len(node_routes),
             "route_buffer_bytes_minimum": sum(
-                route.max_serialized_size for route in node_routes
+                route.max_wire_payload_size for route in node_routes
             ),
         }
     return {"assumptions": {"mcu_pointer_bytes": 4, "work_item_bytes": 8}, "nodes": nodes}

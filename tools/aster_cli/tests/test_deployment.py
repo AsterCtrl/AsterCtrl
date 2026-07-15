@@ -6,7 +6,11 @@ from pathlib import Path
 import pytest
 import yaml
 
-from xrobot_tools.deployment import DeploymentError, compile_deployment
+from xrobot_tools.deployment import (
+    DeploymentError,
+    _can_route_cost,
+    compile_deployment,
+)
 
 
 def write(root: Path, relative: str, content: str) -> None:
@@ -39,6 +43,7 @@ metadata: {name: Command, namespace: test.msg}
 spec:
   fields:
     - {name: value, type: uint16}
+    - {name: auxiliary, type: uint32}
 """,
     )
     for package, kind in (("source", "publisher"), ("sink", "subscriber")):
@@ -227,6 +232,11 @@ def test_compiles_a_deterministic_cross_node_deployment(tmp_path: Path) -> None:
         )
     budget = yaml.safe_load((output / "reports/link_budget.yaml").read_text())
     assert budget["links"]["robot_can"]["within_budget"] is True
+    routes = yaml.safe_load((output / "deployment.resolved.yaml").read_text())["routes"]
+    assert routes[0]["max_serialized_size"] == 6
+    assert routes[0]["max_wire_payload_size"] == 8
+    assert routes[0]["frame_count"] == 2
+    assert routes[0]["bits_per_message"] == 230
 
 
 def test_rejects_an_instance_placed_more_than_once(tmp_path: Path) -> None:
@@ -246,6 +256,14 @@ def test_rejects_a_classic_can_budget_overflow(tmp_path: Path) -> None:
 
     with pytest.raises(DeploymentError, match="robot_can.*utilization"):
         compile_deployment(workspace, deployment, tmp_path / "generated")
+
+
+def test_classic_can_cost_includes_reliable_ack_and_operation_envelopes() -> None:
+    assert _can_route_cost("service", [2, 4], 8) == (5, 4, 360)
+    assert _can_route_cost("action", [2, 1, 2], 8) == (15, 15, 1525)
+
+    with pytest.raises(DeploymentError, match="16 classic CAN fragments"):
+        _can_route_cost("topic", [95], 8)
 
 
 def test_package_lock_changes_the_whole_deployment_hash(tmp_path: Path) -> None:

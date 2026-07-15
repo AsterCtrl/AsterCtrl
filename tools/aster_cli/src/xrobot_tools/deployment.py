@@ -53,6 +53,7 @@ class Route:
     qos: str
     max_rate_hz: float
     max_serialized_size: int
+    max_wire_payload_size: int
     frame_count: int
     bits_per_message: int
 
@@ -343,10 +344,10 @@ def _classic_frame_bits(payload_bytes: int) -> int:
     return stuffed_region + worst_stuff_bits + 13
 
 
-def _can_cost(record_sizes: list[int], mtu: int) -> tuple[int, int]:
+def _fast_can_cost(payload_sizes: list[int], mtu: int) -> tuple[int, int]:
     frame_count = 0
     total_bits = 0
-    for size in record_sizes:
+    for size in payload_sizes:
         if size <= mtu - 1:
             payloads = [size + 1]
         else:
@@ -359,9 +360,67 @@ def _can_cost(record_sizes: list[int], mtu: int) -> tuple[int, int]:
                 chunk = min(fragment_payload, remaining)
                 payloads.append(chunk + 2)
                 remaining -= chunk
+            if len(payloads) > 16:
+                raise DeploymentError(
+                    "xrobot-can Fast Path payload exceeds 16 classic CAN fragments"
+                )
         frame_count += len(payloads)
         total_bits += sum(_classic_frame_bits(payload) for payload in payloads)
     return frame_count, total_bits
+
+
+def _reliable_can_cost(payload_sizes: list[int], mtu: int) -> tuple[int, int]:
+    frame_count = 0
+    total_bits = 0
+    fragment_payload = mtu - 2
+    if fragment_payload <= 0:
+        raise DeploymentError("CAN MTU is too small for reliable headers")
+    for size in payload_sizes:
+        fragments = (size + fragment_payload - 1) // fragment_payload
+        if fragments > 16:
+            raise DeploymentError(
+                "xrobot-can Reliable Path payload exceeds 16 classic CAN fragments"
+            )
+        remaining = size
+        for _ in range(fragments):
+            chunk = min(fragment_payload, remaining)
+            total_bits += _classic_frame_bits(chunk + 2)
+            remaining -= chunk
+        total_bits += _classic_frame_bits(1)  # Reliable ACK.
+        frame_count += fragments + 1
+    return frame_count, total_bits
+
+
+def _wire_payload_sizes(kind: str, record_sizes: list[int]) -> list[int]:
+    if kind == "topic":
+        return [record_sizes[0] + 2]  # Source timestamp tick.
+    if kind == "service":
+        request_size, response_size = record_sizes
+        return [request_size + 1, response_size + 1]  # Operation/status byte.
+    if kind == "action":
+        goal_size, feedback_size, result_size = record_sizes
+        return [
+            goal_size + 13,
+            5,  # Cancel.
+            6,  # Goal response.
+            feedback_size + 5,
+            result_size + 6,
+            6,  # Cancel response.
+        ]
+    raise DeploymentError(f"unsupported xrobot-can route kind {kind!r}")
+
+
+def _can_route_cost(
+    kind: str, record_sizes: list[int], mtu: int
+) -> tuple[int, int, int]:
+    if mtu != 8:
+        raise DeploymentError("xrobot-can v1 classic CAN requires mtu_bytes: 8")
+    payload_sizes = _wire_payload_sizes(kind, record_sizes)
+    if kind == "topic":
+        frame_count, bits = _fast_can_cost(payload_sizes, mtu)
+    else:
+        frame_count, bits = _reliable_can_cost(payload_sizes, mtu)
+    return max(payload_sizes), frame_count, bits
 
 
 def _compile_routes(
@@ -394,7 +453,9 @@ def _compile_routes(
         if options.get("frame") != "classic":
             raise DeploymentError("only classic CAN is implemented in v1alpha1")
         mtu = int(options.get("mtu_bytes", 8))
-        frame_count, bits = _can_cost(record_sizes, mtu)
+        max_wire_payload_size, frame_count, bits = _can_route_cost(
+            kind, record_sizes, mtu
+        )
         routes.append(
             Route(
                 name=name,
@@ -407,6 +468,7 @@ def _compile_routes(
                 qos=qos_name,
                 max_rate_hz=float(qos["max_rate_hz"]),
                 max_serialized_size=max(record_sizes),
+                max_wire_payload_size=max_wire_payload_size,
                 frame_count=frame_count,
                 bits_per_message=bits,
             )
