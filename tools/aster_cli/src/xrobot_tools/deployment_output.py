@@ -33,6 +33,10 @@ def _json(document: Any) -> str:
     return json.dumps(document, indent=2, sort_keys=True) + "\n"
 
 
+def _cpp_string(value: str) -> str:
+    return json.dumps(value, ensure_ascii=True)
+
+
 def _allocate_ids(
     names: list[str], existing: dict[str, int], minimum: int, maximum: int
 ) -> dict[str, int]:
@@ -98,17 +102,53 @@ def _node_header(
         if route.source_node == node_name or node_name in route.destination_nodes
     ]
     namespace = f"xrobot::generated::{node_name}"
-    entries = []
+    route_entries = []
     for route in routes:
         direction = "true" if route.source_node == node_name else "false"
-        entries.append(
+        route_entries.append(
             "    GeneratedRoute{"
-            f"{route_ids[route.name]}, \"{route.name}\", \"{route.type_name}\", "
+            f"{route_ids[route.name]}, {_cpp_string(route.name)}, "
+            f"{_cpp_string(route.type_name)}, "
             f"{direction}, {route.max_serialized_size}, "
             f"{route.max_wire_payload_size}, {route.frame_count}"
             "},"
         )
-    route_lines = "\n".join(entries)
+    route_lines = "\n".join(route_entries)
+
+    instances = sorted(
+        (instance for instance in plan.instances if instance.node == node_name),
+        key=lambda item: item.name,
+    )
+    module_entries = []
+    executor_entries = []
+    for instance in instances:
+        implementation = instance.manifest.document["spec"]["implementation"]
+        module_entries.append(
+            "    GeneratedModule{"
+            f"{_cpp_string(instance.name)}, {_cpp_string(instance.package)}, "
+            f"{_cpp_string(instance.module)}, "
+            f"{_cpp_string(implementation['target'])}, "
+            f"{_cpp_string(implementation['class'])}"
+            "},"
+        )
+        for executor in sorted(
+            instance.manifest.document["spec"]["executors"],
+            key=lambda item: item["name"],
+        ):
+            period_ns = int(executor.get("period_us", 0)) * 1000
+            exclusive = "true" if executor.get("exclusive", False) else "false"
+            executor_name = f"{instance.name}__{executor['name']}"
+            executor_entries.append(
+                "    GeneratedExecutor{"
+                f"{_cpp_string(executor_name)}, "
+                f"{_cpp_string(instance.name)}, {_cpp_string(executor['name'])}, "
+                f"{executor['priority']}, {executor['stack_bytes']}, "
+                f"{executor['queue_depth']}, {period_ns}ULL, {exclusive}"
+                "},"
+            )
+    executor_entries.sort()
+    module_lines = "\n".join(module_entries)
+    executor_lines = "\n".join(executor_entries)
     return f"""\
 #pragma once
 
@@ -130,6 +170,25 @@ struct GeneratedRoute {{
   std::uint8_t frame_count;
 }};
 
+struct GeneratedModule {{
+  std::string_view instance;
+  std::string_view package;
+  std::string_view module;
+  std::string_view target;
+  std::string_view class_name;
+}};
+
+struct GeneratedExecutor {{
+  std::string_view name;
+  std::string_view instance;
+  std::string_view task;
+  std::uint8_t priority;
+  std::size_t stack_bytes;
+  std::size_t queue_depth;
+  std::uint64_t period_ns;
+  bool exclusive;
+}};
+
 inline constexpr std::uint8_t kNodeId = {node_id};
 inline constexpr std::string_view kNodeName = "{node_name}";
 inline constexpr std::string_view kDeploymentHash = "{plan.deployment_hash}";
@@ -137,6 +196,41 @@ inline constexpr std::string_view kSchemaHash = "{plan.schema_hash}";
 inline constexpr std::array<GeneratedRoute, {len(routes)}> kRoutes{{{{
 {route_lines}
 }}}};
+inline constexpr std::array<GeneratedModule, {len(instances)}> kModules{{{{
+{module_lines}
+}}}};
+inline constexpr std::array<GeneratedExecutor, {len(executor_entries)}> kExecutors{{{{
+{executor_lines}
+}}}};
+
+consteval bool ConfigurationValid() {{
+  for (std::size_t index = 0; index < kExecutors.size(); ++index) {{
+    const auto& executor = kExecutors[index];
+    if (executor.name.empty() || executor.instance.empty() ||
+        executor.task.empty() || executor.stack_bytes == 0 ||
+        executor.queue_depth == 0) {{
+      return false;
+    }}
+    bool instance_found = false;
+    for (const auto& module : kModules) {{
+      if (module.instance == executor.instance) {{
+        instance_found = true;
+        break;
+      }}
+    }}
+    if (!instance_found) {{
+      return false;
+    }}
+    for (std::size_t previous = 0; previous < index; ++previous) {{
+      if (kExecutors[previous].name == executor.name) {{
+        return false;
+      }}
+    }}
+  }}
+  return true;
+}}
+
+inline constexpr bool kConfigurationValid = ConfigurationValid();
 
 }}  // namespace {namespace}
 """
@@ -152,6 +246,7 @@ namespace {namespace} {{
 
 int GeneratedMain() noexcept {{
   static_assert(kNodeId != 0);
+  static_assert(kConfigurationValid);
   return 0;
 }}
 
@@ -167,9 +262,9 @@ def _executor_report(plan: DeploymentPlan) -> dict[str, Any]:
         for executor in instance.manifest.document["spec"]["executors"]:
             nodes[instance.node].append(
                 {
+                    **executor,
                     "name": f"{instance.name}__{executor['name']}",
                     "instance": instance.name,
-                    **executor,
                 }
             )
     for executors in nodes.values():

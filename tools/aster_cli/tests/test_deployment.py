@@ -208,6 +208,13 @@ def test_compiles_a_deterministic_cross_node_deployment(tmp_path: Path) -> None:
     assert first.node_count == 2
     assert (output / "nodes/node_a/generated_main.cpp").is_file()
     assert (output / "nodes/node_b/generated_main.cpp").is_file()
+    node_a_header = (output / "nodes/node_a/node_config.hpp").read_text()
+    assert 'GeneratedModule{"command_source", "source", "source"' in node_a_header
+    assert (
+        'GeneratedExecutor{"command_source__control", "command_source", '
+        '"control", 4, 1024, 4, 1000000ULL, false}' in node_a_header
+    )
+    assert "inline constexpr bool kConfigurationValid" in node_a_header
     for node in ("node_a", "node_b"):
         node_dir = output / "nodes" / node
         subprocess.run(
@@ -232,6 +239,8 @@ def test_compiles_a_deterministic_cross_node_deployment(tmp_path: Path) -> None:
         )
     budget = yaml.safe_load((output / "reports/link_budget.yaml").read_text())
     assert budget["links"]["robot_can"]["within_budget"] is True
+    executors = yaml.safe_load((output / "reports/executors.yaml").read_text())
+    assert executors["nodes"]["node_a"][0]["name"] == "command_source__control"
     routes = yaml.safe_load((output / "deployment.resolved.yaml").read_text())["routes"]
     assert routes[0]["max_serialized_size"] == 6
     assert routes[0]["max_wire_payload_size"] == 8
