@@ -252,8 +252,8 @@ class StaticService final : public ServiceEndpoint<Service>,
 
   std::string_view name_;
   Executor& executor_;
-  Handler handler_;
-  void* handler_state_;
+  Handler handler_{};
+  void* handler_state_{};
   std::array<Slot, MaxPending> slots_{};
   std::size_t pending_{};
   std::uint32_t next_request_id_{};

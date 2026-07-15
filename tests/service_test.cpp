@@ -2,6 +2,7 @@
 #include <cassert>
 #include <cstddef>
 #include <cstdint>
+#include <new>
 #include <span>
 #include <string_view>
 
@@ -192,6 +193,18 @@ void EmptyClientIsUnavailable() {
          Status::kUnavailable);
 }
 
+void UnboundServiceStartsEmptyInNonzeroStorage() {
+  using Service = StaticService<test::SetMode, 1>;
+  alignas(Service) std::array<std::byte, sizeof(Service)> storage;
+  storage.fill(std::byte{0xa5});
+  CooperativeExecutor<1> executor("service", 4);
+  ServerState server;
+  auto* const service = ::new (storage.data()) Service("robot/set-mode", executor);
+
+  assert(service->server().BindHandler(HandleSetMode, &server) == Status::kOk);
+  service->~Service();
+}
+
 }  // namespace
 
 int main() {
@@ -199,5 +212,6 @@ int main() {
   ServiceCallsAreAsynchronousAndBounded();
   HandlerErrorsReachTheCompletionCallback();
   EmptyClientIsUnavailable();
+  UnboundServiceStartsEmptyInNonzeroStorage();
   return 0;
 }
