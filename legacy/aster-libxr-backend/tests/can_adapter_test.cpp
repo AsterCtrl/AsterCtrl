@@ -136,13 +136,18 @@ void AdapterDefersIsrReceiveAndWritesThroughLibxr() {
   FakeCan can;
   Clock clock;
   Receiver receiver;
-  CanAdapter<2> adapter(can, {Receive, &receiver}, {ReadClock, &clock});
+  CanAdapter<2> adapter(can, {ReadClock, &clock});
   const ExecutionContext thread_context("can-rx", ExecutionKind::kThread, 3);
   const ExecutionContext interrupt_context("can-rx", ExecutionKind::kInterrupt,
                                            3);
 
+  assert(adapter.Initialize() == Status::kInvalidState);
+  assert(adapter.BindReceiver({}) == Status::kInvalidArgument);
+  assert(adapter.BindReceiver({Receive, &receiver}) == Status::kOk);
+  assert(adapter.BindReceiver({Receive, &receiver}) == Status::kInvalidState);
   assert(adapter.Initialize() == Status::kOk);
   assert(adapter.Initialize() == Status::kInvalidState);
+  assert(adapter.BindReceiver({Receive, &receiver}) == Status::kInvalidState);
   const auto allocations_after_init =
       allocation_count.load(std::memory_order_relaxed);
 
@@ -176,8 +181,9 @@ void AdapterBoundsQueueAndMapsDriverBackpressure() {
   FakeCan can;
   Clock clock;
   Receiver receiver;
-  CanAdapter<2> adapter(can, {Receive, &receiver}, {ReadClock, &clock});
+  CanAdapter<2> adapter(can, {ReadClock, &clock});
   const ExecutionContext context("can-rx", ExecutionKind::kThread, 3);
+  assert(adapter.BindReceiver({Receive, &receiver}) == Status::kOk);
   assert(adapter.Initialize() == Status::kOk);
 
   can.Emit(MakePack(8, 1));

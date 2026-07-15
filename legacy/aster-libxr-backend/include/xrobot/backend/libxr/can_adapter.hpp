@@ -27,24 +27,37 @@ class CanAdapter {
   static_assert(std::atomic<std::uint32_t>::is_always_lock_free,
                 "CAN ISR counters require lock-free 32-bit atomics");
 
-  CanAdapter(LibXR::CAN& can,
-             xrobot::transport::can::CanFrameReceiver receiver,
-             xrobot::transport::can::CanClockReader clock)
-      : can_(can),
-        receiver_(receiver),
-        clock_(clock),
-        receive_queue_(ReceiveQueueCapacity) {}
+  CanAdapter(LibXR::CAN& can, xrobot::transport::can::CanClockReader clock)
+      : can_(can), clock_(clock), receive_queue_(ReceiveQueueCapacity) {}
 
   CanAdapter(const CanAdapter&) = delete;
   CanAdapter& operator=(const CanAdapter&) = delete;
   CanAdapter(CanAdapter&&) = delete;
   CanAdapter& operator=(CanAdapter&&) = delete;
 
+  xrobot::runtime::Status BindReceiver(
+      xrobot::transport::can::CanFrameReceiver receiver) noexcept {
+    using xrobot::runtime::Status;
+
+    if (initialized_ || receiver_bound_) {
+      return Status::kInvalidState;
+    }
+    if (receiver.receive == nullptr) {
+      return Status::kInvalidArgument;
+    }
+    receiver_ = receiver;
+    receiver_bound_ = true;
+    return Status::kOk;
+  }
+
   xrobot::runtime::Status Initialize() {
     if (initialized_) {
       return xrobot::runtime::Status::kInvalidState;
     }
-    if (receiver_.receive == nullptr || clock_.read == nullptr) {
+    if (!receiver_bound_) {
+      return xrobot::runtime::Status::kInvalidState;
+    }
+    if (clock_.read == nullptr) {
       return xrobot::runtime::Status::kInvalidArgument;
     }
     receive_callback_ = LibXR::CAN::Callback::Create(ReceiveThunk, this);
@@ -214,6 +227,7 @@ class CanAdapter {
   xrobot::transport::can::CanClockReader clock_;
   LibXR::SPSCQueue<QueuedFrame> receive_queue_;
   LibXR::CAN::Callback receive_callback_;
+  bool receiver_bound_{};
   bool initialized_{};
   std::atomic<std::uint32_t> tx_frames_{};
   std::atomic<std::uint32_t> tx_failures_{};
