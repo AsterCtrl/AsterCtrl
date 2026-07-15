@@ -67,6 +67,7 @@ void operator delete[](void* memory, std::size_t, std::align_val_t) noexcept {
 namespace {
 
 using xrobot::backend::libxr::CanAdapter;
+using xrobot::backend::libxr::LibxrClassicCanEndpoint;
 using xrobot::runtime::ExecutionContext;
 using xrobot::runtime::ExecutionKind;
 using xrobot::runtime::Status;
@@ -136,7 +137,8 @@ void AdapterDefersIsrReceiveAndWritesThroughLibxr() {
   FakeCan can;
   Clock clock;
   Receiver receiver;
-  CanAdapter<2> adapter(can, {ReadClock, &clock});
+  LibxrClassicCanEndpoint<2> endpoint(can, {ReadClock, &clock});
+  CanAdapter<2> adapter(endpoint);
   const ExecutionContext thread_context("can-rx", ExecutionKind::kThread, 3);
   const ExecutionContext interrupt_context("can-rx", ExecutionKind::kInterrupt,
                                            3);
@@ -148,6 +150,7 @@ void AdapterDefersIsrReceiveAndWritesThroughLibxr() {
   assert(adapter.Initialize() == Status::kOk);
   assert(adapter.Initialize() == Status::kInvalidState);
   assert(adapter.BindReceiver({Receive, &receiver}) == Status::kInvalidState);
+  assert(endpoint.Initialize() == Status::kOk);
   const auto allocations_after_init =
       allocation_count.load(std::memory_order_relaxed);
 
@@ -181,10 +184,12 @@ void AdapterBoundsQueueAndMapsDriverBackpressure() {
   FakeCan can;
   Clock clock;
   Receiver receiver;
-  CanAdapter<2> adapter(can, {ReadClock, &clock});
+  LibxrClassicCanEndpoint<2> endpoint(can, {ReadClock, &clock});
+  CanAdapter<2> adapter(endpoint);
   const ExecutionContext context("can-rx", ExecutionKind::kThread, 3);
   assert(adapter.BindReceiver({Receive, &receiver}) == Status::kOk);
   assert(adapter.Initialize() == Status::kOk);
+  assert(endpoint.Initialize() == Status::kOk);
 
   can.Emit(MakePack(8, 1));
   can.Emit(MakePack(8, 2));

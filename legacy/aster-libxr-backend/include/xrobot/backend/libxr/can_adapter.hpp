@@ -4,8 +4,8 @@
 #include <cstddef>
 #include <cstdint>
 
-#include "can.hpp"
 #include "spsc_queue.hpp"
+#include "xrobot/backend/libxr/classic_can_endpoint.hpp"
 #include "xrobot/transport/can/link.hpp"
 
 namespace xrobot::backend::libxr {
@@ -27,8 +27,8 @@ class CanAdapter {
   static_assert(std::atomic<std::uint32_t>::is_always_lock_free,
                 "CAN ISR counters require lock-free 32-bit atomics");
 
-  CanAdapter(LibXR::CAN& can, xrobot::transport::can::CanClockReader clock)
-      : can_(can), clock_(clock), receive_queue_(ReceiveQueueCapacity) {}
+  explicit CanAdapter(ClassicCanEndpoint& endpoint)
+      : endpoint_(endpoint), receive_queue_(ReceiveQueueCapacity) {}
 
   CanAdapter(const CanAdapter&) = delete;
   CanAdapter& operator=(const CanAdapter&) = delete;
@@ -57,12 +57,9 @@ class CanAdapter {
     if (!receiver_bound_) {
       return xrobot::runtime::Status::kInvalidState;
     }
-    if (clock_.read == nullptr) {
-      return xrobot::runtime::Status::kInvalidArgument;
-    }
-    receive_callback_ = LibXR::CAN::Callback::Create(ReceiveThunk, this);
-    can_.Register(receive_callback_, LibXR::CAN::Type::STANDARD,
-                  LibXR::CAN::FilterMode::ID_RANGE, 1, 0x7ffU);
+    const auto status = endpoint_.Subscribe(1, 0x7ffU,
+                                            {ReceiveThunk, this});
+    if (status != xrobot::runtime::Status::kOk) return status;
     initialized_ = true;
     return xrobot::runtime::Status::kOk;
   }
@@ -124,12 +121,13 @@ class CanAdapter {
 
   static xrobot::runtime::Status WriteThunk(
       void* state, const xrobot::transport::can::CanFrame& frame,
-      const xrobot::runtime::ExecutionContext&) noexcept {
-    return static_cast<CanAdapter*>(state)->Write(frame);
+      const xrobot::runtime::ExecutionContext& caller) noexcept {
+    return static_cast<CanAdapter*>(state)->Write(frame, caller);
   }
 
   xrobot::runtime::Status Write(
-      const xrobot::transport::can::CanFrame& frame) noexcept {
+      const xrobot::transport::can::CanFrame& frame,
+      const xrobot::runtime::ExecutionContext& caller) noexcept {
     using xrobot::runtime::Status;
     using xrobot::transport::can::CanArbitrationId;
 
@@ -141,14 +139,13 @@ class CanAdapter {
       return Status::kInvalidArgument;
     }
 
-    LibXR::CAN::ClassicPack pack{};
+    ClassicCanFrame pack{};
     pack.id = frame.arbitration_id;
-    pack.type = LibXR::CAN::Type::STANDARD;
-    pack.dlc = frame.size;
+    pack.size = frame.size;
     for (std::size_t index = 0; index < frame.size; ++index) {
-      pack.data[index] = std::to_integer<std::uint8_t>(frame.data[index]);
+      pack.data[index] = frame.data[index];
     }
-    const auto status = MapError(can_.AddMessage(pack));
+    const auto status = endpoint_.Write(pack, caller);
     if (status == Status::kOk) {
       tx_frames_.fetch_add(1, std::memory_order_relaxed);
     } else {
@@ -157,16 +154,17 @@ class CanAdapter {
     return status;
   }
 
-  static void ReceiveThunk(bool, CanAdapter* self,
-                           const LibXR::CAN::ClassicPack& pack) {
-    self->Receive(pack);
+  static void ReceiveThunk(void* state, const ClassicCanFrame& frame,
+                           std::uint64_t receive_time_ns,
+                           bool) noexcept {
+    static_cast<CanAdapter*>(state)->Receive(frame, receive_time_ns);
   }
 
-  void Receive(const LibXR::CAN::ClassicPack& pack) noexcept {
+  void Receive(const ClassicCanFrame& pack,
+               std::uint64_t receive_time_ns) noexcept {
     using xrobot::transport::can::CanArbitrationId;
 
-    if (pack.type != LibXR::CAN::Type::STANDARD || pack.id > 0x7ffU ||
-        pack.dlc == 0 || pack.dlc > 8 ||
+    if (pack.id > 0x7ffU || pack.size == 0 || pack.size > 8 ||
         !CanArbitrationId::Decode(static_cast<std::uint16_t>(pack.id))
              .has_value()) {
       rx_invalid_.fetch_add(1, std::memory_order_relaxed);
@@ -175,11 +173,11 @@ class CanAdapter {
 
     QueuedFrame queued;
     queued.frame.arbitration_id = static_cast<std::uint16_t>(pack.id);
-    queued.frame.size = pack.dlc;
-    for (std::size_t index = 0; index < pack.dlc; ++index) {
-      queued.frame.data[index] = static_cast<std::byte>(pack.data[index]);
+    queued.frame.size = pack.size;
+    for (std::size_t index = 0; index < pack.size; ++index) {
+      queued.frame.data[index] = pack.data[index];
     }
-    queued.receive_time_ns = clock_.NowNs();
+    queued.receive_time_ns = receive_time_ns;
     if (receive_queue_.Push(queued) != LibXR::ErrorCode::OK) {
       rx_dropped_.fetch_add(1, std::memory_order_relaxed);
       return;
@@ -187,46 +185,9 @@ class CanAdapter {
     rx_frames_.fetch_add(1, std::memory_order_relaxed);
   }
 
-  static constexpr xrobot::runtime::Status MapError(
-      LibXR::ErrorCode error) noexcept {
-    using xrobot::runtime::Status;
-
-    switch (error) {
-      case LibXR::ErrorCode::OK:
-      case LibXR::ErrorCode::PENDING:
-        return Status::kOk;
-      case LibXR::ErrorCode::ARG_ERR:
-      case LibXR::ErrorCode::SIZE_ERR:
-      case LibXR::ErrorCode::PTR_NULL:
-      case LibXR::ErrorCode::OUT_OF_RANGE:
-        return Status::kInvalidArgument;
-      case LibXR::ErrorCode::INIT_ERR:
-      case LibXR::ErrorCode::STATE_ERR:
-        return Status::kInvalidState;
-      case LibXR::ErrorCode::NO_MEM:
-      case LibXR::ErrorCode::NO_BUFF:
-      case LibXR::ErrorCode::FULL:
-        return Status::kCapacityExceeded;
-      case LibXR::ErrorCode::NO_RESPONSE:
-      case LibXR::ErrorCode::TIMEOUT:
-        return Status::kTimeout;
-      case LibXR::ErrorCode::NOT_FOUND:
-      case LibXR::ErrorCode::EMPTY:
-      case LibXR::ErrorCode::BUSY:
-        return Status::kUnavailable;
-      case LibXR::ErrorCode::FAILED:
-      case LibXR::ErrorCode::CHECK_ERR:
-      case LibXR::ErrorCode::NOT_SUPPORT:
-        return Status::kInternal;
-    }
-    return Status::kInternal;
-  }
-
-  LibXR::CAN& can_;
+  ClassicCanEndpoint& endpoint_;
   xrobot::transport::can::CanFrameReceiver receiver_;
-  xrobot::transport::can::CanClockReader clock_;
   LibXR::SPSCQueue<QueuedFrame> receive_queue_;
-  LibXR::CAN::Callback receive_callback_;
   bool receiver_bound_{};
   bool initialized_{};
   std::atomic<std::uint32_t> tx_frames_{};

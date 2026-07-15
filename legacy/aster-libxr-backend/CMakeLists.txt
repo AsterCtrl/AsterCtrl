@@ -47,6 +47,17 @@ target_link_libraries(xrobot_libxr_backend INTERFACE xrobot::transports xr)
 
 if(XROBOT_LIBXR_BACKEND_BUILD_TESTS)
   include(CTest)
+  add_executable(xrobot_libxr_classic_can_endpoint_test
+                 tests/classic_can_endpoint_test.cpp)
+  target_link_libraries(xrobot_libxr_classic_can_endpoint_test
+                        PRIVATE xrobot::libxr-backend)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(xrobot_libxr_classic_can_endpoint_test PRIVATE
+      -Wall -Wextra -Wpedantic -Wconversion -Wsign-conversion -Werror)
+  endif()
+  add_test(NAME xrobot_libxr_classic_can_endpoint_test
+           COMMAND xrobot_libxr_classic_can_endpoint_test)
+
   add_executable(xrobot_libxr_can_adapter_test tests/can_adapter_test.cpp)
   target_link_libraries(xrobot_libxr_can_adapter_test
                         PRIVATE xrobot::libxr-backend)
