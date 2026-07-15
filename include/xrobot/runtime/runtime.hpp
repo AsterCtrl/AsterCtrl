@@ -7,6 +7,7 @@
 
 #include "xrobot/runtime/executor.hpp"
 #include "xrobot/runtime/module.hpp"
+#include "xrobot/runtime/periodic_scheduler.hpp"
 #include "xrobot/runtime/status.hpp"
 
 namespace xrobot::runtime {
@@ -31,6 +32,7 @@ enum class LifecycleOperation {
 enum class LifecycleSubject {
   kExecutor,
   kModule,
+  kScheduler,
 };
 
 struct RuntimeFailure {
@@ -47,9 +49,14 @@ class Runtime {
   Runtime(std::span<ExecutorSlot> executors,
           std::span<ModuleSlot> modules) noexcept
       : executors_(executors), modules_(modules) {}
+  Runtime(std::span<ExecutorSlot> executors, std::span<ModuleSlot> modules,
+          PeriodicScheduler& scheduler) noexcept
+      : executors_(executors), modules_(modules), scheduler_(&scheduler) {}
 
   Status Initialize() noexcept;
   Status Start() noexcept;
+  Status Poll(std::uint64_t now_ns,
+              const ExecutionContext& caller) noexcept;
   void Shutdown() noexcept;
 
   RuntimeState state() const noexcept { return state_; }
@@ -58,14 +65,17 @@ class Runtime {
  private:
   Status ValidateSlots() noexcept;
   void ShutdownInitializedModules() noexcept;
+  void ShutdownInitializedScheduler() noexcept;
   void ShutdownInitializedExecutors() noexcept;
   void RecordFailure(LifecycleSubject subject, std::size_t index,
                      LifecycleOperation operation, Status status) noexcept;
 
   std::span<ExecutorSlot> executors_;
   std::span<ModuleSlot> modules_;
+  PeriodicScheduler* scheduler_{};
   std::size_t initialized_executor_count_{};
   std::size_t initialized_module_count_{};
+  bool scheduler_initialized_{};
   RuntimeState state_{RuntimeState::kConstructed};
   std::optional<RuntimeFailure> failure_;
 };

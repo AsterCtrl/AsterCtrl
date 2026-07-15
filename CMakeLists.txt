@@ -8,6 +8,11 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 option(XROBOT_RUNTIME_BUILD_TESTS "Build xrobot-runtime tests" ON)
 
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+  add_compile_options(
+    -Wall -Wextra -Wpedantic -Wconversion -Wsign-conversion -Werror)
+endif()
+
 add_library(xrobot_runtime STATIC src/runtime.cpp)
 add_library(xrobot::runtime ALIAS xrobot_runtime)
 
@@ -31,6 +36,13 @@ if(XROBOT_RUNTIME_BUILD_TESTS)
   add_executable(xrobot_runtime_executor_test tests/executor_test.cpp)
   target_link_libraries(xrobot_runtime_executor_test PRIVATE xrobot::runtime)
   add_test(NAME xrobot_runtime_executor_test COMMAND xrobot_runtime_executor_test)
+
+  add_executable(xrobot_runtime_periodic_scheduler_test
+                 tests/periodic_scheduler_test.cpp)
+  target_link_libraries(xrobot_runtime_periodic_scheduler_test
+                        PRIVATE xrobot::runtime)
+  add_test(NAME xrobot_runtime_periodic_scheduler_test
+           COMMAND xrobot_runtime_periodic_scheduler_test)
 
   add_executable(xrobot_runtime_topic_test tests/topic_test.cpp)
   target_link_libraries(xrobot_runtime_topic_test PRIVATE xrobot::runtime)

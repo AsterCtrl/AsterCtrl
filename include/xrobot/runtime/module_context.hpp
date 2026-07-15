@@ -5,6 +5,7 @@
 
 #include "xrobot/runtime/executor.hpp"
 #include "xrobot/runtime/parameter_registry.hpp"
+#include "xrobot/runtime/periodic_scheduler.hpp"
 #include "xrobot/runtime/port_registry.hpp"
 #include "xrobot/runtime/runtime_services.hpp"
 
@@ -28,6 +29,7 @@ struct ModuleServices {
   DiagnosticSink* diagnostics{};
   PortResolver* ports{};
   ParameterResolver* parameters{};
+  PeriodicTaskBinder* periodic_tasks{};
 };
 
 class ModuleContext {
@@ -81,6 +83,16 @@ class ModuleContext {
     }
     return services_.diagnostics->Report(
         {node_name_, module_name_, name, severity, value, NowNs()}, caller);
+  }
+
+  Status BindPeriodicTask(std::string_view name, WorkItem work) const noexcept {
+    if (phase_ != ModulePhase::kInitializing) {
+      return Status::kInvalidState;
+    }
+    if (services_.periodic_tasks == nullptr) {
+      return Status::kUnavailable;
+    }
+    return services_.periodic_tasks->BindPeriodicTask(module_name_, name, work);
   }
 
   template <MessageType Message>

@@ -61,6 +61,39 @@ Status Runtime::ValidateSlots() noexcept {
       }
     }
   }
+
+  if (scheduler_ != nullptr) {
+    if (scheduler_->Name().empty() || scheduler_->task_count() == 0) {
+      RecordFailure(LifecycleSubject::kScheduler, 0,
+                    LifecycleOperation::kValidation,
+                    Status::kInvalidArgument);
+      return Status::kInvalidArgument;
+    }
+    for (std::size_t index = 0; index < scheduler_->task_count(); ++index) {
+      const auto task = scheduler_->task_descriptor(index);
+      bool module_found = false;
+      for (const auto& module_slot : modules_) {
+        if (module_slot.module->Name() == task.module_name) {
+          module_found = true;
+          break;
+        }
+      }
+      bool executor_found = false;
+      for (const auto& executor_slot : executors_) {
+        if (executor_slot.executor == task.executor) {
+          executor_found = true;
+          break;
+        }
+      }
+      if (task.module_name.empty() || task.task_name.empty() ||
+          task.period_ns == 0 || !module_found || !executor_found) {
+        RecordFailure(LifecycleSubject::kScheduler, index,
+                      LifecycleOperation::kValidation,
+                      Status::kInvalidArgument);
+        return Status::kInvalidArgument;
+      }
+    }
+  }
   return Status::kOk;
 }
 
@@ -103,6 +136,19 @@ Status Runtime::Initialize() noexcept {
     slot.context->SetPhase(ModulePhase::kInitialized);
   }
 
+  if (scheduler_ != nullptr) {
+    const auto status = scheduler_->Initialize();
+    if (!IsOk(status)) {
+      RecordFailure(LifecycleSubject::kScheduler, 0,
+                    LifecycleOperation::kInitialize, status);
+      ShutdownInitializedModules();
+      ShutdownInitializedExecutors();
+      state_ = RuntimeState::kFailed;
+      return status;
+    }
+    scheduler_initialized_ = true;
+  }
+
   state_ = RuntimeState::kInitialized;
   return Status::kOk;
 }
@@ -141,8 +187,32 @@ Status Runtime::Start() noexcept {
     slot.context->SetPhase(ModulePhase::kRunning);
   }
 
+  if (scheduler_ != nullptr) {
+    const auto status = scheduler_->Start();
+    if (!IsOk(status)) {
+      RecordFailure(LifecycleSubject::kScheduler, 0,
+                    LifecycleOperation::kStart, status);
+      ShutdownInitializedScheduler();
+      ShutdownInitializedModules();
+      ShutdownInitializedExecutors();
+      state_ = RuntimeState::kFailed;
+      return status;
+    }
+  }
+
   state_ = RuntimeState::kRunning;
   return Status::kOk;
+}
+
+Status Runtime::Poll(std::uint64_t now_ns,
+                     const ExecutionContext& caller) noexcept {
+  if (state_ != RuntimeState::kRunning) {
+    return Status::kInvalidState;
+  }
+  if (scheduler_ == nullptr) {
+    return Status::kUnavailable;
+  }
+  return scheduler_->Poll(now_ns, caller);
 }
 
 void Runtime::Shutdown() noexcept {
@@ -155,9 +225,17 @@ void Runtime::Shutdown() noexcept {
   }
 
   state_ = RuntimeState::kShuttingDown;
+  ShutdownInitializedScheduler();
   ShutdownInitializedModules();
   ShutdownInitializedExecutors();
   state_ = RuntimeState::kStopped;
+}
+
+void Runtime::ShutdownInitializedScheduler() noexcept {
+  if (scheduler_initialized_) {
+    scheduler_->Shutdown();
+    scheduler_initialized_ = false;
+  }
 }
 
 void Runtime::ShutdownInitializedModules() noexcept {
@@ -183,8 +261,11 @@ void Runtime::RecordFailure(LifecycleSubject subject, std::size_t index,
     if (index < executors_.size() && executors_[index].executor != nullptr) {
       name = executors_[index].executor->Name();
     }
-  } else if (index < modules_.size() && modules_[index].module != nullptr) {
+  } else if (subject == LifecycleSubject::kModule && index < modules_.size() &&
+             modules_[index].module != nullptr) {
     name = modules_[index].module->Name();
+  } else if (subject == LifecycleSubject::kScheduler && scheduler_ != nullptr) {
+    name = scheduler_->Name();
   }
   failure_ = RuntimeFailure{subject, index, name, operation, status};
 }
