@@ -360,6 +360,7 @@ def test_compiles_a_deterministic_cross_node_deployment(tmp_path: Path) -> None:
     first_node_composition = (
         output / "nodes/node_a/node_composition.hpp"
     ).read_bytes()
+    first_node_ports = (output / "nodes/node_a/node_ports.hpp").read_bytes()
     second = compile_deployment(workspace, deployment, output, authoritative_lock)
 
     assert first == second
@@ -372,6 +373,7 @@ def test_compiles_a_deterministic_cross_node_deployment(tmp_path: Path) -> None:
     assert (
         output / "nodes/node_a/node_composition.hpp"
     ).read_bytes() == first_node_composition
+    assert (output / "nodes/node_a/node_ports.hpp").read_bytes() == first_node_ports
     lock = yaml.safe_load(first_lock)
     assert lock["nodes"] == {"node_a": 1, "node_b": 2}
     assert lock["routes"] == {"/control/command": 8}
@@ -504,6 +506,7 @@ int main() {
     )
     repository_root = Path(__file__).parents[2]
     runtime = repository_root / "xrobot-runtime"
+    transports = repository_root / "xrobot-transports"
     composition_executable = tmp_path / "composition_test"
     subprocess.run(
         [
@@ -521,6 +524,8 @@ int main() {
             str(generated_messages / "include"),
             "-I",
             str(runtime / "include"),
+            "-I",
+            str(transports / "include"),
             "-I",
             str(tmp_path / "source/include"),
             "-I",
@@ -562,6 +567,205 @@ int main() {
     assert routes[0]["max_wire_payload_size"] == 8
     assert routes[0]["frame_count"] == 2
     assert routes[0]["bits_per_message"] == 230
+
+
+def test_generated_compositions_route_a_topic_over_can(tmp_path: Path) -> None:
+    workspace, deployment = create_workspace(tmp_path)
+    robot = tmp_path / "robot.yaml"
+    robot.write_text(
+        robot.read_text(encoding="utf-8")
+        + """\
+  command_observer:
+    package: sink
+    module: sink
+    ports: {command: /control/command}
+""",
+        encoding="utf-8",
+    )
+    deployment.write_text(
+        deployment.read_text(encoding="utf-8").replace(
+            "instances: [command_source]",
+            "instances: [command_source, command_observer]",
+        ),
+        encoding="utf-8",
+    )
+    source_manifest = tmp_path / "source/module.yaml"
+    source_manifest.write_text(
+        source_manifest.read_text(encoding="utf-8").replace(
+            "priority: 4, stack_bytes", "priority: 7, stack_bytes"
+        ),
+        encoding="utf-8",
+    )
+    output = tmp_path / "generated"
+    compile_deployment(workspace, deployment, output)
+
+    assert (output / "nodes/node_a/node_ports.hpp").is_file()
+    assert (output / "nodes/node_b/node_ports.hpp").is_file()
+
+    generated_messages = tmp_path / "generated-messages"
+    generate_interfaces(tmp_path / "robot-msgs/schemas", generated_messages)
+    write(
+        tmp_path,
+        "generated_transport_test.cpp",
+        """\
+#include <array>
+#include <cassert>
+#include <cstddef>
+#include <cstdint>
+
+#include "node_a/node_composition.hpp"
+#include "node_b/node_composition.hpp"
+#include "xrobot/runtime/hardware_registry.hpp"
+#include "xrobot/transport/can/link.hpp"
+
+namespace {
+
+class Clock final : public xrobot::runtime::SteadyClock {
+ public:
+  std::uint64_t NowNs() const noexcept override { return now_ns; }
+  std::uint64_t now_ns{1'000'000};
+};
+
+using xrobot::runtime::ExecutionContext;
+using xrobot::runtime::Status;
+using xrobot::transport::can::CanFrame;
+using xrobot::transport::can::CanFrameReceiver;
+
+Status DiscardFrame(void*, const CanFrame&,
+                    const ExecutionContext&) noexcept {
+  return Status::kOk;
+}
+
+struct LoopbackBus {
+  CanFrameReceiver receiver;
+  const ExecutionContext* receive_context{};
+  std::uint64_t receive_time_ns{};
+};
+
+struct ExecutionOrder {
+  std::array<std::uint8_t, 2> priorities{};
+  std::size_t size{};
+};
+
+void RecordPriority(void* state,
+                    const ExecutionContext& context) noexcept {
+  auto& order = *static_cast<ExecutionOrder*>(state);
+  order.priorities[order.size++] = context.priority();
+}
+
+Status SendFrame(void* state, const CanFrame& frame,
+                 const ExecutionContext&) noexcept {
+  auto& bus = *static_cast<LoopbackBus*>(state);
+  const auto status = bus.receiver.Accept(
+      frame, bus.receive_time_ns, *bus.receive_context);
+  return status == Status::kUnavailable ? Status::kOk : status;
+}
+
+}  // namespace
+
+int main() {
+  using namespace xrobot::runtime;
+  using xrobot::generated::CanLinkWriter;
+  Clock clock;
+  const ExecutionContext receive_context(
+      "can-rx", ExecutionKind::kThread, 6);
+
+  std::array<CanLinkWriter, 1> sink_links{{
+      {"robot_can", {DiscardFrame, nullptr}},
+  }};
+  xrobot::generated::node_b::NodeComposition sink(clock, sink_links);
+  LoopbackBus bus{
+      sink.CanReceiver("robot_can"), &receive_context, clock.now_ns};
+  std::array<CanLinkWriter, 1> source_links{{
+      {"robot_can", {SendFrame, &bus}},
+  }};
+  xrobot::generated::node_a::NodeComposition source(clock, source_links);
+
+  StaticHardwareRegistry<1> source_hardware;
+  test::Device device;
+  device.bias = 7;
+  assert(source_hardware.Add("source_device", device) == Status::kOk);
+  assert(source_hardware.Seal() == Status::kOk);
+
+  xrobot::generated::node_a::NodeComposition missing_link(clock);
+  assert(missing_link.Configure(&source_hardware) == Status::kInvalidArgument);
+  assert(source.Configure(&source_hardware) == Status::kOk);
+  assert(sink.Configure() == Status::kOk);
+  assert(source.Initialize() == Status::kOk);
+  assert(sink.Initialize() == Status::kOk);
+  assert(source.Start() == Status::kOk);
+  assert(sink.Start() == Status::kOk);
+
+  const ExecutionContext runtime_context(
+      "runtime", ExecutionKind::kThread, 9);
+  auto* const high = source.FindExecutor("command_source__control");
+  auto* const low = source.FindExecutor("command_observer__control");
+  assert(high != nullptr);
+  assert(low != nullptr);
+  ExecutionOrder order;
+  assert(low->TryPost({RecordPriority, &order}, runtime_context) == Status::kOk);
+  assert(high->TryPost({RecordPriority, &order}, runtime_context) == Status::kOk);
+  std::size_t drained{};
+  assert(source.DrainExecutors(2, drained) == Status::kOk);
+  assert(drained == 2);
+  assert(order.priorities[0] == 7);
+  assert(order.priorities[1] == 4);
+  assert(source.DrainExecutors(0, drained) == Status::kInvalidArgument);
+  assert(drained == 0);
+  assert(source.DrainExecutors(1, drained) == Status::kUnavailable);
+  assert(drained == 0);
+
+  assert(source.Poll(clock.now_ns, runtime_context) == Status::kOk);
+  assert(source.RunExecutor(1) == Status::kOk);
+  assert(source.RunExecutor(0) == Status::kOk);
+  assert(source.RunExecutor(0) == Status::kOk);
+  assert(sink.RunExecutor(0) == Status::kOk);
+  assert(test::Sink::received == 2);
+  assert(test::Sink::last.value == 7);
+  assert(test::Sink::last.auxiliary == 1);
+
+  source.Shutdown();
+  sink.Shutdown();
+}
+""",
+    )
+
+    repository_root = Path(__file__).parents[2]
+    runtime = repository_root / "xrobot-runtime"
+    transports = repository_root / "xrobot-transports"
+    executable = tmp_path / "generated_transport_test"
+    subprocess.run(
+        [
+            "/usr/bin/c++",
+            "-std=c++20",
+            "-Wall",
+            "-Wextra",
+            "-Wpedantic",
+            "-Wconversion",
+            "-Wsign-conversion",
+            "-Werror",
+            "-I",
+            str(output / "nodes"),
+            "-I",
+            str(generated_messages / "include"),
+            "-I",
+            str(runtime / "include"),
+            "-I",
+            str(transports / "include"),
+            "-I",
+            str(tmp_path / "source/include"),
+            "-I",
+            str(tmp_path / "sink/include"),
+            str(tmp_path / "generated_transport_test.cpp"),
+            str(runtime / "src/runtime.cpp"),
+            "-o",
+            str(executable),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    subprocess.run([str(executable)], check=True)
 
 
 def test_rejects_an_instance_placed_more_than_once(tmp_path: Path) -> None:

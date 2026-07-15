@@ -96,6 +96,7 @@ class DeploymentPlan:
     robot: dict[str, Any]
     instances: tuple[Instance, ...]
     hardware: dict[str, dict[str, Any]]
+    bindings: dict[str, tuple[PortEndpoint, ...]]
     routes: tuple[Route, ...]
     link_budgets: tuple[LinkBudget, ...]
     type_hashes: dict[str, str]
@@ -651,7 +652,12 @@ def _build_plan(
     placements = _place_instances(robot, deployment)
     hardware = _load_hardware(deployment_path, deployment)
     instances = _load_instances(workspace, robot, placements, hardware)
-    bindings = _collect_ports(instances)
+    bindings = {
+        name: tuple(
+            sorted(endpoints, key=lambda item: (item.node, item.instance, item.port))
+        )
+        for name, endpoints in sorted(_collect_ports(instances).items())
+    }
     model = workspace.interface_model()
     routes = _compile_routes(bindings, deployment, model)
     budgets = _compile_budgets(deployment, routes)
@@ -674,6 +680,7 @@ def _build_plan(
         robot=robot,
         instances=instances,
         hardware=hardware,
+        bindings=bindings,
         routes=routes,
         link_budgets=budgets,
         type_hashes=type_hashes,
