@@ -11,6 +11,7 @@ from xrobot_tools.deployment import (
     _can_route_cost,
     compile_deployment,
 )
+from xrobot_tools.interfaces import generate_interfaces
 
 
 def write(root: Path, relative: str, content: str) -> None:
@@ -46,6 +47,147 @@ spec:
     - {name: auxiliary, type: uint32}
 """,
     )
+    write(
+        tmp_path,
+        "source/include/test/source.hpp",
+        """\
+#pragma once
+
+#include <cstdint>
+#include <string_view>
+
+#include "robot_msgs/robot_msgs.hpp"
+#include "xrobot/runtime/module.hpp"
+
+namespace test {
+
+class Device {
+ public:
+  static constexpr std::string_view TypeName() noexcept {
+    return "test.hardware.SourceDevice/v1";
+  }
+
+  std::uint16_t bias{};
+};
+
+class Source final : public xrobot::runtime::Module {
+ public:
+  explicit Source(std::string_view name) noexcept : name_(name) {}
+
+  std::string_view Name() const noexcept override { return name_; }
+
+  xrobot::runtime::Status Initialize(
+      xrobot::runtime::ModuleContext& context) noexcept override {
+    using xrobot::runtime::IsOk;
+    if (auto status = context.ResolveTopicPublisher("command", publisher_);
+        !IsOk(status)) return status;
+    if (auto status = context.ResolveParameter("input_source", input_source_);
+        !IsOk(status)) return status;
+    if (auto status = context.ResolveHardware("device", device_);
+        !IsOk(status)) return status;
+    if (auto status = context.BindPeriodicTask("control", {Run, this});
+        !IsOk(status)) return status;
+    context_ = &context;
+    return xrobot::runtime::Status::kOk;
+  }
+
+  xrobot::runtime::Status Start() noexcept override {
+    if (context_ == nullptr || running_) {
+      return xrobot::runtime::Status::kInvalidState;
+    }
+    running_ = true;
+    return xrobot::runtime::Status::kOk;
+  }
+
+  void Shutdown() noexcept override { running_ = false; }
+
+  inline static std::uint16_t last_value{};
+  inline static std::uint32_t cycles{};
+
+ private:
+  static void Run(void* state,
+                  const xrobot::runtime::ExecutionContext& execution) noexcept {
+    auto& self = *static_cast<Source*>(state);
+    if (!self.running_) return;
+    ++cycles;
+    last_value = static_cast<std::uint16_t>(
+        self.input_source_->value() + self.device_->bias);
+    self.publisher_.Publish({last_value, cycles}, self.context_->NowNs(),
+                            execution);
+  }
+
+  std::string_view name_;
+  xrobot::runtime::ModuleContext* context_{};
+  xrobot::runtime::Parameter<std::uint32_t>* input_source_{};
+  Device* device_{};
+  xrobot::runtime::TopicPublisher<test::msg::Command> publisher_;
+  bool running_{};
+};
+
+}  // namespace test
+""",
+    )
+    write(
+        tmp_path,
+        "sink/include/test/sink.hpp",
+        """\
+#pragma once
+
+#include <cstdint>
+#include <string_view>
+
+#include "robot_msgs/robot_msgs.hpp"
+#include "xrobot/runtime/module.hpp"
+
+namespace test {
+
+class Sink final : public xrobot::runtime::Module {
+ public:
+  explicit Sink(std::string_view name) noexcept : name_(name) {}
+
+  std::string_view Name() const noexcept override { return name_; }
+
+  xrobot::runtime::Status Initialize(
+      xrobot::runtime::ModuleContext& context) noexcept override {
+    using xrobot::runtime::IsOk;
+    xrobot::runtime::TopicSubscriber<test::msg::Command> subscriber;
+    if (auto status = context.ResolveTopicSubscriber("command", subscriber);
+        !IsOk(status)) return status;
+    if (auto status = subscriber.Bind(Receive, this); !IsOk(status)) {
+      return status;
+    }
+    return context.BindPeriodicTask("control", {Run, this});
+  }
+
+  xrobot::runtime::Status Start() noexcept override {
+    running_ = true;
+    return xrobot::runtime::Status::kOk;
+  }
+
+  void Shutdown() noexcept override { running_ = false; }
+
+  inline static test::msg::Command last{};
+  inline static std::uint32_t received{};
+
+ private:
+  static void Receive(
+      void*, const test::msg::Command& command,
+      const xrobot::runtime::MessageInfo&,
+      const xrobot::runtime::ExecutionContext&) noexcept {
+    last = command;
+    ++received;
+  }
+
+  static void Run(void*,
+                  const xrobot::runtime::ExecutionContext&) noexcept {}
+
+  std::string_view name_;
+  bool running_{};
+};
+
+}  // namespace test
+""",
+    )
     for package, kind in (("source", "publisher"), ("sink", "subscriber")):
         parameters = (
             """\
@@ -58,6 +200,10 @@ spec:
 """
             if package == "source"
             else "  parameters: []\n"
+        )
+        header = f"test/{package}.hpp"
+        hardware = (
+            "  hardware: [device]" if package == "source" else "  hardware: []"
         )
         write(
             tmp_path,
@@ -82,14 +228,14 @@ api_version: xrobot.io/v1alpha1
 kind: Module
 metadata: {{name: {package}, version: 0.1.0}}
 spec:
-  implementation: {{target: {package}, class: test::{package.title()}}}
+  implementation: {{target: {package}, class: test::{package.title()}, header: {header}}}
   dependencies: []
   ports:
     - {{name: command, kind: {kind}, type: test.msg.Command, required: true}}
   executors:
     - {{name: control, priority: 4, stack_bytes: 1024, queue_depth: 4, period_us: 1000}}
 {parameters.rstrip()}
-  hardware: []
+{hardware}
 """,
         )
 
@@ -132,6 +278,7 @@ instances:
     module: source
     parameters: {input_source: 0, gain: 0.25}
     ports: {command: /control/command}
+    hardware: {device: source_device}
   command_sink:
     package: sink
     module: sink
@@ -149,6 +296,7 @@ metadata: {{name: {node}, board: test/{node}}}
 spec:
   resources:
     robot_bus: {{kind: can, backend: libxr, resource: can1, options: {{}}}}
+    source_device: {{kind: test, backend: fake, resource: source0, options: {{}}}}
   devices: {{}}
 """,
         )
@@ -208,19 +356,32 @@ def test_compiles_a_deterministic_cross_node_deployment(tmp_path: Path) -> None:
     first = compile_deployment(workspace, deployment, output, authoritative_lock)
     first_lock = (output / "deployment.lock.yaml").read_bytes()
     first_routes = (output / "reports/routes.json").read_bytes()
+    first_composition_report = (output / "reports/composition.yaml").read_bytes()
+    first_node_composition = (
+        output / "nodes/node_a/node_composition.hpp"
+    ).read_bytes()
     second = compile_deployment(workspace, deployment, output, authoritative_lock)
 
     assert first == second
     assert (output / "deployment.lock.yaml").read_bytes() == first_lock
     assert authoritative_lock.read_bytes() == first_lock
     assert (output / "reports/routes.json").read_bytes() == first_routes
+    assert (
+        output / "reports/composition.yaml"
+    ).read_bytes() == first_composition_report
+    assert (
+        output / "nodes/node_a/node_composition.hpp"
+    ).read_bytes() == first_node_composition
     lock = yaml.safe_load(first_lock)
     assert lock["nodes"] == {"node_a": 1, "node_b": 2}
     assert lock["routes"] == {"/control/command": 8}
     assert first.cross_node_route_count == 1
     assert first.node_count == 2
-    assert (output / "nodes/node_a/generated_main.cpp").is_file()
-    assert (output / "nodes/node_b/generated_main.cpp").is_file()
+    assert (output / "nodes/node_a/node_descriptor.cpp").is_file()
+    assert (output / "nodes/node_b/node_descriptor.cpp").is_file()
+    assert not (output / "nodes/node_a/generated_main.cpp").exists()
+    assert (output / "nodes/node_a/node_composition.hpp").is_file()
+    assert (output / "nodes/node_b/node_composition.hpp").is_file()
     node_a_header = (output / "nodes/node_a/node_config.hpp").read_text()
     assert 'GeneratedModule{"command_source", "source", "source"' in node_a_header
     assert (
@@ -246,14 +407,134 @@ def test_compiles_a_deterministic_cross_node_deployment(tmp_path: Path) -> None:
                 "-I",
                 str(node_dir),
                 "-c",
-                str(node_dir / "generated_main.cpp"),
+                str(node_dir / "node_descriptor.cpp"),
                 "-o",
-                str(node_dir / "generated_main.o"),
+                str(node_dir / "node_descriptor.o"),
             ],
             check=True,
             capture_output=True,
             text=True,
         )
+    composition = yaml.safe_load(
+        (output / "reports/composition.yaml").read_text()
+    )
+    assert composition["nodes"] == {
+        "node_a": {"ready": True, "blockers": []},
+        "node_b": {"ready": True, "blockers": []},
+    }
+
+    generated_messages = tmp_path / "generated-messages"
+    generate_interfaces(tmp_path / "robot-msgs/schemas", generated_messages)
+    write(
+        tmp_path,
+        "composition_test.cpp",
+        """\
+#include <cassert>
+#include <cstdint>
+
+#include "node_a/node_composition.hpp"
+#include "node_b/node_composition.hpp"
+#include "xrobot/runtime/cooperative_executor.hpp"
+#include "xrobot/runtime/hardware_registry.hpp"
+#include "xrobot/runtime/port_registry.hpp"
+#include "xrobot/runtime/topic.hpp"
+
+namespace {
+
+class Clock final : public xrobot::runtime::SteadyClock {
+ public:
+  std::uint64_t NowNs() const noexcept override { return now_ns; }
+  std::uint64_t now_ns{1'000'000};
+};
+
+}  // namespace
+
+int main() {
+  using namespace xrobot::runtime;
+  Clock clock;
+  CooperativeExecutor<2> delivery("delivery", 3);
+  StaticTopic<test::msg::Command, 1> topic("/control/command");
+  TopicSubscription<test::msg::Command, 1> subscription(
+      delivery, DeliveryPolicy::kLatest);
+  StaticPortRegistry<1> source_ports;
+  StaticPortRegistry<1> sink_ports;
+  StaticHardwareRegistry<1> source_hardware;
+  test::Device device;
+  device.bias = 7;
+
+  assert(delivery.Initialize() == Status::kOk);
+  assert(delivery.Start() == Status::kOk);
+  assert(topic.Connect(subscription) == Status::kOk);
+  assert(topic.Seal() == Status::kOk);
+  assert(source_ports.AddTopicPublisher("/control/command", topic) ==
+         Status::kOk);
+  assert(source_ports.Seal() == Status::kOk);
+  assert(sink_ports.AddTopicSubscriber("/control/command", subscription) ==
+         Status::kOk);
+  assert(sink_ports.Seal() == Status::kOk);
+  assert(source_hardware.Add("source_device", device) == Status::kOk);
+  assert(source_hardware.Seal() == Status::kOk);
+
+  xrobot::generated::node_a::NodeComposition source(clock);
+  xrobot::generated::node_b::NodeComposition sink(clock);
+  assert(source.Configure(source_ports, &source_hardware) == Status::kOk);
+  assert(sink.Configure(sink_ports) == Status::kOk);
+  assert(source.Initialize() == Status::kOk);
+  assert(sink.Initialize() == Status::kOk);
+  assert(source.Start() == Status::kOk);
+  assert(sink.Start() == Status::kOk);
+  assert(source.FindExecutor("command_source__control") != nullptr);
+  assert(source.FindExecutor("missing") == nullptr);
+
+  const ExecutionContext runtime_context(
+      "runtime", ExecutionKind::kThread, 9);
+  assert(source.Poll(clock.now_ns, runtime_context) == Status::kOk);
+  assert(source.RunExecutor(0) == Status::kOk);
+  assert(delivery.RunOne() == Status::kOk);
+  assert(test::Source::cycles == 1);
+  assert(test::Source::last_value == 7);
+  assert(test::Sink::received == 1);
+  assert(test::Sink::last.value == 7);
+  assert(test::Sink::last.auxiliary == 1);
+  assert(source.RunExecutor(99) == Status::kInvalidArgument);
+  source.Shutdown();
+  sink.Shutdown();
+}
+""",
+    )
+    repository_root = Path(__file__).parents[2]
+    runtime = repository_root / "xrobot-runtime"
+    composition_executable = tmp_path / "composition_test"
+    subprocess.run(
+        [
+            "/usr/bin/c++",
+            "-std=c++20",
+            "-Wall",
+            "-Wextra",
+            "-Wpedantic",
+            "-Wconversion",
+            "-Wsign-conversion",
+            "-Werror",
+            "-I",
+            str(output / "nodes"),
+            "-I",
+            str(generated_messages / "include"),
+            "-I",
+            str(runtime / "include"),
+            "-I",
+            str(tmp_path / "source/include"),
+            "-I",
+            str(tmp_path / "sink/include"),
+            str(tmp_path / "composition_test.cpp"),
+            str(runtime / "src/runtime.cpp"),
+            "-o",
+            str(composition_executable),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    subprocess.run([str(composition_executable)], check=True)
     budget = yaml.safe_load((output / "reports/link_budget.yaml").read_text())
     assert budget["links"]["robot_can"]["within_budget"] is True
     executors = yaml.safe_load((output / "reports/executors.yaml").read_text())
@@ -293,6 +574,56 @@ def test_rejects_an_instance_placed_more_than_once(tmp_path: Path) -> None:
 
     with pytest.raises(DeploymentError, match="command_source.*more than once"):
         compile_deployment(workspace, deployment, tmp_path / "generated")
+
+
+def test_reports_composition_blockers_without_emitting_a_fake_entry(
+    tmp_path: Path,
+) -> None:
+    workspace, deployment = create_workspace(tmp_path)
+    source_manifest = tmp_path / "source/module.yaml"
+    source_manifest.write_text(
+        source_manifest.read_text(encoding="utf-8").replace(
+            ", header: test/source.hpp", ""
+        ),
+        encoding="utf-8",
+    )
+
+    output = tmp_path / "generated"
+    compile_deployment(workspace, deployment, output)
+    report = yaml.safe_load((output / "reports/composition.yaml").read_text())
+
+    assert report["nodes"]["node_a"]["ready"] is False
+    assert report["nodes"]["node_a"]["blockers"] == [
+        "instance command_source: implementation.header is not declared"
+    ]
+    assert not (output / "nodes/node_a/node_composition.hpp").exists()
+    assert not (output / "nodes/node_a/generated_main.cpp").exists()
+    assert (output / "nodes/node_a/node_descriptor.cpp").is_file()
+    assert report["nodes"]["node_b"] == {"ready": True, "blockers": []}
+
+
+def test_multiple_executors_require_one_explicit_default_for_composition(
+    tmp_path: Path,
+) -> None:
+    workspace, deployment = create_workspace(tmp_path)
+    source_manifest = tmp_path / "source/module.yaml"
+    source_manifest.write_text(
+        source_manifest.read_text(encoding="utf-8").replace(
+            "    - {name: control, priority: 4, stack_bytes: 1024, queue_depth: 4, period_us: 1000}",
+            "    - {name: control, priority: 4, stack_bytes: 1024, queue_depth: 4, period_us: 1000}\n"
+            "    - {name: events, priority: 3, stack_bytes: 512, queue_depth: 2}",
+        ),
+        encoding="utf-8",
+    )
+
+    output = tmp_path / "generated"
+    compile_deployment(workspace, deployment, output)
+    report = yaml.safe_load((output / "reports/composition.yaml").read_text())
+
+    assert report["nodes"]["node_a"]["blockers"] == [
+        "instance command_source: multiple executors require exactly one default"
+    ]
+    assert not (output / "nodes/node_a/node_composition.hpp").exists()
 
 
 def test_rejects_a_classic_can_budget_overflow(tmp_path: Path) -> None:

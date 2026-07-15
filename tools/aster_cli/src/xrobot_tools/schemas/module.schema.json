@@ -26,7 +26,11 @@
           "required": ["target", "class"],
           "properties": {
             "target": {"type": "string", "minLength": 1},
-            "class": {"type": "string", "minLength": 1}
+            "class": {"type": "string", "minLength": 1},
+            "header": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_./-]+\\.(h|hpp)$"
+            }
           }
         },
         "dependencies": {"type": "array", "items": {"type": "string"}},
@@ -77,7 +81,8 @@
         "stack_bytes": {"type": "integer", "minimum": 128},
         "queue_depth": {"type": "integer", "minimum": 1},
         "period_us": {"type": "integer", "minimum": 1},
-        "exclusive": {"type": "boolean"}
+        "exclusive": {"type": "boolean"},
+        "default": {"type": "boolean"}
       }
     },
     "parameter": {

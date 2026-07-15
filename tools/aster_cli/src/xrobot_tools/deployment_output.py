@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import struct
 from pathlib import Path
@@ -10,7 +11,13 @@ from typing import Any
 
 import yaml
 
-from xrobot_tools.deployment import DeploymentError, DeploymentPlan, Route
+from xrobot_tools.deployment import (
+    DeploymentError,
+    DeploymentPlan,
+    Instance,
+    ResolvedParameter,
+    Route,
+)
 from xrobot_tools.validation import validate_document
 
 
@@ -55,6 +62,19 @@ _PARAMETER_PERSISTENCE = {
     "volatile": "Volatile",
     "persistent": "Persistent",
 }
+_RUNTIME_PARAMETER_MUTABILITY = {
+    "build": "BuildTime",
+    "startup": "Startup",
+    "runtime": "Runtime",
+}
+_RUNTIME_PARAMETER_PERSISTENCE = {
+    "compiled": "Compiled",
+    "volatile": "Volatile",
+    "persistent": "Persistent",
+}
+_CPP_QUALIFIED_NAME = re.compile(
+    r"^[A-Za-z_][A-Za-z0-9_]*(?:::[A-Za-z_][A-Za-z0-9_]*)*$"
+)
 
 
 def _cpp_parameter_value(type_name: str, value: bool | int | float) -> str:
@@ -368,19 +388,367 @@ inline constexpr bool kConfigurationValid = ConfigurationValid();
 """
 
 
-def _node_main(node_name: str) -> str:
+def _node_descriptor(node_name: str) -> str:
     namespace = f"xrobot::generated::{node_name}"
     return f"""\
 #include "node_config.hpp"
 
-// Generated composition entry. Module construction is emitted beside this file.
+// Descriptor-only compile check. This is not a firmware entry point.
 namespace {namespace} {{
 
-int GeneratedMain() noexcept {{
+int ValidateNodeDescriptor() noexcept {{
   static_assert(kNodeId != 0);
   static_assert(kConfigurationValid);
   return 0;
 }}
+
+}}  // namespace {namespace}
+"""
+
+
+def _node_instances(plan: DeploymentPlan, node_name: str) -> list[Instance]:
+    return sorted(
+        (instance for instance in plan.instances if instance.node == node_name),
+        key=lambda item: item.name,
+    )
+
+
+def _composition_blockers(plan: DeploymentPlan, node_name: str) -> list[str]:
+    blockers: list[str] = []
+    for instance in _node_instances(plan, node_name):
+        implementation = instance.manifest.document["spec"]["implementation"]
+        header = implementation.get("header")
+        if header is None:
+            blockers.append(
+                f"instance {instance.name}: implementation.header is not declared"
+            )
+        elif not (instance.manifest.package_path / "include" / header).is_file():
+            blockers.append(
+                f"instance {instance.name}: include/{header} does not exist"
+            )
+        if not _CPP_QUALIFIED_NAME.fullmatch(implementation["class"]):
+            blockers.append(
+                f"instance {instance.name}: implementation.class is not a C++ qualified name"
+            )
+
+        executors = instance.manifest.document["spec"]["executors"]
+        executor_names = [item["name"] for item in executors]
+        defaults = [item for item in executors if item.get("default", False)]
+        if not executors:
+            blockers.append(f"instance {instance.name}: no executor is declared")
+        elif len(executor_names) != len(set(executor_names)):
+            blockers.append(
+                f"instance {instance.name}: executor names are not unique"
+            )
+        elif len(executors) > 1 and len(defaults) != 1:
+            blockers.append(
+                f"instance {instance.name}: multiple executors require exactly one default"
+            )
+    return blockers
+
+
+def _default_executor(instance: Instance) -> dict[str, Any]:
+    executors = instance.manifest.document["spec"]["executors"]
+    if len(executors) == 1:
+        return executors[0]
+    return next(item for item in executors if item.get("default", False))
+
+
+def _parameter_declaration(
+    instance_index: int,
+    parameter_index: int,
+    parameter: ResolvedParameter,
+) -> str:
+    cpp_type = _PARAMETER_CPP_TYPES[parameter.type_name][0]
+    mutability = _RUNTIME_PARAMETER_MUTABILITY[parameter.mutability]
+    persistence = _RUNTIME_PARAMETER_PERSISTENCE[parameter.persistence]
+    return (
+        f"  xrobot::runtime::Parameter<{cpp_type}> "
+        f"parameter_{instance_index}_{parameter_index}_{{\n"
+        f"      xrobot::runtime::ParameterDescriptor<{cpp_type}>{{"
+        f"{_cpp_string(parameter.name)}, {_cpp_string(parameter.unit)}, "
+        f"{_cpp_parameter_value(parameter.type_name, parameter.value)}, "
+        f"{_cpp_parameter_value(parameter.type_name, parameter.minimum)}, "
+        f"{_cpp_parameter_value(parameter.type_name, parameter.maximum)}, "
+        f"xrobot::runtime::ParameterMutability::k{mutability}, "
+        f"xrobot::runtime::ParameterPersistence::k{persistence}}}}};"
+    )
+
+
+def _node_composition(plan: DeploymentPlan, node_name: str) -> str:
+    instances = _node_instances(plan, node_name)
+    namespace = f"xrobot::generated::{node_name}"
+    headers = sorted(
+        {
+            instance.manifest.document["spec"]["implementation"]["header"]
+            for instance in instances
+        }
+    )
+    include_lines = "\n".join(f'#include "{header}"' for header in headers)
+
+    executor_specs: list[tuple[Instance, dict[str, Any], str]] = []
+    executor_fields: dict[tuple[str, str], str] = {}
+    for instance in instances:
+        for executor in sorted(
+            instance.manifest.document["spec"]["executors"],
+            key=lambda item: item["name"],
+        ):
+            field = f"executor_{len(executor_specs)}_"
+            full_name = f"{instance.name}__{executor['name']}"
+            executor_fields[(instance.name, executor["name"])] = field
+            executor_specs.append((instance, executor, full_name))
+
+    periodic_specs = [
+        item for item in executor_specs if "period_us" in item[1]
+    ]
+    has_hardware = any(instance.config.get("hardware") for instance in instances)
+
+    public_lines = [
+        "class NodeComposition {",
+        " public:",
+        "  explicit NodeComposition(",
+        "      xrobot::runtime::SteadyClock& clock,",
+        "      xrobot::runtime::LogSink* log = nullptr,",
+        "      xrobot::runtime::DiagnosticSink* diagnostics = nullptr) noexcept",
+        "      :",
+    ]
+    context_initializers = []
+    for index, instance in enumerate(instances):
+        default_executor = _default_executor(instance)
+        executor_field = executor_fields[(instance.name, default_executor["name"])]
+        ports = f"&ports_{index}_" if instance.config.get("ports") else "nullptr"
+        parameters = f"&parameters_{index}_" if instance.parameters else "nullptr"
+        periodic = (
+            "&scheduler_"
+            if any(item[0].name == instance.name for item in periodic_specs)
+            else "nullptr"
+        )
+        hardware = (
+            f"&hardware_{index}_" if instance.config.get("hardware") else "nullptr"
+        )
+        context_initializers.append(
+            f"        context_{index}_(kNodeName, {_cpp_string(instance.name)},\n"
+            "                   xrobot::runtime::ModuleServices{"
+            f".executor = &{executor_field}, .clock = &clock, .log = log, "
+            f".diagnostics = diagnostics, .ports = {ports}, "
+            f".parameters = {parameters}, .periodic_tasks = {periodic}, "
+            f".hardware = {hardware}}})"
+        )
+    runtime_initializer = (
+        "        runtime_(executor_slots_, module_slots_, scheduler_)"
+        if periodic_specs
+        else "        runtime_(executor_slots_, module_slots_)"
+    )
+    public_lines.append(",\n".join([*context_initializers, runtime_initializer]) + " {}")
+    public_lines.extend(
+        [
+            "",
+            "  xrobot::runtime::Status Configure(",
+            "      xrobot::runtime::PortResolver& ports,",
+            "      xrobot::runtime::HardwareResolver* hardware = nullptr) noexcept {",
+            "    using xrobot::runtime::IsOk;",
+            "    using xrobot::runtime::Status;",
+            "    if (configuration_attempted_) return Status::kInvalidState;",
+        ]
+    )
+    if has_hardware:
+        public_lines.append(
+            "    if (hardware == nullptr) return Status::kInvalidArgument;"
+        )
+    else:
+        public_lines.append("    (void)hardware;")
+    public_lines.append("    configuration_attempted_ = true;")
+    for index, instance in enumerate(instances):
+        if instance.config.get("ports"):
+            public_lines.extend(
+                [
+                    f"    if (const auto status = ports_{index}_.Bind(ports);",
+                    "        !IsOk(status)) return status;",
+                ]
+            )
+        if instance.config.get("hardware"):
+            public_lines.extend(
+                [
+                    f"    if (const auto status = hardware_{index}_.Bind(*hardware);",
+                    "        !IsOk(status)) return status;",
+                ]
+            )
+        for parameter_index, _ in enumerate(instance.parameters):
+            public_lines.append(
+                f"    parameter_{index}_{parameter_index}_.SealStartup();"
+            )
+            public_lines.extend(
+                [
+                    "    if (const auto status =",
+                    f"            parameters_{index}_.Add(parameter_{index}_{parameter_index}_);",
+                    "        !IsOk(status)) return status;",
+                ]
+            )
+        if instance.parameters:
+            public_lines.extend(
+                [
+                    f"    if (const auto status = parameters_{index}_.Seal();",
+                    "        !IsOk(status)) return status;",
+                ]
+            )
+    for instance, executor, _ in periodic_specs:
+        field = executor_fields[(instance.name, executor["name"])]
+        public_lines.extend(
+            [
+                "    if (const auto status = scheduler_.AddTask(",
+                f"            {_cpp_string(instance.name)}, {_cpp_string(executor['name'])},",
+                f"            {int(executor['period_us']) * 1000}ULL, {field});",
+                "        !IsOk(status)) return status;",
+            ]
+        )
+    public_lines.extend(
+        [
+            "    configured_ = true;",
+            "    return Status::kOk;",
+            "  }",
+            "",
+            "  xrobot::runtime::Status Initialize() noexcept {",
+            "    return configured_ ? runtime_.Initialize()",
+            "                       : xrobot::runtime::Status::kInvalidState;",
+            "  }",
+            "  xrobot::runtime::Status Start() noexcept { return runtime_.Start(); }",
+            "  xrobot::runtime::Status Poll(",
+            "      std::uint64_t now_ns,",
+            "      const xrobot::runtime::ExecutionContext& caller) noexcept {",
+            "    return runtime_.Poll(now_ns, caller);",
+            "  }",
+            "  void Shutdown() noexcept { runtime_.Shutdown(); }",
+            "",
+            f"  static constexpr std::size_t executor_count() noexcept {{ return {len(executor_specs)}; }}",
+            "  xrobot::runtime::Executor* FindExecutor(std::string_view name) noexcept {",
+        ]
+    )
+    for index, (_, _, full_name) in enumerate(executor_specs):
+        public_lines.append(
+            f"    if (name == {_cpp_string(full_name)}) return &executor_{index}_;"
+        )
+    public_lines.extend(
+        [
+            "    return nullptr;",
+            "  }",
+            "  xrobot::runtime::Status RunExecutor(std::size_t index) noexcept {",
+            "    switch (index) {",
+        ]
+    )
+    for index, _ in enumerate(executor_specs):
+        public_lines.append(
+            f"      case {index}: return executor_{index}_.RunOne();"
+        )
+    public_lines.extend(
+        [
+            "      default: return xrobot::runtime::Status::kInvalidArgument;",
+            "    }",
+            "  }",
+            "  xrobot::runtime::Runtime& runtime() noexcept { return runtime_; }",
+            "",
+            " private:",
+        ]
+    )
+
+    private_lines: list[str] = []
+    for index, instance in enumerate(instances):
+        implementation = instance.manifest.document["spec"]["implementation"]
+        private_lines.append(
+            f"  {implementation['class']} module_{index}_{{{_cpp_string(instance.name)}}};"
+        )
+    for index, (_, executor, full_name) in enumerate(executor_specs):
+        private_lines.append(
+            f"  xrobot::runtime::CooperativeExecutor<{executor['queue_depth']}> "
+            f"executor_{index}_{{{_cpp_string(full_name)}, {executor['priority']}}};"
+        )
+    if periodic_specs:
+        private_lines.append(
+            f"  xrobot::runtime::StaticPeriodicScheduler<{len(periodic_specs)}> "
+            'scheduler_{"periodic"};'
+        )
+    for instance_index, instance in enumerate(instances):
+        if instance.config.get("ports"):
+            mappings = ",\n".join(
+                "      xrobot::runtime::NameMapping{"
+                f"{_cpp_string(local)}, {_cpp_string(global_name)}}}"
+                for local, global_name in sorted(instance.config["ports"].items())
+            )
+            private_lines.extend(
+                [
+                    f"  inline static constexpr std::array<xrobot::runtime::NameMapping, {len(instance.config['ports'])}> port_mappings_{instance_index}_{{{{",
+                    mappings,
+                    "  }};",
+                    f"  xrobot::runtime::MappedPortResolver ports_{instance_index}_{{port_mappings_{instance_index}_}};",
+                ]
+            )
+        if instance.config.get("hardware"):
+            mappings = ",\n".join(
+                "      xrobot::runtime::NameMapping{"
+                f"{_cpp_string(local)}, {_cpp_string(global_name)}}}"
+                for local, global_name in sorted(instance.config["hardware"].items())
+            )
+            private_lines.extend(
+                [
+                    f"  inline static constexpr std::array<xrobot::runtime::NameMapping, {len(instance.config['hardware'])}> hardware_mappings_{instance_index}_{{{{",
+                    mappings,
+                    "  }};",
+                    f"  xrobot::runtime::MappedHardwareResolver hardware_{instance_index}_{{hardware_mappings_{instance_index}_}};",
+                ]
+            )
+        for parameter_index, parameter in enumerate(instance.parameters):
+            private_lines.append(
+                _parameter_declaration(instance_index, parameter_index, parameter)
+            )
+        if instance.parameters:
+            private_lines.append(
+                f"  xrobot::runtime::StaticParameterRegistry<{len(instance.parameters)}> "
+                f"parameters_{instance_index}_;"
+            )
+    for index, _ in enumerate(instances):
+        private_lines.append(f"  xrobot::runtime::ModuleContext context_{index}_;")
+    executor_slot_entries = ", ".join(
+        f"xrobot::runtime::ExecutorSlot{{&executor_{index}_}}"
+        for index, _ in enumerate(executor_specs)
+    )
+    module_slot_entries = ", ".join(
+        f"xrobot::runtime::ModuleSlot{{&module_{index}_, &context_{index}_}}"
+        for index, _ in enumerate(instances)
+    )
+    private_lines.extend(
+        [
+            f"  std::array<xrobot::runtime::ExecutorSlot, {len(executor_specs)}> executor_slots_{{{{{executor_slot_entries}}}}};",
+            f"  std::array<xrobot::runtime::ModuleSlot, {len(instances)}> module_slots_{{{{{module_slot_entries}}}}};",
+            "  xrobot::runtime::Runtime runtime_;",
+            "  bool configuration_attempted_{};",
+            "  bool configured_{};",
+            "};",
+        ]
+    )
+
+    return f"""\
+#pragma once
+
+#include <array>
+#include <bit>
+#include <cstddef>
+#include <cstdint>
+#include <string_view>
+
+{include_lines}
+#include "node_config.hpp"
+#include "xrobot/runtime/cooperative_executor.hpp"
+#include "xrobot/runtime/mapped_resolver.hpp"
+#include "xrobot/runtime/module_context.hpp"
+#include "xrobot/runtime/parameter.hpp"
+#include "xrobot/runtime/parameter_registry.hpp"
+#include "xrobot/runtime/periodic_scheduler.hpp"
+#include "xrobot/runtime/runtime.hpp"
+
+// Generated by xrctl. Do not edit.
+namespace {namespace} {{
+
+{chr(10).join(public_lines)}
+{chr(10).join(private_lines)}
 
 }}  // namespace {namespace}
 """
@@ -538,6 +906,24 @@ def write_deployment(
     _write_if_changed(output / "reports/link_budget.yaml", _yaml(budget_report))
     _write_if_changed(output / "reports/executors.yaml", _yaml(_executor_report(plan)))
     _write_if_changed(output / "reports/memory.yaml", _yaml(_memory_report(plan)))
+    composition_blockers = {
+        node_name: _composition_blockers(plan, node_name)
+        for node_name in sorted(plan.deployment["nodes"])
+    }
+    _write_if_changed(
+        output / "reports/composition.yaml",
+        _yaml(
+            {
+                "nodes": {
+                    node_name: {
+                        "ready": not blockers,
+                        "blockers": blockers,
+                    }
+                    for node_name, blockers in composition_blockers.items()
+                }
+            }
+        ),
+    )
 
     for node_name, node_id in node_ids.items():
         node_dir = output / "nodes" / node_name
@@ -545,4 +931,11 @@ def write_deployment(
             node_dir / "node_config.hpp",
             _node_header(plan, node_name, node_id, route_ids),
         )
-        _write_if_changed(node_dir / "generated_main.cpp", _node_main(node_name))
+        _write_if_changed(
+            node_dir / "node_descriptor.cpp", _node_descriptor(node_name)
+        )
+        if not composition_blockers[node_name]:
+            _write_if_changed(
+                node_dir / "node_composition.hpp",
+                _node_composition(plan, node_name),
+            )
