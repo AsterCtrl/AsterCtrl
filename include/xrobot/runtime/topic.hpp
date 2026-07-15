@@ -3,6 +3,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <string_view>
 
 #include "xrobot/runtime/executor.hpp"
@@ -54,6 +55,11 @@ class TopicSubscriberEndpoint {
   virtual ~TopicSubscriberEndpoint() = default;
   virtual Status Bind(TopicCallback<Message> callback,
                       void* callback_state) noexcept = 0;
+  virtual Status Bind(TopicCallback<Message> callback, void* callback_state,
+                      Executor& executor) noexcept {
+    (void)executor;
+    return Bind(callback, callback_state);
+  }
 };
 
 template <MessageType Message>
@@ -63,17 +69,23 @@ class TopicSubscriber {
   constexpr explicit TopicSubscriber(
       TopicSubscriberEndpoint<Message>& endpoint) noexcept
       : endpoint_(&endpoint) {}
+  constexpr TopicSubscriber(TopicSubscriberEndpoint<Message>& endpoint,
+                            Executor& executor) noexcept
+      : endpoint_(&endpoint), executor_(&executor) {}
 
   Status Bind(TopicCallback<Message> callback,
               void* callback_state) const noexcept {
     if (endpoint_ == nullptr) {
       return Status::kUnavailable;
     }
-    return endpoint_->Bind(callback, callback_state);
+    return executor_ == nullptr
+               ? endpoint_->Bind(callback, callback_state)
+               : endpoint_->Bind(callback, callback_state, *executor_);
   }
 
  private:
   TopicSubscriberEndpoint<Message>* endpoint_{};
+  Executor* executor_{};
 };
 
 template <MessageType Message>
@@ -312,6 +324,72 @@ class StaticTopic final : public TopicSource<Message> {
   std::uint32_t sequence_{};
   bool sealed_{};
   TopicStats stats_{};
+};
+
+template <MessageType Message, std::size_t MaxSinks, std::size_t Depth>
+class StaticTopicChannel final : public TopicSource<Message>,
+                                 public TopicSubscriberEndpoint<Message> {
+ public:
+  static_assert(MaxSinks > 0);
+  static_assert(Depth > 0);
+
+  constexpr StaticTopicChannel(std::string_view name,
+                               DeliveryPolicy policy) noexcept
+      : topic_(name), policy_(policy) {}
+
+  Status Bind(TopicCallback<Message>, void*) noexcept override {
+    return Status::kInvalidState;
+  }
+
+  Status Bind(TopicCallback<Message> callback, void* callback_state,
+              Executor& executor) noexcept override {
+    if (callback == nullptr) {
+      return Status::kInvalidArgument;
+    }
+    if (sink_count_ == MaxSinks) {
+      return Status::kCapacityExceeded;
+    }
+    auto& subscription = subscriptions_[sink_count_];
+    subscription.emplace(executor, policy_, callback, callback_state);
+    const auto status = topic_.Connect(*subscription);
+    if (!IsOk(status)) {
+      subscription.reset();
+      return status;
+    }
+    ++sink_count_;
+    return Status::kOk;
+  }
+
+  Status Connect(TopicSink<Message>& sink) noexcept {
+    if (sink_count_ == MaxSinks) {
+      return Status::kCapacityExceeded;
+    }
+    const auto status = topic_.Connect(sink);
+    if (IsOk(status)) {
+      ++sink_count_;
+    }
+    return status;
+  }
+
+  Status Seal() noexcept { return topic_.Seal(); }
+
+  Status Publish(const Message& message, std::uint64_t source_timestamp_ns,
+                 const ExecutionContext& caller) noexcept override {
+    return topic_.Publish(message, source_timestamp_ns, caller);
+  }
+
+  TopicPublisher<Message> publisher() noexcept {
+    return TopicPublisher<Message>(*this);
+  }
+  std::size_t sink_count() const noexcept { return sink_count_; }
+  const TopicStats& stats() const noexcept { return topic_.stats(); }
+
+ private:
+  StaticTopic<Message, MaxSinks> topic_;
+  DeliveryPolicy policy_{DeliveryPolicy::kLatest};
+  std::array<std::optional<TopicSubscription<Message, Depth>>, MaxSinks>
+      subscriptions_{};
+  std::size_t sink_count_{};
 };
 
 }  // namespace xrobot::runtime

@@ -138,8 +138,12 @@ class ModuleContext {
         name, PortKind::kTopicSubscriber,
         TypeSupport<Message>::descriptor().schema_hash, endpoint);
     if (IsOk(status)) {
+      if (services_.executor == nullptr) {
+        return Status::kUnavailable;
+      }
       subscriber = TopicSubscriber<Message>(
-          *static_cast<TopicSubscriberEndpoint<Message>*>(endpoint));
+          *static_cast<TopicSubscriberEndpoint<Message>*>(endpoint),
+          *services_.executor);
     }
     return status;
   }

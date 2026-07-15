@@ -6,6 +6,8 @@
 #include <string_view>
 
 #include "xrobot/runtime/cooperative_executor.hpp"
+#include "xrobot/runtime/module_context.hpp"
+#include "xrobot/runtime/port_registry.hpp"
 #include "xrobot/runtime/topic.hpp"
 
 namespace test {
@@ -62,7 +64,11 @@ using xrobot::runtime::DeliveryPolicy;
 using xrobot::runtime::ExecutionContext;
 using xrobot::runtime::ExecutionKind;
 using xrobot::runtime::MessageInfo;
+using xrobot::runtime::ModuleContext;
+using xrobot::runtime::ModuleServices;
+using xrobot::runtime::StaticPortRegistry;
 using xrobot::runtime::StaticTopic;
+using xrobot::runtime::StaticTopicChannel;
 using xrobot::runtime::Status;
 using xrobot::runtime::TopicPublisher;
 using xrobot::runtime::TopicSubscription;
@@ -215,6 +221,57 @@ void SchedulingFailureCannotLeaveSilentlyStuckLatestData() {
   assert(subscription.pending() == 0);
 }
 
+void StaticChannelFansOutThroughModuleContexts() {
+  CooperativeExecutor<2> first_executor("first", 5);
+  CooperativeExecutor<2> second_executor("second", 4);
+  StaticTopicChannel<test::Command, 2, 1> channel(
+      "robot/state", DeliveryPolicy::kLatest);
+  StaticPortRegistry<2> ports;
+  Recorder first;
+  Recorder second;
+  const ExecutionContext caller("publisher", ExecutionKind::kThread, 6);
+
+  assert(first_executor.Initialize() == Status::kOk);
+  assert(second_executor.Initialize() == Status::kOk);
+  assert(first_executor.Start() == Status::kOk);
+  assert(second_executor.Start() == Status::kOk);
+  assert(ports.AddTopicPublisher("robot/state", channel) == Status::kOk);
+  assert(ports.AddTopicSubscriber("robot/state", channel) == Status::kOk);
+  assert(ports.Seal() == Status::kOk);
+
+  ModuleContext first_context(
+      "node", "first_module",
+      ModuleServices{.executor = &first_executor, .ports = &ports});
+  ModuleContext second_context(
+      "node", "second_module",
+      ModuleServices{.executor = &second_executor, .ports = &ports});
+  xrobot::runtime::TopicSubscriber<test::Command> first_subscriber;
+  xrobot::runtime::TopicSubscriber<test::Command> second_subscriber;
+  TopicPublisher<test::Command> publisher;
+
+  assert(first_context.ResolveTopicSubscriber("robot/state", first_subscriber) ==
+         Status::kOk);
+  assert(second_context.ResolveTopicSubscriber("robot/state",
+                                               second_subscriber) == Status::kOk);
+  assert(first_subscriber.Bind(Record, &first) == Status::kOk);
+  assert(second_subscriber.Bind(Record, &second) == Status::kOk);
+  assert(first_context.ResolveTopicPublisher("robot/state", publisher) ==
+         Status::kOk);
+  assert(channel.Seal() == Status::kOk);
+
+  assert(publisher.Publish(test::Command{42}, 4'200, caller) == Status::kOk);
+  assert(first.size == 0);
+  assert(second.size == 0);
+  assert(first_executor.RunOne() == Status::kOk);
+  assert(second_executor.RunOne() == Status::kOk);
+  assert(first.size == 1);
+  assert(second.size == 1);
+  assert(first.values[0] == 42);
+  assert(second.values[0] == 42);
+  assert(first.execution_kind == ExecutionKind::kThread);
+  assert(second.execution_kind == ExecutionKind::kThread);
+}
+
 }  // namespace
 
 int main() {
@@ -223,5 +280,6 @@ int main() {
   KeepAllDeliveryAppliesBoundedBackpressure();
   TopicMustBeSealedBeforePublishing();
   SchedulingFailureCannotLeaveSilentlyStuckLatestData();
+  StaticChannelFansOutThroughModuleContexts();
   return 0;
 }
