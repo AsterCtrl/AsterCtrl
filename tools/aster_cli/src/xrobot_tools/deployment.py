@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import fnmatch
+import math
+import struct
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -22,6 +24,18 @@ class DeploymentError(ValueError):
 
 
 @dataclass(frozen=True)
+class ResolvedParameter:
+    name: str
+    type_name: str
+    unit: str
+    value: bool | int | float
+    minimum: bool | int | float
+    maximum: bool | int | float
+    mutability: str
+    persistence: str
+
+
+@dataclass(frozen=True)
 class Instance:
     name: str
     package: str
@@ -29,6 +43,7 @@ class Instance:
     config: dict[str, Any]
     manifest: ModuleManifest
     node: str
+    parameters: tuple[ResolvedParameter, ...]
 
 
 @dataclass(frozen=True)
@@ -188,17 +203,130 @@ def _load_instances(
                     f"instance {name!r} binds {requirement!r} to unknown hardware "
                     f"{bindings[requirement]!r} on node {node!r}"
                 )
+        parameters = _resolve_parameters(
+            name,
+            manifest.document["spec"].get("parameters", []),
+            config.get("parameters", {}),
+        )
+        resolved_config = dict(config)
+        resolved_config["parameters"] = {
+            parameter.name: parameter.value for parameter in parameters
+        }
         instances.append(
             Instance(
                 name=name,
                 package=config["package"],
                 module=config["module"],
-                config=config,
+                config=resolved_config,
                 manifest=manifest,
                 node=node,
+                parameters=parameters,
             )
         )
     return tuple(instances)
+
+
+_PARAMETER_LIMITS: dict[str, tuple[Any, Any]] = {
+    "bool": (False, True),
+    "int32": (-(2**31), 2**31 - 1),
+    "uint32": (0, 2**32 - 1),
+    "float32": (-3.4028234663852886e38, 3.4028234663852886e38),
+    "float64": (-1.7976931348623157e308, 1.7976931348623157e308),
+}
+
+
+def _normalize_parameter_value(
+    instance: str, name: str, type_name: str, value: Any
+) -> bool | int | float:
+    location = f"instance {instance!r} parameter {name!r}"
+    if type_name == "bool":
+        if type(value) is not bool:
+            raise DeploymentError(f"{location} must be bool")
+        return value
+    if type_name in ("int32", "uint32"):
+        if type(value) is not int:
+            raise DeploymentError(f"{location} must be {type_name}")
+        minimum, maximum = _PARAMETER_LIMITS[type_name]
+        if value < minimum or value > maximum:
+            raise DeploymentError(
+                f"{location} value {value} exceeds {type_name} storage"
+            )
+        return value
+    if type(value) not in (int, float):
+        raise DeploymentError(f"{location} must be {type_name}")
+    candidate = float(value)
+    if not math.isfinite(candidate):
+        raise DeploymentError(f"{location} must be finite")
+    if type_name == "float32":
+        try:
+            candidate = struct.unpack("<f", struct.pack("<f", candidate))[0]
+        except OverflowError as error:
+            raise DeploymentError(
+                f"{location} value {value} exceeds float32 storage"
+            ) from error
+        if not math.isfinite(candidate):
+            raise DeploymentError(
+                f"{location} value {value} exceeds float32 storage"
+            )
+    return candidate
+
+
+def _resolve_parameters(
+    instance: str,
+    descriptors: list[dict[str, Any]],
+    configured: dict[str, Any],
+) -> tuple[ResolvedParameter, ...]:
+    by_name: dict[str, dict[str, Any]] = {}
+    for descriptor in descriptors:
+        name = descriptor["name"]
+        if name in by_name:
+            raise DeploymentError(
+                f"module for instance {instance!r} declares parameter {name!r} twice"
+            )
+        by_name[name] = descriptor
+    unknown = sorted(set(configured) - set(by_name))
+    if unknown:
+        raise DeploymentError(
+            f"instance {instance!r} configures unknown parameters: "
+            f"{', '.join(unknown)}"
+        )
+
+    resolved: list[ResolvedParameter] = []
+    for name in sorted(by_name):
+        descriptor = by_name[name]
+        type_name = descriptor["type"]
+        storage_minimum, storage_maximum = _PARAMETER_LIMITS[type_name]
+        minimum = _normalize_parameter_value(
+            instance, name, type_name, descriptor.get("minimum", storage_minimum)
+        )
+        maximum = _normalize_parameter_value(
+            instance, name, type_name, descriptor.get("maximum", storage_maximum)
+        )
+        if minimum > maximum:
+            raise DeploymentError(
+                f"instance {instance!r} parameter {name!r} has minimum above maximum"
+            )
+        value = _normalize_parameter_value(
+            instance, name, type_name, configured.get(name, descriptor["default"])
+        )
+        if value < minimum or value > maximum:
+            raise DeploymentError(
+                f"instance {instance!r} parameter {name!r} value {value} is outside "
+                f"[{minimum}, {maximum}]"
+            )
+        resolved.append(
+            ResolvedParameter(
+                name=name,
+                type_name=type_name,
+                unit=descriptor.get("unit", ""),
+                value=value,
+                minimum=minimum,
+                maximum=maximum,
+                mutability=descriptor["mutability"],
+                persistence=descriptor.get("persistence", "compiled"),
+            )
+        )
+    return tuple(resolved)
 
 
 def _collect_ports(instances: tuple[Instance, ...]) -> dict[str, list[PortEndpoint]]:

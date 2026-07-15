@@ -47,6 +47,18 @@ spec:
 """,
     )
     for package, kind in (("source", "publisher"), ("sink", "subscriber")):
+        parameters = (
+            """\
+  parameters:
+    - {name: enabled, type: bool, default: true, mutability: runtime, persistence: volatile}
+    - {name: offset, type: int32, default: -2, minimum: -10, maximum: 10, mutability: build, persistence: compiled}
+    - {name: input_source, type: uint32, default: 1, minimum: 0, maximum: 1, mutability: startup, persistence: compiled}
+    - {name: gain, type: float32, default: 0.5, minimum: 0.0, maximum: 1.0, mutability: runtime, persistence: persistent}
+    - {name: timeout_scale, type: float64, default: 1.0, minimum: 0.5, maximum: 2.0, mutability: startup, persistence: compiled}
+"""
+            if package == "source"
+            else "  parameters: []\n"
+        )
         write(
             tmp_path,
             f"{package}/package.yaml",
@@ -76,7 +88,7 @@ spec:
     - {{name: command, kind: {kind}, type: test.msg.Command, required: true}}
   executors:
     - {{name: control, priority: 4, stack_bytes: 1024, queue_depth: 4, period_us: 1000}}
-  parameters: []
+{parameters.rstrip()}
   hardware: []
 """,
         )
@@ -118,6 +130,7 @@ instances:
   command_source:
     package: source
     module: source
+    parameters: {input_source: 0, gain: 0.25}
     ports: {command: /control/command}
   command_sink:
     package: sink
@@ -215,6 +228,10 @@ def test_compiles_a_deterministic_cross_node_deployment(tmp_path: Path) -> None:
         '"control", 4, 1024, 4, 1000000ULL, false}' in node_a_header
     )
     assert "inline constexpr bool kConfigurationValid" in node_a_header
+    assert "kBoolParameters" in node_a_header
+    assert '"input_source"' in node_a_header
+    assert "std::uint32_t{0U}" in node_a_header
+    assert "std::bit_cast<float>(std::uint32_t{0x3e800000U})" in node_a_header
     for node in ("node_a", "node_b"):
         node_dir = output / "nodes" / node
         subprocess.run(
@@ -241,6 +258,24 @@ def test_compiles_a_deterministic_cross_node_deployment(tmp_path: Path) -> None:
     assert budget["links"]["robot_can"]["within_budget"] is True
     executors = yaml.safe_load((output / "reports/executors.yaml").read_text())
     assert executors["nodes"]["node_a"][0]["name"] == "command_source__control"
+    module_graph = yaml.safe_load(
+        (output / "reports/module_graph.json").read_text()
+    )
+    source_instance = next(
+        item
+        for item in module_graph["instances"]
+        if item["name"] == "command_source"
+    )
+    assert source_instance["parameters"] == {
+        "enabled": True,
+        "gain": 0.25,
+        "input_source": 0,
+        "offset": -2,
+        "timeout_scale": 1.0,
+    }
+    memory = yaml.safe_load((output / "reports/memory.yaml").read_text())
+    assert memory["nodes"]["node_a"]["parameter_count"] == 5
+    assert memory["nodes"]["node_a"]["parameter_value_bytes"] == 21
     routes = yaml.safe_load((output / "deployment.resolved.yaml").read_text())["routes"]
     assert routes[0]["max_serialized_size"] == 6
     assert routes[0]["max_wire_payload_size"] == 8
@@ -291,3 +326,42 @@ def test_package_lock_changes_the_whole_deployment_hash(tmp_path: Path) -> None:
     second = compile_deployment(workspace, deployment, output)
 
     assert first.deployment_hash != second.deployment_hash
+
+
+def test_rejects_unknown_instance_parameters(tmp_path: Path) -> None:
+    workspace, deployment = create_workspace(tmp_path)
+    robot = tmp_path / "robot.yaml"
+    robot.write_text(
+        robot.read_text(encoding="utf-8").replace(
+            "parameters: {input_source: 0, gain: 0.25}",
+            "parameters: {input_source: 0, gain: 0.25, typo: 1}",
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(DeploymentError, match="unknown parameters: typo"):
+        compile_deployment(workspace, deployment, tmp_path / "generated")
+
+
+@pytest.mark.parametrize(
+    ("parameter_config", "message"),
+    [
+        ("{input_source: 2, gain: 0.25}", "input_source.*outside"),
+        ("{input_source: true, gain: 0.25}", "input_source.*must be uint32"),
+        ("{input_source: 0, gain: .nan}", "gain.*finite"),
+    ],
+)
+def test_rejects_invalid_instance_parameter_values(
+    tmp_path: Path, parameter_config: str, message: str
+) -> None:
+    workspace, deployment = create_workspace(tmp_path)
+    robot = tmp_path / "robot.yaml"
+    robot.write_text(
+        robot.read_text(encoding="utf-8").replace(
+            "{input_source: 0, gain: 0.25}", parameter_config
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(DeploymentError, match=message):
+        compile_deployment(workspace, deployment, tmp_path / "generated")

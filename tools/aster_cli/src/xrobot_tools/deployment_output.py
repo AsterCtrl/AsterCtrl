@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import struct
 from pathlib import Path
 from typing import Any
 
@@ -35,6 +36,46 @@ def _json(document: Any) -> str:
 
 def _cpp_string(value: str) -> str:
     return json.dumps(value, ensure_ascii=True)
+
+
+_PARAMETER_CPP_TYPES = {
+    "bool": ("bool", "Bool"),
+    "int32": ("std::int32_t", "Int32"),
+    "uint32": ("std::uint32_t", "Uint32"),
+    "float32": ("float", "Float32"),
+    "float64": ("double", "Float64"),
+}
+_PARAMETER_MUTABILITY = {
+    "build": "Build",
+    "startup": "Startup",
+    "runtime": "Runtime",
+}
+_PARAMETER_PERSISTENCE = {
+    "compiled": "Compiled",
+    "volatile": "Volatile",
+    "persistent": "Persistent",
+}
+
+
+def _cpp_parameter_value(type_name: str, value: bool | int | float) -> str:
+    cpp_type = _PARAMETER_CPP_TYPES[type_name][0]
+    if type_name == "bool":
+        return "true" if value else "false"
+    if type_name == "int32":
+        return f"{cpp_type}{{{value}}}"
+    if type_name == "uint32":
+        return f"{cpp_type}{{{value}U}}"
+    if type_name == "float32":
+        bits = struct.unpack("<I", struct.pack("<f", value))[0]
+        return (
+            "std::bit_cast<float>("
+            f"std::uint32_t{{0x{bits:08x}U}})"
+        )
+    bits = struct.unpack("<Q", struct.pack("<d", value))[0]
+    return (
+        "std::bit_cast<double>("
+        f"std::uint64_t{{0x{bits:016x}ULL}})"
+    )
 
 
 def _allocate_ids(
@@ -121,6 +162,9 @@ def _node_header(
     )
     module_entries = []
     executor_entries = []
+    parameter_entries: dict[str, list[str]] = {
+        type_name: [] for type_name in _PARAMETER_CPP_TYPES
+    }
     for instance in instances:
         implementation = instance.manifest.document["spec"]["implementation"]
         module_entries.append(
@@ -146,13 +190,46 @@ def _node_header(
                 f"{executor['queue_depth']}, {period_ns}ULL, {exclusive}"
                 "},"
             )
+        for parameter in instance.parameters:
+            mutability = _PARAMETER_MUTABILITY[parameter.mutability]
+            persistence = _PARAMETER_PERSISTENCE[parameter.persistence]
+            cpp_type = _PARAMETER_CPP_TYPES[parameter.type_name][0]
+            parameter_entries[parameter.type_name].append(
+                f"    GeneratedParameter<{cpp_type}>{{"
+                f"{_cpp_string(instance.name)}, "
+                f"{_cpp_string(parameter.name)}, "
+                f"{_cpp_string(parameter.unit)}, "
+                f"{_cpp_parameter_value(parameter.type_name, parameter.value)}, "
+                f"{_cpp_parameter_value(parameter.type_name, parameter.minimum)}, "
+                f"{_cpp_parameter_value(parameter.type_name, parameter.maximum)}, "
+                f"GeneratedParameterMutability::k{mutability}, "
+                f"GeneratedParameterPersistence::k{persistence}"
+                "},"
+            )
     executor_entries.sort()
     module_lines = "\n".join(module_entries)
     executor_lines = "\n".join(executor_entries)
+    parameter_tables = []
+    parameter_table_names = []
+    for type_name, (cpp_type, suffix) in _PARAMETER_CPP_TYPES.items():
+        entries = sorted(parameter_entries[type_name])
+        table_name = f"k{suffix}Parameters"
+        parameter_table_names.append(table_name)
+        parameter_tables.append(
+            f"inline constexpr std::array<GeneratedParameter<{cpp_type}>, "
+            f"{len(entries)}> {table_name}{{{{\n"
+            + "\n".join(entries)
+            + "\n}};"
+        )
+    parameter_table_lines = "\n".join(parameter_tables)
+    parameter_validity = " &&\n      ".join(
+        f"ParametersValid({name})" for name in parameter_table_names
+    )
     return f"""\
 #pragma once
 
 #include <array>
+#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <string_view>
@@ -189,6 +266,30 @@ struct GeneratedExecutor {{
   bool exclusive;
 }};
 
+enum class GeneratedParameterMutability : std::uint8_t {{
+  kBuild,
+  kStartup,
+  kRuntime,
+}};
+
+enum class GeneratedParameterPersistence : std::uint8_t {{
+  kCompiled,
+  kVolatile,
+  kPersistent,
+}};
+
+template <typename Value>
+struct GeneratedParameter {{
+  std::string_view instance;
+  std::string_view name;
+  std::string_view unit;
+  Value value;
+  Value minimum;
+  Value maximum;
+  GeneratedParameterMutability mutability;
+  GeneratedParameterPersistence persistence;
+}};
+
 inline constexpr std::uint8_t kNodeId = {node_id};
 inline constexpr std::string_view kNodeName = "{node_name}";
 inline constexpr std::string_view kDeploymentHash = "{plan.deployment_hash}";
@@ -202,6 +303,37 @@ inline constexpr std::array<GeneratedModule, {len(instances)}> kModules{{{{
 inline constexpr std::array<GeneratedExecutor, {len(executor_entries)}> kExecutors{{{{
 {executor_lines}
 }}}};
+{parameter_table_lines}
+
+template <typename Value, std::size_t Count>
+consteval bool ParametersValid(
+    const std::array<GeneratedParameter<Value>, Count>& parameters) {{
+  for (std::size_t index = 0; index < parameters.size(); ++index) {{
+    const auto& parameter = parameters[index];
+    if (parameter.instance.empty() || parameter.name.empty() ||
+        parameter.value < parameter.minimum ||
+        parameter.value > parameter.maximum) {{
+      return false;
+    }}
+    bool instance_found = false;
+    for (const auto& module : kModules) {{
+      if (module.instance == parameter.instance) {{
+        instance_found = true;
+        break;
+      }}
+    }}
+    if (!instance_found) {{
+      return false;
+    }}
+    for (std::size_t previous = 0; previous < index; ++previous) {{
+      if (parameters[previous].instance == parameter.instance &&
+          parameters[previous].name == parameter.name) {{
+        return false;
+      }}
+    }}
+  }}
+  return true;
+}}
 
 consteval bool ConfigurationValid() {{
   for (std::size_t index = 0; index < kExecutors.size(); ++index) {{
@@ -227,7 +359,7 @@ consteval bool ConfigurationValid() {{
       }}
     }}
   }}
-  return true;
+  return {parameter_validity};
 }}
 
 inline constexpr bool kConfigurationValid = ConfigurationValid();
@@ -287,12 +419,28 @@ def _memory_report(plan: DeploymentPlan) -> dict[str, Any]:
             if route.source_node == node_name or node_name in route.destination_nodes
         ]
         queue_slots = sum(int(item["queue_depth"]) for item in executors)
+        parameters = [
+            parameter
+            for instance in node_instances
+            for parameter in instance.parameters
+        ]
+        parameter_sizes = {
+            "bool": 1,
+            "int32": 4,
+            "uint32": 4,
+            "float32": 4,
+            "float64": 8,
+        }
         nodes[node_name] = {
             "module_instances": len(node_instances),
             "executor_count": len(executors),
             "executor_stack_bytes": sum(int(item["stack_bytes"]) for item in executors),
             "executor_queue_slots": queue_slots,
             "executor_queue_bytes_estimate": queue_slots * 8,
+            "parameter_count": len(parameters),
+            "parameter_value_bytes": sum(
+                parameter_sizes[item.type_name] for item in parameters
+            ),
             "route_count": len(node_routes),
             "route_buffer_bytes_minimum": sum(
                 route.max_wire_payload_size for route in node_routes
@@ -362,6 +510,7 @@ def write_deployment(
                 "module": item.module,
                 "node": item.node,
                 "ports": item.config.get("ports", {}),
+                "parameters": item.config.get("parameters", {}),
             }
             for item in plan.instances
         ]
