@@ -198,6 +198,7 @@ void AdapterBoundsQueueAndMapsDriverBackpressure() {
   can.Emit(MakePack(8, 2));
   can.Emit(MakePack(8, 3));
   assert(adapter.stats().rx_dropped == 1);
+  assert(adapter.stats().rx_queue_high_water == 2);
   assert(adapter.Drain(context) == Status::kOk);
   assert(receiver.count == 2);
 

@@ -19,3 +19,7 @@ endpoint subscription; this ordering breaks the writer/receiver construction
 cycle. The endpoint clock callback must be safe in the CAN receive interrupt
 context. Because subscriptions have node lifetime and no unregister operation,
 an initialized endpoint must outlive every registered receiver.
+
+`CanAdapterStats` exposes RX/TX counts, invalid/drop/dispatch failures, and a
+lock-free RX queue high-water mark so target load can be diagnosed without
+logging from the receive callback.

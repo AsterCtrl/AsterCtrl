@@ -17,6 +17,7 @@ struct CanAdapterStats {
   std::uint32_t rx_frames{};
   std::uint32_t rx_invalid{};
   std::uint32_t rx_dropped{};
+  std::uint32_t rx_queue_high_water{};
   std::uint32_t dispatched{};
   std::uint32_t dispatch_failures{};
 };
@@ -30,6 +31,7 @@ template <std::size_t ReceiveQueueCapacity>
 class CanAdapter {
  public:
   static_assert(ReceiveQueueCapacity > 0);
+  static_assert(ReceiveQueueCapacity <= UINT32_MAX);
   static_assert(std::atomic<std::uint32_t>::is_always_lock_free,
                 "CAN ISR counters require lock-free 32-bit atomics");
 
@@ -137,6 +139,7 @@ class CanAdapter {
         rx_frames_.load(std::memory_order_relaxed),
         rx_invalid_.load(std::memory_order_relaxed),
         rx_dropped_.load(std::memory_order_relaxed),
+        rx_queue_high_water_.load(std::memory_order_relaxed),
         dispatched_.load(std::memory_order_relaxed),
         dispatch_failures_.load(std::memory_order_relaxed),
     };
@@ -211,6 +214,13 @@ class CanAdapter {
       rx_dropped_.fetch_add(1, std::memory_order_relaxed);
       return;
     }
+    const auto depth = static_cast<std::uint32_t>(receive_queue_.Size());
+    auto high_water = rx_queue_high_water_.load(std::memory_order_relaxed);
+    while (depth > high_water &&
+           !rx_queue_high_water_.compare_exchange_weak(
+               high_water, depth, std::memory_order_relaxed,
+               std::memory_order_relaxed)) {
+    }
     rx_frames_.fetch_add(1, std::memory_order_relaxed);
   }
 
@@ -225,6 +235,7 @@ class CanAdapter {
   std::atomic<std::uint32_t> rx_frames_{};
   std::atomic<std::uint32_t> rx_invalid_{};
   std::atomic<std::uint32_t> rx_dropped_{};
+  std::atomic<std::uint32_t> rx_queue_high_water_{};
   std::atomic<std::uint32_t> dispatched_{};
   std::atomic<std::uint32_t> dispatch_failures_{};
 };
