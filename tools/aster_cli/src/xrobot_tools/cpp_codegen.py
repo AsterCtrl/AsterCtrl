@@ -389,13 +389,14 @@ Status ReadScalar(std::span<const std::byte> input, std::size_t& offset,
     value = static_cast<Value>(std::bit_cast<Raw>(bits));
   } else {
     using Unsigned = std::make_unsigned_t<Raw>;
-    Unsigned bits{};
+    std::uint64_t bits{};
     for (std::size_t index = 0; index < sizeof(Raw); ++index) {
-      bits |= static_cast<Unsigned>(
+      bits |= static_cast<std::uint64_t>(
                   std::to_integer<std::uint8_t>(input[offset++]))
               << (index * 8U);
     }
-    const auto raw = std::bit_cast<Raw>(bits);
+    const auto narrowed = static_cast<Unsigned>(bits);
+    const auto raw = std::bit_cast<Raw>(narrowed);
     value = static_cast<Value>(raw);
   }
   return Status::kOk;

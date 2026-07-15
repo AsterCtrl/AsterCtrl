@@ -570,6 +570,162 @@ int main() {
     assert routes[0]["bits_per_message"] == 230
 
 
+def test_generates_a_typed_direct_uart_hardware_adapter(tmp_path: Path) -> None:
+    workspace, deployment = create_workspace(tmp_path)
+    source_manifest = tmp_path / "source/module.yaml"
+    source_manifest.write_text(
+        source_manifest.read_text(encoding="utf-8").replace(
+            "  hardware: [device]",
+            "  hardware:\n"
+            "    - {name: device, type: xrobot.hardware.ByteReader/v1}",
+        ),
+        encoding="utf-8",
+    )
+    hardware = tmp_path / "hardware/node_a.yaml"
+    hardware.write_text(
+        hardware.read_text(encoding="utf-8").replace(
+            "source_device: {kind: test, backend: fake, resource: source0, options: {}}",
+            "source_device: {kind: uart, backend: libxr, resource: uart3, options: {}}",
+        ),
+        encoding="utf-8",
+    )
+
+    output = tmp_path / "generated"
+    compile_deployment(workspace, deployment, output)
+
+    generated = (output / "nodes/node_a/node_hardware.hpp").read_text()
+    assert "UartReaderAdapter" in generated
+    assert 'physical, "uart3", resource_source_device_' in generated
+    report = yaml.safe_load((output / "reports/firmware.yaml").read_text())
+    assert report["nodes"]["node_a"]["hardware_blockers"] == []
+
+
+def test_generates_board_driven_firmware_projects(tmp_path: Path) -> None:
+    workspace, deployment = create_workspace(tmp_path)
+    write(tmp_path, "source/CMakeLists.txt", "add_library(source INTERFACE)\n")
+    write(tmp_path, "sink/CMakeLists.txt", "add_library(sink INTERFACE)\n")
+    write(
+        tmp_path,
+        "xrobot-libxr-backend/CMakeLists.txt",
+        "add_library(xrobot_libxr_backend INTERFACE)\n",
+    )
+    write(
+        tmp_path,
+        "test-bsp/package.yaml",
+        """\
+api_version: xrobot.io/v1alpha1
+kind: Package
+metadata: {name: test-bsp, version: 0.1.0, license: Apache-2.0}
+spec:
+  build: {system: cmake}
+  exports:
+    boards:
+      - name: test/node_a
+        profiles: [debug]
+        implementation: &board
+          target: test::board
+          platform_target: test::platform
+          header: test/board.hpp
+          class: test::Board
+          initialize: test::Initialize
+          entry: app_main
+          system: freertos
+          toolchain: cmake/toolchain.cmake
+          libxr_driver: fake
+          cmake_enable: test_enable
+          cmake_firmware: test_firmware
+      - name: test/node_b
+        profiles: [debug]
+        implementation: *board
+  dependencies: []
+""",
+    )
+    write(tmp_path, "test-bsp/CMakeLists.txt", "add_library(test_board INTERFACE)\n")
+    write(tmp_path, "test-bsp/cmake/toolchain.cmake", "set(CMAKE_SYSTEM_NAME Generic)\n")
+    workspace.write_text(
+        workspace.read_text(encoding="utf-8")
+        + "  - {name: test-bsp, source: {type: path, path: test-bsp}}\n"
+        + "  - {name: xrobot-libxr-backend, source: {type: path, path: xrobot-libxr-backend}}\n",
+        encoding="utf-8",
+    )
+    lock = tmp_path / "package.lock.yaml"
+    lock.write_text(
+        lock.read_text(encoding="utf-8")
+        + "  test-bsp: {source: test-bsp, commit: dddddddddddddddddddddddddddddddddddddddd}\n"
+        + "  xrobot-libxr-backend: {source: xrobot-libxr-backend, commit: eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee}\n",
+        encoding="utf-8",
+    )
+    deployment.write_text(
+        deployment.read_text(encoding="utf-8")
+        .replace("bsp: test/a", "bsp: test-bsp/test/node_a")
+        .replace("bsp: test/b", "bsp: test-bsp/test/node_b"),
+        encoding="utf-8",
+    )
+    hardware = tmp_path / "hardware/node_a.yaml"
+    hardware.write_text(
+        hardware.read_text(encoding="utf-8").replace(
+            "source_device: {kind: test, backend: fake, resource: source0, options: {}}",
+            "source_device: {kind: uart, backend: libxr, resource: uart3, options: {}}",
+        ),
+        encoding="utf-8",
+    )
+
+    output = tmp_path / "generated"
+    compile_deployment(workspace, deployment, output)
+    first_entry = (output / "nodes/node_a/firmware_entry.cpp").read_bytes()
+    compile_deployment(workspace, deployment, output)
+
+    report = yaml.safe_load((output / "reports/firmware.yaml").read_text())
+    assert report["nodes"]["node_a"]["ready"] is True
+    assert report["nodes"]["node_b"]["ready"] is True
+    assert (output / "nodes/node_a/firmware_entry.cpp").read_bytes() == first_entry
+    entry = first_entry.decode()
+    assert "CanFilterRange{0x001U, 0x007U}" in entry
+    assert "CanFilterRange{0x208U, 0x208U}" in entry
+    assert "CanAdapter<32U>" in entry
+    assert "composition.Start()" in entry
+    cmake = (output / "nodes/node_a/CMakeLists.txt").read_text()
+    assert "target_link_libraries(xr PUBLIC test::platform)" in cmake
+    assert "xrobot-libxr-backend" in cmake
+    assert "test_firmware(node_a_firmware)" in cmake
+    presets = yaml.safe_load((output / "nodes/node_a/CMakePresets.json").read_text())
+    assert presets["configurePresets"][0]["cacheVariables"][
+        "CMAKE_BUILD_TYPE"
+    ] == "Debug"
+
+
+def test_reports_a_typed_hardware_contract_mismatch(tmp_path: Path) -> None:
+    workspace, deployment = create_workspace(tmp_path)
+    source_manifest = tmp_path / "source/module.yaml"
+    source_manifest.write_text(
+        source_manifest.read_text(encoding="utf-8").replace(
+            "  hardware: [device]",
+            "  hardware:\n"
+            "    - {name: device, type: srm.hardware.MotorGroup/v1}",
+        ),
+        encoding="utf-8",
+    )
+    hardware = tmp_path / "hardware/node_a.yaml"
+    hardware.write_text(
+        hardware.read_text(encoding="utf-8").replace(
+            "source_device: {kind: test, backend: fake, resource: source0, options: {}}",
+            "source_device: {kind: uart, backend: libxr, resource: uart3, options: {}}",
+        ),
+        encoding="utf-8",
+    )
+
+    output = tmp_path / "generated"
+    compile_deployment(workspace, deployment, output)
+
+    report = yaml.safe_load((output / "reports/firmware.yaml").read_text())
+    assert report["nodes"]["node_a"]["hardware_blockers"] == [
+        "instance command_source: hardware device requires "
+        "srm.hardware.MotorGroup/v1, but source_device provides "
+        "xrobot.hardware.ByteReader/v1"
+    ]
+    assert not (output / "nodes/node_a/node_hardware.hpp").exists()
+
+
 def test_generated_compositions_route_a_topic_over_can(tmp_path: Path) -> None:
     workspace, deployment = create_workspace(tmp_path)
     robot = tmp_path / "robot.yaml"

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 import shutil
 import struct
@@ -17,6 +18,13 @@ from xrobot_tools.deployment import (
     Instance,
     ResolvedParameter,
     Route,
+)
+from xrobot_tools.hardware_codegen import hardware_blockers, render_node_hardware
+from xrobot_tools.firmware_codegen import (
+    firmware_blockers,
+    render_cmake_presets,
+    render_firmware_entry,
+    render_node_cmake,
 )
 from xrobot_tools.validation import validate_document
 
@@ -1056,12 +1064,16 @@ def _node_ports(
             route = topic["route"]
             link_index = links.index(route.link)
             priority = _CAN_PRIORITIES[topic["qos"]["class"]]
+            minimum_period_ns = math.ceil(
+                1_000_000_000 / float(topic["qos"]["max_rate_hz"])
+            )
             field_lines.extend(
                 [
                     f"  xrobot::transport::can::FastTopicEgress<{cpp_type}> egress_{index}_{{",
                     f"      {topic['route_id']}, xrobot::transport::can::CanPriority::{priority},",
                     f"      control_{link_index}_.application_writer(),",
-                    f"      control_{link_index}_.time_converter()}};",
+                    f"      control_{link_index}_.time_converter(),",
+                    f"      {minimum_period_ns}ULL}};",
                 ]
             )
         if topic["incoming"]:
@@ -1750,6 +1762,14 @@ def write_deployment(
         node_name: _composition_blockers(plan, node_name)
         for node_name in sorted(plan.deployment["nodes"])
     }
+    node_hardware_blockers = {
+        node_name: hardware_blockers(plan, node_name)
+        for node_name in sorted(plan.deployment["nodes"])
+    }
+    node_firmware_blockers = {
+        node_name: firmware_blockers(plan, node_name)
+        for node_name in sorted(plan.deployment["nodes"])
+    }
     _write_if_changed(
         output / "reports/composition.yaml",
         _yaml(
@@ -1760,6 +1780,24 @@ def write_deployment(
                         "blockers": blockers,
                     }
                     for node_name, blockers in composition_blockers.items()
+                }
+            }
+        ),
+    )
+    _write_if_changed(
+        output / "reports/firmware.yaml",
+        _yaml(
+            {
+                "nodes": {
+                    node_name: {
+                        "ready": not composition_blockers[node_name]
+                        and not node_hardware_blockers[node_name]
+                        and not node_firmware_blockers[node_name],
+                        "composition_blockers": composition_blockers[node_name],
+                        "hardware_blockers": node_hardware_blockers[node_name],
+                        "integration_blockers": node_firmware_blockers[node_name],
+                    }
+                    for node_name in sorted(plan.deployment["nodes"])
                 }
             }
         ),
@@ -1782,4 +1820,26 @@ def write_deployment(
             _write_if_changed(
                 node_dir / "node_composition.hpp",
                 _node_composition(plan, node_name, route_ids),
+            )
+        if not node_hardware_blockers[node_name]:
+            _write_if_changed(
+                node_dir / "node_hardware.hpp",
+                render_node_hardware(plan, node_name),
+            )
+        if (
+            not composition_blockers[node_name]
+            and not node_hardware_blockers[node_name]
+            and not node_firmware_blockers[node_name]
+        ):
+            _write_if_changed(
+                node_dir / "firmware_entry.cpp",
+                render_firmware_entry(plan, node_name, route_ids),
+            )
+            _write_if_changed(
+                node_dir / "CMakeLists.txt",
+                render_node_cmake(plan, node_name, node_dir),
+            )
+            _write_if_changed(
+                node_dir / "CMakePresets.json",
+                render_cmake_presets(plan, node_name, node_dir),
             )

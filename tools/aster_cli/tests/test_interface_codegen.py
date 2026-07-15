@@ -90,6 +90,8 @@ def test_generates_deterministic_cpp_typesupport_and_lock(tmp_path: Path) -> Non
     assert "TypeSupport<::test::msg::Command>" in text
     assert "ServiceTypeSupport<::test::srv::SetEnabled>" in text
     assert "ActionTypeSupport<::test::action::Move>" in text
+    assert "std::uint64_t bits{};" in text
+    assert "const auto narrowed = static_cast<Unsigned>(bits);" in text
     assert first.interface_count == 3
     assert first.record_count == 6
     assert "encoded_hex: '000000000000000000'" in first_vectors.decode()

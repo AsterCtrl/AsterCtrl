@@ -46,7 +46,15 @@
           "type": "array",
           "items": {"$ref": "#/$defs/parameter"}
         },
-        "hardware": {"type": "array", "items": {"type": "string"}},
+        "hardware": {
+          "type": "array",
+          "items": {
+            "oneOf": [
+              {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
+              {"$ref": "#/$defs/hardwareRequirement"}
+            ]
+          }
+        },
         "placement": {
           "type": "object",
           "additionalProperties": false,
@@ -59,6 +67,15 @@
     }
   },
   "$defs": {
+    "hardwareRequirement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "type"],
+      "properties": {
+        "name": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
+        "type": {"type": "string", "minLength": 1}
+      }
+    },
     "port": {
       "type": "object",
       "additionalProperties": false,

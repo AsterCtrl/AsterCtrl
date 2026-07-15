@@ -30,11 +30,20 @@ class ModuleManifest:
 
 
 @dataclass(frozen=True)
+class BoardExport:
+    package_name: str
+    package_path: Path
+    name: str
+    document: dict[str, Any]
+
+
+@dataclass(frozen=True)
 class Package:
     name: str
     path: Path
     document: dict[str, Any]
     modules: dict[str, ModuleManifest]
+    boards: dict[str, BoardExport]
 
 
 class Workspace:
@@ -115,7 +124,26 @@ class Workspace:
                 path=module_path,
                 document=module_document,
             )
-        package = Package(name=name, path=path, document=document, modules=modules)
+        boards: dict[str, BoardExport] = {}
+        for export in document["spec"].get("exports", {}).get("boards", []):
+            board_name = export["name"]
+            if board_name in boards:
+                raise WorkspaceError(
+                    f"{manifest_path}: duplicate board export {board_name!r}"
+                )
+            boards[board_name] = BoardExport(
+                package_name=name,
+                package_path=path,
+                name=board_name,
+                document=export,
+            )
+        package = Package(
+            name=name,
+            path=path,
+            document=document,
+            modules=modules,
+            boards=boards,
+        )
         self._packages[name] = package
         self._loading.remove(name)
         return package
@@ -127,6 +155,26 @@ class Workspace:
                 f"package {package_name!r} does not export module {module_name!r}"
             )
         return package.modules[module_name]
+
+    def has_package(self, name: str) -> bool:
+        return name in self._sources
+
+    @property
+    def package_paths(self) -> dict[str, Path]:
+        return dict(self._sources)
+
+    def board(self, reference: str) -> BoardExport:
+        package_name, separator, board_name = reference.partition("/")
+        if not separator or not package_name or not board_name:
+            raise WorkspaceError(
+                f"board reference {reference!r} must be package/export-name"
+            )
+        package = self.package(package_name)
+        if board_name not in package.boards:
+            raise WorkspaceError(
+                f"package {package_name!r} does not export board {board_name!r}"
+            )
+        return package.boards[board_name]
 
     def interface_model(self) -> InterfaceModel:
         package = self.package("robot-msgs")

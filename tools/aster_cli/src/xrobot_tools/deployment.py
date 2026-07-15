@@ -16,7 +16,12 @@ from xrobot_tools.interface_model import (
     hash16,
 )
 from xrobot_tools.validation import ValidationError, validate_document
-from xrobot_tools.workspace_model import ModuleManifest, Workspace, WorkspaceError
+from xrobot_tools.workspace_model import (
+    BoardExport,
+    ModuleManifest,
+    Workspace,
+    WorkspaceError,
+)
 
 
 class DeploymentError(ValueError):
@@ -91,12 +96,15 @@ class LinkBudget:
 @dataclass(frozen=True)
 class DeploymentPlan:
     name: str
+    workspace_root: Path
+    package_paths: dict[str, Path]
     deployment_hash: str
     schema_hash: str
     deployment: dict[str, Any]
     robot: dict[str, Any]
     instances: tuple[Instance, ...]
     hardware: dict[str, dict[str, Any]]
+    boards: dict[str, BoardExport | None]
     bindings: dict[str, tuple[PortEndpoint, ...]]
     routes: tuple[Route, ...]
     link_budgets: tuple[LinkBudget, ...]
@@ -214,6 +222,35 @@ def _load_hardware(
     return profiles
 
 
+def _load_boards(
+    workspace: Workspace,
+    deployment: dict[str, Any],
+    hardware: dict[str, dict[str, Any]],
+) -> dict[str, BoardExport | None]:
+    boards: dict[str, BoardExport | None] = {}
+    for node_name, node in deployment["nodes"].items():
+        reference = node["target"]["bsp"]
+        package_name = reference.partition("/")[0]
+        if not workspace.has_package(package_name):
+            boards[node_name] = None
+            continue
+        board = workspace.board(reference)
+        if hardware[node_name]["metadata"]["board"] != board.name:
+            raise DeploymentError(
+                f"node {node_name!r} hardware board "
+                f"{hardware[node_name]['metadata']['board']!r} does not match "
+                f"deployment board {board.name!r}"
+            )
+        profile = node["target"]["profile"]
+        if profile not in board.document.get("profiles", []):
+            raise DeploymentError(
+                f"node {node_name!r} board {board.name!r} does not support "
+                f"profile {profile!r}"
+            )
+        boards[node_name] = board
+    return boards
+
+
 def _load_instances(
     workspace: Workspace,
     robot: dict[str, Any],
@@ -225,7 +262,15 @@ def _load_instances(
         config = robot["instances"][name]
         manifest = workspace.module(config["package"], config["module"])
         node = placements[name]
-        required_hardware = manifest.document["spec"].get("hardware", [])
+        hardware_descriptors = manifest.document["spec"].get("hardware", [])
+        required_hardware = [
+            item if isinstance(item, str) else item["name"]
+            for item in hardware_descriptors
+        ]
+        if len(required_hardware) != len(set(required_hardware)):
+            raise DeploymentError(
+                f"instance {name!r} module declares duplicate hardware requirements"
+            )
         bindings = config.get("hardware", {})
         profile = hardware[node]["spec"]
         available = set(profile["resources"]) | set(profile.get("devices", {}))
@@ -240,6 +285,12 @@ def _load_instances(
                     f"instance {name!r} binds {requirement!r} to unknown hardware "
                     f"{bindings[requirement]!r} on node {node!r}"
                 )
+        unknown_hardware = sorted(set(bindings) - set(required_hardware))
+        if unknown_hardware:
+            raise DeploymentError(
+                f"instance {name!r} binds unknown hardware requirements: "
+                f"{', '.join(unknown_hardware)}"
+            )
         parameters = _resolve_parameters(
             name,
             manifest.document["spec"].get("parameters", []),
@@ -739,6 +790,7 @@ def _build_plan(
     robot = validate_document(robot_path)
     placements = _place_instances(robot, deployment)
     hardware = _load_hardware(deployment_path, deployment)
+    boards = _load_boards(workspace, deployment, hardware)
     instances = _load_instances(workspace, robot, placements, hardware)
     bindings = {
         name: tuple(
@@ -757,17 +809,24 @@ def _build_plan(
             "package_lock": workspace.lock,
             "modules": [item.manifest.document for item in instances],
             "hardware": hardware,
+            "boards": {
+                node: board.document if board is not None else None
+                for node, board in boards.items()
+            },
             "schema_hash": model.deployment_schema_hash,
         }
     )
     return DeploymentPlan(
         name=deployment["metadata"]["name"],
+        workspace_root=workspace.root,
+        package_paths=workspace.package_paths,
         deployment_hash=deployment_hash,
         schema_hash=model.deployment_schema_hash,
         deployment=deployment,
         robot=robot,
         instances=instances,
         hardware=hardware,
+        boards=boards,
         bindings=bindings,
         routes=routes,
         link_budgets=budgets,
