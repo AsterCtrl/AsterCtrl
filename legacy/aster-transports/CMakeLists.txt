@@ -60,4 +60,14 @@ if(XROBOT_TRANSPORTS_BUILD_TESTS)
       -Wall -Wextra -Wpedantic -Wconversion -Wsign-conversion -Werror)
   endif()
   add_test(NAME xrobot_can_action_bridge_test COMMAND xrobot_can_action_bridge_test)
+
+  add_executable(xrobot_can_link_control_test tests/can_link_control_test.cpp)
+  target_link_libraries(xrobot_can_link_control_test PRIVATE xrobot::transports)
+  target_include_directories(xrobot_can_link_control_test
+                             PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(xrobot_can_link_control_test PRIVATE
+      -Wall -Wextra -Wpedantic -Wconversion -Wsign-conversion -Werror)
+  endif()
+  add_test(NAME xrobot_can_link_control_test COMMAND xrobot_can_link_control_test)
 endif()
