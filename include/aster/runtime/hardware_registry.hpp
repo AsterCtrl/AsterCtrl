@@ -5,9 +5,9 @@
 #include <cstddef>
 #include <string_view>
 
-#include "xrobot/runtime/status.hpp"
+#include "aster/runtime/status.hpp"
 
-namespace xrobot::runtime {
+namespace aster::runtime {
 
 template <typename Device>
 concept HardwareDevice = requires {
@@ -92,4 +92,4 @@ class StaticHardwareRegistry final : public HardwareResolver {
   bool sealed_{};
 };
 
-}  // namespace xrobot::runtime
+}  // namespace aster::runtime

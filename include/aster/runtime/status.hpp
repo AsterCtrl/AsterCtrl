@@ -2,7 +2,7 @@
 
 #include <cstdint>
 
-namespace xrobot::runtime {
+namespace aster::runtime {
 
 enum class Status : std::uint8_t {
   kOk = 0,
@@ -18,4 +18,4 @@ enum class Status : std::uint8_t {
 
 constexpr bool IsOk(Status status) noexcept { return status == Status::kOk; }
 
-}  // namespace xrobot::runtime
+}  // namespace aster::runtime

@@ -4,10 +4,10 @@
 #include <cstdint>
 #include <string_view>
 
-#include "xrobot/runtime/execution_context.hpp"
-#include "xrobot/runtime/status.hpp"
+#include "aster/runtime/execution_context.hpp"
+#include "aster/runtime/status.hpp"
 
-namespace xrobot::runtime {
+namespace aster::runtime {
 
 enum class ExecutorState : std::uint8_t {
   kConstructed,
@@ -59,4 +59,4 @@ struct ExecutorSlot {
   Executor* executor{};
 };
 
-}  // namespace xrobot::runtime
+}  // namespace aster::runtime

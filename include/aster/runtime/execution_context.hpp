@@ -3,7 +3,7 @@
 #include <cstdint>
 #include <string_view>
 
-namespace xrobot::runtime {
+namespace aster::runtime {
 
 enum class ExecutionKind : std::uint8_t {
   kThread,
@@ -33,4 +33,4 @@ class ExecutionContext {
   std::uint8_t priority_;
 };
 
-}  // namespace xrobot::runtime
+}  // namespace aster::runtime

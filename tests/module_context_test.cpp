@@ -4,11 +4,11 @@
 #include <span>
 #include <string_view>
 
-#include "xrobot/runtime/cooperative_executor.hpp"
-#include "xrobot/runtime/hardware_registry.hpp"
-#include "xrobot/runtime/module_context.hpp"
-#include "xrobot/runtime/parameter_registry.hpp"
-#include "xrobot/runtime/port_registry.hpp"
+#include "aster/runtime/cooperative_executor.hpp"
+#include "aster/runtime/hardware_registry.hpp"
+#include "aster/runtime/module_context.hpp"
+#include "aster/runtime/parameter_registry.hpp"
+#include "aster/runtime/port_registry.hpp"
 
 namespace test {
 
@@ -18,7 +18,7 @@ struct Command {
 
 }  // namespace test
 
-namespace xrobot::runtime {
+namespace aster::runtime {
 
 template <>
 struct TypeSupport<test::Command> {
@@ -46,36 +46,36 @@ struct TypeSupport<test::Command> {
   }
 };
 
-}  // namespace xrobot::runtime
+}  // namespace aster::runtime
 
 namespace {
 
-using xrobot::runtime::CooperativeExecutor;
-using xrobot::runtime::DeliveryPolicy;
-using xrobot::runtime::DiagnosticRecord;
-using xrobot::runtime::DiagnosticSeverity;
-using xrobot::runtime::DiagnosticSink;
-using xrobot::runtime::ExecutionContext;
-using xrobot::runtime::ExecutionKind;
-using xrobot::runtime::LogLevel;
-using xrobot::runtime::LogRecord;
-using xrobot::runtime::LogSink;
-using xrobot::runtime::MessageInfo;
-using xrobot::runtime::ModuleContext;
-using xrobot::runtime::ModuleServices;
-using xrobot::runtime::Parameter;
-using xrobot::runtime::ParameterDescriptor;
-using xrobot::runtime::ParameterMutability;
-using xrobot::runtime::ParameterPersistence;
-using xrobot::runtime::StaticParameterRegistry;
-using xrobot::runtime::StaticHardwareRegistry;
-using xrobot::runtime::StaticPortRegistry;
-using xrobot::runtime::StaticTopic;
-using xrobot::runtime::Status;
-using xrobot::runtime::SteadyClock;
-using xrobot::runtime::TopicPublisher;
-using xrobot::runtime::TopicSubscriber;
-using xrobot::runtime::TopicSubscription;
+using aster::runtime::CooperativeExecutor;
+using aster::runtime::DeliveryPolicy;
+using aster::runtime::DiagnosticRecord;
+using aster::runtime::DiagnosticSeverity;
+using aster::runtime::DiagnosticSink;
+using aster::runtime::ExecutionContext;
+using aster::runtime::ExecutionKind;
+using aster::runtime::LogLevel;
+using aster::runtime::LogRecord;
+using aster::runtime::LogSink;
+using aster::runtime::MessageInfo;
+using aster::runtime::ModuleContext;
+using aster::runtime::ModuleServices;
+using aster::runtime::Parameter;
+using aster::runtime::ParameterDescriptor;
+using aster::runtime::ParameterMutability;
+using aster::runtime::ParameterPersistence;
+using aster::runtime::StaticParameterRegistry;
+using aster::runtime::StaticHardwareRegistry;
+using aster::runtime::StaticPortRegistry;
+using aster::runtime::StaticTopic;
+using aster::runtime::Status;
+using aster::runtime::SteadyClock;
+using aster::runtime::TopicPublisher;
+using aster::runtime::TopicSubscriber;
+using aster::runtime::TopicSubscription;
 
 class FakeClock final : public SteadyClock {
  public:

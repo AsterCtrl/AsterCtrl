@@ -6,11 +6,11 @@
 #include <cstdint>
 #include <string_view>
 
-#include "xrobot/runtime/executor.hpp"
-#include "xrobot/runtime/status.hpp"
-#include "xrobot/runtime/type_support.hpp"
+#include "aster/runtime/executor.hpp"
+#include "aster/runtime/status.hpp"
+#include "aster/runtime/type_support.hpp"
 
-namespace xrobot::runtime {
+namespace aster::runtime {
 
 struct ActionDescriptor {
   std::string_view name;
@@ -474,4 +474,4 @@ class StaticAction final : public ActionClientEndpoint<Action>,
   ActionStats stats_{};
 };
 
-}  // namespace xrobot::runtime
+}  // namespace aster::runtime

@@ -2,10 +2,10 @@
 
 #include <string_view>
 
-#include "xrobot/runtime/module_context.hpp"
-#include "xrobot/runtime/status.hpp"
+#include "aster/runtime/module_context.hpp"
+#include "aster/runtime/status.hpp"
 
-namespace xrobot::runtime {
+namespace aster::runtime {
 
 class Module {
  public:
@@ -22,4 +22,4 @@ struct ModuleSlot {
   ModuleContext* context{};
 };
 
-}  // namespace xrobot::runtime
+}  // namespace aster::runtime

@@ -7,9 +7,9 @@
 #include <string_view>
 #include <type_traits>
 
-#include "xrobot/runtime/status.hpp"
+#include "aster/runtime/status.hpp"
 
-namespace xrobot::runtime {
+namespace aster::runtime {
 
 struct SchemaHash {
   std::array<std::byte, 16> bytes{};
@@ -41,4 +41,4 @@ concept MessageType =
           std::same_as<Status>;
     };
 
-}  // namespace xrobot::runtime
+}  // namespace aster::runtime

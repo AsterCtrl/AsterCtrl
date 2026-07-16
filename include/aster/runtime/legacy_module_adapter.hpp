@@ -2,9 +2,9 @@
 
 #include <string_view>
 
-#include "xrobot/runtime/module.hpp"
+#include "aster/runtime/module.hpp"
 
-namespace xrobot::runtime {
+namespace aster::runtime {
 
 struct LegacyLifecycleHooks {
   Status (*initialize)(void*, ModuleContext&) noexcept{};
@@ -47,4 +47,4 @@ class LegacyModuleAdapter final : public Module {
   LegacyLifecycleHooks hooks_;
 };
 
-}  // namespace xrobot::runtime
+}  // namespace aster::runtime

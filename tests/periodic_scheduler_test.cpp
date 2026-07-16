@@ -2,21 +2,21 @@
 #include <cassert>
 #include <cstdint>
 
-#include "xrobot/runtime/cooperative_executor.hpp"
-#include "xrobot/runtime/module.hpp"
-#include "xrobot/runtime/periodic_scheduler.hpp"
-#include "xrobot/runtime/runtime.hpp"
+#include "aster/runtime/cooperative_executor.hpp"
+#include "aster/runtime/module.hpp"
+#include "aster/runtime/periodic_scheduler.hpp"
+#include "aster/runtime/runtime.hpp"
 
 namespace {
 
-using xrobot::runtime::CooperativeExecutor;
-using xrobot::runtime::ExecutionContext;
-using xrobot::runtime::ExecutionKind;
-using xrobot::runtime::Module;
-using xrobot::runtime::ModuleContext;
-using xrobot::runtime::ModuleServices;
-using xrobot::runtime::Status;
-using xrobot::runtime::StaticPeriodicScheduler;
+using aster::runtime::CooperativeExecutor;
+using aster::runtime::ExecutionContext;
+using aster::runtime::ExecutionKind;
+using aster::runtime::Module;
+using aster::runtime::ModuleContext;
+using aster::runtime::ModuleServices;
+using aster::runtime::Status;
+using aster::runtime::StaticPeriodicScheduler;
 
 void Increment(void* state, const ExecutionContext&) noexcept {
   ++*static_cast<std::uint32_t*>(state);
@@ -29,7 +29,7 @@ void RequiresEveryTaskToBeBound() {
          Status::kOk);
   assert(scheduler.Initialize() == Status::kInvalidState);
   assert(scheduler.state() ==
-         xrobot::runtime::PeriodicSchedulerState::kFailed);
+         aster::runtime::PeriodicSchedulerState::kFailed);
 }
 
 void SkipsMissedPeriodsAndPreventsReentry() {
@@ -122,9 +122,9 @@ void RuntimeOwnsPeriodicSchedulingLifecycle() {
   ModuleContext context(
       "node", "module",
       ModuleServices{.executor = &executor, .periodic_tasks = &scheduler});
-  std::array executors{xrobot::runtime::ExecutorSlot{&executor}};
-  std::array modules{xrobot::runtime::ModuleSlot{&module, &context}};
-  xrobot::runtime::Runtime runtime(executors, modules, scheduler);
+  std::array executors{aster::runtime::ExecutorSlot{&executor}};
+  std::array modules{aster::runtime::ModuleSlot{&module, &context}};
+  aster::runtime::Runtime runtime(executors, modules, scheduler);
   const ExecutionContext caller("runtime", ExecutionKind::kThread, 9);
 
   assert(scheduler.AddTask("module", "control", 1'000'000, executor) ==
@@ -137,7 +137,7 @@ void RuntimeOwnsPeriodicSchedulingLifecycle() {
 
   runtime.Shutdown();
   assert(scheduler.state() ==
-         xrobot::runtime::PeriodicSchedulerState::kStopped);
+         aster::runtime::PeriodicSchedulerState::kStopped);
   assert(runtime.Poll(2'000'000, caller) == Status::kInvalidState);
 }
 
@@ -149,18 +149,18 @@ void RuntimeRejectsTasksOnUnmanagedExecutors() {
   ModuleContext context(
       "node", "module",
       ModuleServices{.executor = &managed, .periodic_tasks = &scheduler});
-  std::array executors{xrobot::runtime::ExecutorSlot{&managed}};
-  std::array modules{xrobot::runtime::ModuleSlot{&module, &context}};
-  xrobot::runtime::Runtime runtime(executors, modules, scheduler);
+  std::array executors{aster::runtime::ExecutorSlot{&managed}};
+  std::array modules{aster::runtime::ModuleSlot{&module, &context}};
+  aster::runtime::Runtime runtime(executors, modules, scheduler);
 
   assert(scheduler.AddTask("module", "control", 1'000'000, unmanaged) ==
          Status::kOk);
   assert(runtime.Initialize() == Status::kInvalidArgument);
   assert(runtime.failure().has_value());
   assert(runtime.failure()->subject ==
-         xrobot::runtime::LifecycleSubject::kScheduler);
+         aster::runtime::LifecycleSubject::kScheduler);
   assert(runtime.failure()->operation ==
-         xrobot::runtime::LifecycleOperation::kValidation);
+         aster::runtime::LifecycleOperation::kValidation);
 }
 
 }  // namespace

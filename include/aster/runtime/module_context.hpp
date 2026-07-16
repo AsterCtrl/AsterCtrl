@@ -3,14 +3,14 @@
 #include <cstdint>
 #include <string_view>
 
-#include "xrobot/runtime/executor.hpp"
-#include "xrobot/runtime/hardware_registry.hpp"
-#include "xrobot/runtime/parameter_registry.hpp"
-#include "xrobot/runtime/periodic_scheduler.hpp"
-#include "xrobot/runtime/port_registry.hpp"
-#include "xrobot/runtime/runtime_services.hpp"
+#include "aster/runtime/executor.hpp"
+#include "aster/runtime/hardware_registry.hpp"
+#include "aster/runtime/parameter_registry.hpp"
+#include "aster/runtime/periodic_scheduler.hpp"
+#include "aster/runtime/port_registry.hpp"
+#include "aster/runtime/runtime_services.hpp"
 
-namespace xrobot::runtime {
+namespace aster::runtime {
 
 enum class ModulePhase {
   kConstructed,
@@ -247,4 +247,4 @@ class ModuleContext {
   ModulePhase phase_{ModulePhase::kConstructed};
 };
 
-}  // namespace xrobot::runtime
+}  // namespace aster::runtime

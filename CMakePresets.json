@@ -12,7 +12,7 @@
       "binaryDir": "${sourceDir}/build/host-debug",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
-        "XROBOT_RUNTIME_BUILD_TESTS": "ON"
+        "ASTER_RUNTIME_BUILD_TESTS": "ON"
       }
     }
   ],

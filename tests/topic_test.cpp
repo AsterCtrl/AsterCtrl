@@ -5,10 +5,10 @@
 #include <span>
 #include <string_view>
 
-#include "xrobot/runtime/cooperative_executor.hpp"
-#include "xrobot/runtime/module_context.hpp"
-#include "xrobot/runtime/port_registry.hpp"
-#include "xrobot/runtime/topic.hpp"
+#include "aster/runtime/cooperative_executor.hpp"
+#include "aster/runtime/module_context.hpp"
+#include "aster/runtime/port_registry.hpp"
+#include "aster/runtime/topic.hpp"
 
 namespace test {
 
@@ -18,7 +18,7 @@ struct Command {
 
 }  // namespace test
 
-namespace xrobot::runtime {
+namespace aster::runtime {
 
 template <>
 struct TypeSupport<test::Command> {
@@ -55,23 +55,23 @@ struct TypeSupport<test::Command> {
   }
 };
 
-}  // namespace xrobot::runtime
+}  // namespace aster::runtime
 
 namespace {
 
-using xrobot::runtime::CooperativeExecutor;
-using xrobot::runtime::DeliveryPolicy;
-using xrobot::runtime::ExecutionContext;
-using xrobot::runtime::ExecutionKind;
-using xrobot::runtime::MessageInfo;
-using xrobot::runtime::ModuleContext;
-using xrobot::runtime::ModuleServices;
-using xrobot::runtime::StaticPortRegistry;
-using xrobot::runtime::StaticTopic;
-using xrobot::runtime::StaticTopicChannel;
-using xrobot::runtime::Status;
-using xrobot::runtime::TopicPublisher;
-using xrobot::runtime::TopicSubscription;
+using aster::runtime::CooperativeExecutor;
+using aster::runtime::DeliveryPolicy;
+using aster::runtime::ExecutionContext;
+using aster::runtime::ExecutionKind;
+using aster::runtime::MessageInfo;
+using aster::runtime::ModuleContext;
+using aster::runtime::ModuleServices;
+using aster::runtime::StaticPortRegistry;
+using aster::runtime::StaticTopic;
+using aster::runtime::StaticTopicChannel;
+using aster::runtime::Status;
+using aster::runtime::TopicPublisher;
+using aster::runtime::TopicSubscription;
 
 struct Recorder {
   std::array<std::int16_t, 4> values{};
@@ -82,7 +82,7 @@ struct Recorder {
 
 struct CongestedRecorder {
   Recorder recorder;
-  xrobot::runtime::Executor* executor{};
+  aster::runtime::Executor* executor{};
   TopicPublisher<test::Command> publisher;
   bool reentered{};
 };
@@ -113,18 +113,18 @@ void RecordAndFillExecutor(void* state, const test::Command& message,
 
 void GeneratedTypeSupportDefinesTheWireContract() {
   constexpr auto descriptor =
-      xrobot::runtime::TypeSupport<test::Command>::descriptor();
-  static_assert(xrobot::runtime::MessageType<test::Command>);
+      aster::runtime::TypeSupport<test::Command>::descriptor();
+  static_assert(aster::runtime::MessageType<test::Command>);
   static_assert(descriptor.max_serialized_size == 2);
   assert(descriptor.name == "test.msg.Command");
 
   std::array<std::byte, 2> bytes{};
   std::size_t written{};
-  assert(xrobot::runtime::TypeSupport<test::Command>::Encode(
+  assert(aster::runtime::TypeSupport<test::Command>::Encode(
              test::Command{-300}, bytes, written) == Status::kOk);
   assert(written == 2);
   test::Command decoded;
-  assert(xrobot::runtime::TypeSupport<test::Command>::Decode(bytes, decoded) ==
+  assert(aster::runtime::TypeSupport<test::Command>::Decode(bytes, decoded) ==
          Status::kOk);
   assert(decoded.target == -300);
 }
@@ -245,8 +245,8 @@ void StaticChannelFansOutThroughModuleContexts() {
   ModuleContext second_context(
       "node", "second_module",
       ModuleServices{.executor = &second_executor, .ports = &ports});
-  xrobot::runtime::TopicSubscriber<test::Command> first_subscriber;
-  xrobot::runtime::TopicSubscriber<test::Command> second_subscriber;
+  aster::runtime::TopicSubscriber<test::Command> first_subscriber;
+  aster::runtime::TopicSubscriber<test::Command> second_subscriber;
   TopicPublisher<test::Command> publisher;
 
   assert(first_context.ResolveTopicSubscriber("robot/state", first_subscriber) ==

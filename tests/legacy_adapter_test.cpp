@@ -1,17 +1,17 @@
 #include <array>
 #include <cassert>
 
-#include "xrobot/runtime/legacy_module_adapter.hpp"
-#include "xrobot/runtime/runtime.hpp"
+#include "aster/runtime/legacy_module_adapter.hpp"
+#include "aster/runtime/runtime.hpp"
 
 namespace {
 
-using xrobot::runtime::LegacyLifecycleHooks;
-using xrobot::runtime::LegacyModuleAdapter;
-using xrobot::runtime::ModuleContext;
-using xrobot::runtime::ModuleSlot;
-using xrobot::runtime::Runtime;
-using xrobot::runtime::Status;
+using aster::runtime::LegacyLifecycleHooks;
+using aster::runtime::LegacyModuleAdapter;
+using aster::runtime::ModuleContext;
+using aster::runtime::ModuleSlot;
+using aster::runtime::Runtime;
+using aster::runtime::Status;
 
 struct LegacyState {
   int initialize_count{};

@@ -5,9 +5,9 @@
 #include <span>
 #include <string_view>
 
-#include "xrobot/runtime/mapped_resolver.hpp"
-#include "xrobot/runtime/module_context.hpp"
-#include "xrobot/runtime/topic.hpp"
+#include "aster/runtime/mapped_resolver.hpp"
+#include "aster/runtime/module_context.hpp"
+#include "aster/runtime/topic.hpp"
 
 namespace test {
 
@@ -31,7 +31,7 @@ class WrongDevice {
 
 }  // namespace test
 
-namespace xrobot::runtime {
+namespace aster::runtime {
 
 template <>
 struct TypeSupport<test::Command> {
@@ -57,19 +57,19 @@ struct TypeSupport<test::Command> {
   }
 };
 
-}  // namespace xrobot::runtime
+}  // namespace aster::runtime
 
 namespace {
 
-using xrobot::runtime::MappedHardwareResolver;
-using xrobot::runtime::MappedPortResolver;
-using xrobot::runtime::NameMapping;
-using xrobot::runtime::StaticHardwareRegistry;
-using xrobot::runtime::StaticPortRegistry;
-using xrobot::runtime::StaticTopic;
-using xrobot::runtime::Status;
-using xrobot::runtime::TopicPublisher;
-using xrobot::runtime::TopicSubscriber;
+using aster::runtime::MappedHardwareResolver;
+using aster::runtime::MappedPortResolver;
+using aster::runtime::NameMapping;
+using aster::runtime::StaticHardwareRegistry;
+using aster::runtime::StaticPortRegistry;
+using aster::runtime::StaticTopic;
+using aster::runtime::Status;
+using aster::runtime::TopicPublisher;
+using aster::runtime::TopicSubscriber;
 
 void MapsLocalNamesWithoutWeakeningTypeChecks() {
   StaticTopic<test::Command, 1> topic("/control/command");
@@ -93,8 +93,8 @@ void MapsLocalNamesWithoutWeakeningTypeChecks() {
   assert(global_hardware.Seal() == Status::kOk);
 
   assert(ports.Resolve("command_out",
-                       xrobot::runtime::PortKind::kTopicPublisher,
-                       xrobot::runtime::TypeSupport<test::Command>::descriptor()
+                       aster::runtime::PortKind::kTopicPublisher,
+                       aster::runtime::TypeSupport<test::Command>::descriptor()
                            .schema_hash,
                        resolved) == Status::kInvalidState);
   assert(ports.Bind(global_ports) == Status::kOk);
@@ -102,7 +102,7 @@ void MapsLocalNamesWithoutWeakeningTypeChecks() {
   assert(ports.bound());
   assert(hardware.bound());
 
-  xrobot::runtime::ModuleContext context(
+  aster::runtime::ModuleContext context(
       "node", "controller",
       {.ports = &ports, .hardware = &hardware});
   test::Device* resolved_device{};

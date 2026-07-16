@@ -4,15 +4,15 @@
 #include <span>
 #include <string_view>
 
-#include "xrobot/runtime/execution_context.hpp"
-#include "xrobot/runtime/status.hpp"
+#include "aster/runtime/execution_context.hpp"
+#include "aster/runtime/status.hpp"
 
-namespace xrobot::runtime {
+namespace aster::runtime {
 
 class ByteReader {
  public:
   static constexpr std::string_view TypeName() noexcept {
-    return "xrobot.hardware.ByteReader/v1";
+    return "aster.hardware.ByteReader/v1";
   }
 
   virtual ~ByteReader() = default;
@@ -26,4 +26,4 @@ class ByteReader {
   virtual Status Discard(const ExecutionContext& caller) noexcept = 0;
 };
 
-}  // namespace xrobot::runtime
+}  // namespace aster::runtime

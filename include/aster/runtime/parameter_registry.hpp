@@ -6,10 +6,10 @@
 #include <string_view>
 #include <type_traits>
 
-#include "xrobot/runtime/parameter.hpp"
-#include "xrobot/runtime/status.hpp"
+#include "aster/runtime/parameter.hpp"
+#include "aster/runtime/status.hpp"
 
-namespace xrobot::runtime {
+namespace aster::runtime {
 
 enum class ParameterType : std::uint8_t {
   kBool,
@@ -136,4 +136,4 @@ class StaticParameterRegistry final : public ParameterResolver {
   bool sealed_{};
 };
 
-}  // namespace xrobot::runtime
+}  // namespace aster::runtime

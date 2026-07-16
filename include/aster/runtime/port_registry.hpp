@@ -5,13 +5,13 @@
 #include <cstdint>
 #include <string_view>
 
-#include "xrobot/runtime/action.hpp"
-#include "xrobot/runtime/service.hpp"
-#include "xrobot/runtime/status.hpp"
-#include "xrobot/runtime/topic.hpp"
-#include "xrobot/runtime/type_support.hpp"
+#include "aster/runtime/action.hpp"
+#include "aster/runtime/service.hpp"
+#include "aster/runtime/status.hpp"
+#include "aster/runtime/topic.hpp"
+#include "aster/runtime/type_support.hpp"
 
-namespace xrobot::runtime {
+namespace aster::runtime {
 
 enum class PortKind : std::uint8_t {
   kTopicPublisher,
@@ -152,4 +152,4 @@ class StaticPortRegistry final : public PortResolver {
   bool sealed_{};
 };
 
-}  // namespace xrobot::runtime
+}  // namespace aster::runtime

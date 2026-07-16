@@ -6,8 +6,8 @@
 #include <span>
 #include <string_view>
 
-#include "xrobot/runtime/action.hpp"
-#include "xrobot/runtime/cooperative_executor.hpp"
+#include "aster/runtime/action.hpp"
+#include "aster/runtime/cooperative_executor.hpp"
 
 namespace test {
 
@@ -27,7 +27,7 @@ struct Move {};
 
 }  // namespace test
 
-namespace xrobot::runtime {
+namespace aster::runtime {
 
 template <>
 struct TypeSupport<test::MoveGoal> {
@@ -118,17 +118,17 @@ struct ActionTypeSupport<test::Move> {
   }
 };
 
-}  // namespace xrobot::runtime
+}  // namespace aster::runtime
 
 namespace {
 
-using xrobot::runtime::ActionCallbacks;
-using xrobot::runtime::ActionGoalHandle;
-using xrobot::runtime::CooperativeExecutor;
-using xrobot::runtime::ExecutionContext;
-using xrobot::runtime::ExecutionKind;
-using xrobot::runtime::StaticAction;
-using xrobot::runtime::Status;
+using aster::runtime::ActionCallbacks;
+using aster::runtime::ActionGoalHandle;
+using aster::runtime::CooperativeExecutor;
+using aster::runtime::ExecutionContext;
+using aster::runtime::ExecutionKind;
+using aster::runtime::StaticAction;
+using aster::runtime::Status;
 
 struct ServerState {
   ActionGoalHandle last_goal;
@@ -295,7 +295,7 @@ void DeadlineExpiresAnAcceptedGoal() {
 }  // namespace
 
 int main() {
-  static_assert(xrobot::runtime::ActionType<test::Move>);
+  static_assert(aster::runtime::ActionType<test::Move>);
   UnboundActionCanBindHandlersAfterConstruction();
   GoalFeedbackAndResultFollowTheActionStateMachine();
   CancellationIsRequestedOnTheServerExecutor();

@@ -1,8 +1,8 @@
 #include <cassert>
 
-#include "xrobot/runtime/version.hpp"
+#include "aster/runtime/version.hpp"
 
 int main() {
-  assert(!xrobot::runtime::kVersion.empty());
+  assert(!aster::runtime::kVersion.empty());
   return 0;
 }

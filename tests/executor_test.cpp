@@ -3,15 +3,15 @@
 #include <cstddef>
 #include <string_view>
 
-#include "xrobot/runtime/cooperative_executor.hpp"
+#include "aster/runtime/cooperative_executor.hpp"
 
 namespace {
 
-using xrobot::runtime::CooperativeExecutor;
-using xrobot::runtime::ExecutionContext;
-using xrobot::runtime::ExecutionKind;
-using xrobot::runtime::Status;
-using xrobot::runtime::WorkItem;
+using aster::runtime::CooperativeExecutor;
+using aster::runtime::ExecutionContext;
+using aster::runtime::ExecutionKind;
+using aster::runtime::Status;
+using aster::runtime::WorkItem;
 
 struct Recorder {
   std::array<int, 4> values{};

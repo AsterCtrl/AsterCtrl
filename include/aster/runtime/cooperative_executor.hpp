@@ -5,9 +5,9 @@
 #include <cstdint>
 #include <string_view>
 
-#include "xrobot/runtime/executor.hpp"
+#include "aster/runtime/executor.hpp"
 
-namespace xrobot::runtime {
+namespace aster::runtime {
 
 template <std::size_t Capacity>
 class CooperativeExecutor final : public Executor {
@@ -102,4 +102,4 @@ class CooperativeExecutor final : public Executor {
   ExecutorState state_{ExecutorState::kConstructed};
 };
 
-}  // namespace xrobot::runtime
+}  // namespace aster::runtime

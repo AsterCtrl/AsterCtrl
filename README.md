@@ -1,6 +1,6 @@
-# xrobot-runtime
+# Aster Runtime
 
-Portable runtime contracts for the control-2027 distributed robot framework.
+Portable runtime contracts for distributed robot applications.
 
 This repository owns Module lifecycle, execution contexts, executors, messaging,
 parameters, diagnostics, and compatibility adapters. Platform integrations live

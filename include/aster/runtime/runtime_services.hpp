@@ -3,10 +3,10 @@
 #include <cstdint>
 #include <string_view>
 
-#include "xrobot/runtime/execution_context.hpp"
-#include "xrobot/runtime/status.hpp"
+#include "aster/runtime/execution_context.hpp"
+#include "aster/runtime/status.hpp"
 
-namespace xrobot::runtime {
+namespace aster::runtime {
 
 class SteadyClock {
  public:
@@ -60,4 +60,4 @@ class DiagnosticSink {
                         const ExecutionContext& caller) noexcept = 0;
 };
 
-}  // namespace xrobot::runtime
+}  // namespace aster::runtime

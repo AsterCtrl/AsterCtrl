@@ -6,11 +6,11 @@
 #include <optional>
 #include <string_view>
 
-#include "xrobot/runtime/executor.hpp"
-#include "xrobot/runtime/status.hpp"
-#include "xrobot/runtime/type_support.hpp"
+#include "aster/runtime/executor.hpp"
+#include "aster/runtime/status.hpp"
+#include "aster/runtime/type_support.hpp"
 
-namespace xrobot::runtime {
+namespace aster::runtime {
 
 enum class DeliveryPolicy : std::uint8_t {
   kLatest,
@@ -392,4 +392,4 @@ class StaticTopicChannel final : public TopicSource<Message>,
   std::size_t sink_count_{};
 };
 
-}  // namespace xrobot::runtime
+}  // namespace aster::runtime

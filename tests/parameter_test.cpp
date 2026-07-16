@@ -1,17 +1,17 @@
 #include <cassert>
 
-#include "xrobot/runtime/parameter.hpp"
+#include "aster/runtime/parameter.hpp"
 
 namespace {
 
-using xrobot::runtime::ExecutionContext;
-using xrobot::runtime::ExecutionKind;
-using xrobot::runtime::Parameter;
-using xrobot::runtime::ParameterDescriptor;
-using xrobot::runtime::ParameterMutability;
-using xrobot::runtime::ParameterPersistence;
-using xrobot::runtime::ParameterWritePhase;
-using xrobot::runtime::Status;
+using aster::runtime::ExecutionContext;
+using aster::runtime::ExecutionKind;
+using aster::runtime::Parameter;
+using aster::runtime::ParameterDescriptor;
+using aster::runtime::ParameterMutability;
+using aster::runtime::ParameterPersistence;
+using aster::runtime::ParameterWritePhase;
+using aster::runtime::Status;
 
 struct UpdateState {
   int calls{};

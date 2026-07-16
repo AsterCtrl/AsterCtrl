@@ -6,8 +6,8 @@
 #include <span>
 #include <string_view>
 
-#include "xrobot/runtime/cooperative_executor.hpp"
-#include "xrobot/runtime/service.hpp"
+#include "aster/runtime/cooperative_executor.hpp"
+#include "aster/runtime/service.hpp"
 
 namespace test {
 
@@ -23,7 +23,7 @@ struct SetMode {};
 
 }  // namespace test
 
-namespace xrobot::runtime {
+namespace aster::runtime {
 
 template <>
 struct TypeSupport<test::SetModeRequest> {
@@ -90,16 +90,16 @@ struct ServiceTypeSupport<test::SetMode> {
   }
 };
 
-}  // namespace xrobot::runtime
+}  // namespace aster::runtime
 
 namespace {
 
-using xrobot::runtime::CooperativeExecutor;
-using xrobot::runtime::ExecutionContext;
-using xrobot::runtime::ExecutionKind;
-using xrobot::runtime::ServiceCallInfo;
-using xrobot::runtime::StaticService;
-using xrobot::runtime::Status;
+using aster::runtime::CooperativeExecutor;
+using aster::runtime::ExecutionContext;
+using aster::runtime::ExecutionKind;
+using aster::runtime::ServiceCallInfo;
+using aster::runtime::StaticService;
+using aster::runtime::Status;
 
 struct ServerState {
   std::uint8_t last_mode{};
@@ -185,7 +185,7 @@ void HandlerErrorsReachTheCompletionCallback() {
 }
 
 void EmptyClientIsUnavailable() {
-  const xrobot::runtime::ServiceClient<test::SetMode> client;
+  const aster::runtime::ServiceClient<test::SetMode> client;
   ClientState state;
   const ExecutionContext caller("control", ExecutionKind::kThread, 5);
 
@@ -208,7 +208,7 @@ void UnboundServiceStartsEmptyInNonzeroStorage() {
 }  // namespace
 
 int main() {
-  static_assert(xrobot::runtime::ServiceType<test::SetMode>);
+  static_assert(aster::runtime::ServiceType<test::SetMode>);
   ServiceCallsAreAsynchronousAndBounded();
   HandlerErrorsReachTheCompletionCallback();
   EmptyClientIsUnavailable();

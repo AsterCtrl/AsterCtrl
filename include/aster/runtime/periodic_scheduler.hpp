@@ -7,10 +7,10 @@
 #include <limits>
 #include <string_view>
 
-#include "xrobot/runtime/executor.hpp"
-#include "xrobot/runtime/status.hpp"
+#include "aster/runtime/executor.hpp"
+#include "aster/runtime/status.hpp"
 
-namespace xrobot::runtime {
+namespace aster::runtime {
 
 enum class PeriodicSchedulerState : std::uint8_t {
   kConstructed,
@@ -300,4 +300,4 @@ class StaticPeriodicScheduler final : public PeriodicScheduler {
   bool has_last_poll_{};
 };
 
-}  // namespace xrobot::runtime
+}  // namespace aster::runtime

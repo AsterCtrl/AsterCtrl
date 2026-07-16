@@ -1,8 +1,8 @@
-api_version: xrobot.io/v1alpha1
+api_version: aster.dev/v1alpha1
 kind: Package
 
 metadata:
-  name: xrobot-runtime
+  name: aster-runtime
   version: 0.1.0-dev
   license: Apache-2.0
 
@@ -11,6 +11,6 @@ spec:
     system: cmake
   exports:
     libraries:
-      - name: xrobot::runtime
+      - name: aster::runtime
         portable: true
   dependencies: []

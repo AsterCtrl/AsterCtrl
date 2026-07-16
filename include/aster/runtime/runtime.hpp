@@ -5,12 +5,12 @@
 #include <span>
 #include <string_view>
 
-#include "xrobot/runtime/executor.hpp"
-#include "xrobot/runtime/module.hpp"
-#include "xrobot/runtime/periodic_scheduler.hpp"
-#include "xrobot/runtime/status.hpp"
+#include "aster/runtime/executor.hpp"
+#include "aster/runtime/module.hpp"
+#include "aster/runtime/periodic_scheduler.hpp"
+#include "aster/runtime/status.hpp"
 
-namespace xrobot::runtime {
+namespace aster::runtime {
 
 enum class RuntimeState {
   kConstructed,
@@ -80,4 +80,4 @@ class Runtime {
   std::optional<RuntimeFailure> failure_;
 };
 
-}  // namespace xrobot::runtime
+}  // namespace aster::runtime

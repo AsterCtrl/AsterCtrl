@@ -4,10 +4,10 @@
 #include <span>
 #include <string_view>
 
-#include "xrobot/runtime/hardware_registry.hpp"
-#include "xrobot/runtime/port_registry.hpp"
+#include "aster/runtime/hardware_registry.hpp"
+#include "aster/runtime/port_registry.hpp"
 
-namespace xrobot::runtime {
+namespace aster::runtime {
 
 struct NameMapping {
   std::string_view local_name;
@@ -113,4 +113,4 @@ class MappedHardwareResolver final : public HardwareResolver {
   HardwareResolver* upstream_{};
 };
 
-}  // namespace xrobot::runtime
+}  // namespace aster::runtime

@@ -1,6 +1,6 @@
-#include "xrobot/runtime/runtime.hpp"
+#include "aster/runtime/runtime.hpp"
 
-namespace xrobot::runtime {
+namespace aster::runtime {
 
 Status Runtime::ValidateSlots() noexcept {
   for (std::size_t index = 0; index < executors_.size(); ++index) {
@@ -270,4 +270,4 @@ void Runtime::RecordFailure(LifecycleSubject subject, std::size_t index,
   failure_ = RuntimeFailure{subject, index, name, operation, status};
 }
 
-}  // namespace xrobot::runtime
+}  // namespace aster::runtime
