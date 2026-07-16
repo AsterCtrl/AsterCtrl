@@ -7,8 +7,8 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from xrobot_tools import __version__
-from xrobot_tools.validation import ValidationError, validate_document
+from aster_tools import __version__
+from aster_tools.validation import ValidationError, validate_document
 
 
 def validate_config(args: argparse.Namespace) -> int:
@@ -18,7 +18,7 @@ def validate_config(args: argparse.Namespace) -> int:
 
 
 def generate_schema(args: argparse.Namespace) -> int:
-    from xrobot_tools.interfaces import generate_interfaces
+    from aster_tools.interfaces import generate_interfaces
 
     result = generate_interfaces(args.schema_root, args.output)
     print(
@@ -29,7 +29,7 @@ def generate_schema(args: argparse.Namespace) -> int:
 
 
 def compile_robot_deployment(args: argparse.Namespace) -> int:
-    from xrobot_tools.deployment import compile_deployment
+    from aster_tools.deployment import compile_deployment
 
     result = compile_deployment(
         args.workspace, args.deployment, args.output, args.lock
@@ -42,7 +42,7 @@ def compile_robot_deployment(args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="xrctl")
+    parser = argparse.ArgumentParser(prog="asterctl")
     parser.add_argument("--version", action="version", version=__version__)
     commands = parser.add_subparsers(dest="command")
 

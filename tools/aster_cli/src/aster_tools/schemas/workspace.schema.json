@@ -4,7 +4,7 @@
   "additionalProperties": false,
   "required": ["api_version", "kind", "metadata", "packages"],
   "properties": {
-    "api_version": {"const": "xrobot.io/v1alpha1"},
+    "api_version": {"const": "aster.dev/v1alpha1"},
     "kind": {"const": "Workspace"},
     "metadata": {"$ref": "#/$defs/metadata"},
     "packages": {

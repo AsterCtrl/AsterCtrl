@@ -5,11 +5,11 @@ from pathlib import Path
 
 import pytest
 
-from xrobot_tools.interfaces import InterfaceError, generate_interfaces
+from aster_tools.interfaces import InterfaceError, generate_interfaces
 
 
 MESSAGE = """\
-api_version: xrobot.io/schema/v1alpha1
+api_version: aster.dev/schema/v1alpha1
 kind: Message
 metadata:
   name: Command
@@ -28,7 +28,7 @@ spec:
 """
 
 SERVICE = """\
-api_version: xrobot.io/schema/v1alpha1
+api_version: aster.dev/schema/v1alpha1
 kind: Service
 metadata:
   name: SetEnabled
@@ -43,7 +43,7 @@ spec:
 """
 
 ACTION = """\
-api_version: xrobot.io/schema/v1alpha1
+api_version: aster.dev/schema/v1alpha1
 kind: Action
 metadata:
   name: Move
@@ -141,21 +141,21 @@ def test_generated_header_compiles_and_round_trips(tmp_path: Path) -> None:
 #include "robot_msgs/robot_msgs.hpp"
 
 int main() {
-  static_assert(xrobot::runtime::MessageType<test::msg::Command>);
-  static_assert(xrobot::runtime::ServiceType<test::srv::SetEnabled>);
-  static_assert(xrobot::runtime::ActionType<test::action::Move>);
+  static_assert(aster::runtime::MessageType<test::msg::Command>);
+  static_assert(aster::runtime::ServiceType<test::srv::SetEnabled>);
+  static_assert(aster::runtime::ActionType<test::action::Move>);
   test::msg::Command input;
   input.mode = test::msg::Mode::kRun;
   input.target = -1.25F;
   input.samples = {123, -456};
   std::array<std::byte, 9> bytes{};
   std::size_t written{};
-  assert(xrobot::runtime::TypeSupport<test::msg::Command>::Encode(
-             input, bytes, written) == xrobot::runtime::Status::kOk);
+  assert(aster::runtime::TypeSupport<test::msg::Command>::Encode(
+             input, bytes, written) == aster::runtime::Status::kOk);
   assert(written == bytes.size());
   test::msg::Command output;
-  assert(xrobot::runtime::TypeSupport<test::msg::Command>::Decode(
-             bytes, output) == xrobot::runtime::Status::kOk);
+  assert(aster::runtime::TypeSupport<test::msg::Command>::Decode(
+             bytes, output) == aster::runtime::Status::kOk);
   assert(output.mode == test::msg::Mode::kRun);
   assert(output.target == -1.25F);
   assert(output.samples[0] == 123);
@@ -164,7 +164,7 @@ int main() {
 """,
         encoding="utf-8",
     )
-    runtime_include = Path(__file__).parents[2] / "xrobot-runtime" / "include"
+    runtime_include = Path(__file__).parents[2] / "aster-runtime" / "include"
     executable = tmp_path / "generated_test"
     subprocess.run(
         [

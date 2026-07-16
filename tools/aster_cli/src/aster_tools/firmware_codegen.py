@@ -8,8 +8,8 @@ import re
 from pathlib import Path
 from typing import Any
 
-from xrobot_tools.deployment import DeploymentError, DeploymentPlan, Route
-from xrobot_tools.hardware_codegen import hardware_build_requirements
+from aster_tools.deployment import DeploymentError, DeploymentPlan, Route
+from aster_tools.hardware_codegen import hardware_build_requirements
 
 
 _CPP_QUALIFIED_NAME = re.compile(
@@ -48,7 +48,7 @@ def _node_links(plan: DeploymentPlan, node_name: str) -> list[str]:
     return sorted(
         name
         for name, link in plan.deployment["links"].items()
-        if link["transport"] == "xrobot-can"
+        if link["transport"] == "aster-can"
         and any(endpoint["node"] == node_name for endpoint in link["endpoints"])
     )
 
@@ -62,7 +62,7 @@ def _node_instances(plan: DeploymentPlan, node_name: str) -> list[Any]:
 
 def firmware_blockers(plan: DeploymentPlan, node_name: str) -> list[str]:
     node = plan.deployment["nodes"][node_name]
-    if node["runtime"] != "xrobot-mcu":
+    if node["runtime"] != "aster-mcu":
         return [f"runtime {node['runtime']!r} is not supported by the MCU generator"]
     board = plan.boards[node_name]
     if board is None:
@@ -98,11 +98,11 @@ def firmware_blockers(plan: DeploymentPlan, node_name: str) -> list[str]:
         blockers.append(f"board toolchain {toolchain!r} does not exist")
     if not (board.package_path / "CMakeLists.txt").is_file():
         blockers.append("board package has no CMakeLists.txt")
-    backend = plan.package_paths.get("xrobot-libxr-backend")
+    backend = plan.package_paths.get("aster-libxr-backend")
     if backend is None:
-        blockers.append("workspace package xrobot-libxr-backend is not declared")
+        blockers.append("workspace package aster-libxr-backend is not declared")
     elif not (backend / "CMakeLists.txt").is_file():
-        blockers.append("xrobot-libxr-backend has no CMakeLists.txt")
+        blockers.append("aster-libxr-backend has no CMakeLists.txt")
 
     requirements = [
         (
@@ -186,12 +186,12 @@ def render_firmware_entry(
         endpoint_resources[link_name] = endpoint["resource"]
         filters = _filter_ranges(plan, node_name, link_name, route_ids)
         filter_entries = ",\n".join(
-            "    xrobot::backend::libxr::CanFilterRange{"
+            "    aster::backend::libxr::CanFilterRange{"
             f"0x{first:03x}U, 0x{last:03x}U}}"
             for first, last in filters
         )
         filter_declarations.append(
-            f"inline constexpr std::array<xrobot::backend::libxr::CanFilterRange, {len(filters)}> "
+            f"inline constexpr std::array<aster::backend::libxr::CanFilterRange, {len(filters)}> "
             f"kCanFilters{index}{{{{\n{filter_entries}\n}}}};"
         )
         queue_depth = int(link["options"].get("receive_queue_depth", 32))
@@ -204,11 +204,11 @@ def render_firmware_entry(
             ]
         )
         adapter_lines.append(
-            f"  static xrobot::backend::libxr::CanAdapter<{queue_depth}U> adapter_{index}{{"
+            f"  static aster::backend::libxr::CanAdapter<{queue_depth}U> adapter_{index}{{"
             f"*endpoint_{index}, kCanFilters{index}}};"
         )
         writer_entries.append(
-            "      xrobot::generated::CanLinkWriter{"
+            "      aster::generated::CanLinkWriter{"
             f"\"{link_name}\", adapter_{index}.writer()}}"
         )
         bind_lines.extend(
@@ -228,11 +228,11 @@ def render_firmware_entry(
 
     if links:
         writers = (
-            f"  const std::array<xrobot::generated::CanLinkWriter, {len(links)}> writers{{{{\n"
+            f"  const std::array<aster::generated::CanLinkWriter, {len(links)}> writers{{{{\n"
             + ",\n".join(writer_entries)
             + "\n  }};\n"
             "  static NodeComposition composition(\n"
-            "      clock, std::span<const xrobot::generated::CanLinkWriter>{writers});"
+            "      clock, std::span<const aster::generated::CanLinkWriter>{writers});"
         )
     else:
         writers = "  static NodeComposition composition(clock);"
@@ -253,19 +253,19 @@ def render_firmware_entry(
 #include \"node_hardware.hpp\"
 #include \"FreeRTOS.h\"
 #include \"task.h\"
-#include \"xrobot/backend/libxr/can_adapter.hpp\"
-#include \"xrobot/backend/libxr/steady_clock.hpp\"
-#include \"xrobot/runtime/execution_context.hpp\"
-#include \"xrobot/runtime/status.hpp\"
+#include \"aster/backend/libxr/can_adapter.hpp\"
+#include \"aster/backend/libxr/steady_clock.hpp\"
+#include \"aster/runtime/execution_context.hpp\"
+#include \"aster/runtime/status.hpp\"
 
 extern \"C\" {{
-volatile std::uint32_t xrobot_firmware_fault_code = 0U;
+volatile std::uint32_t aster_firmware_fault_code = 0U;
 }}
 
-namespace xrobot::generated::{node_name} {{
+namespace aster::generated::{node_name} {{
 namespace {{
 
-using xrobot::runtime::Status;
+using aster::runtime::Status;
 
 enum class FirmwareStage : std::uint8_t {{
   kBoardInitialize = 1,
@@ -288,7 +288,7 @@ enum class FirmwareStage : std::uint8_t {{
 {chr(10).join(filter_declarations)}
 
 [[noreturn]] void Halt(FirmwareStage stage, Status status) noexcept {{
-  xrobot_firmware_fault_code =
+  aster_firmware_fault_code =
       (static_cast<std::uint32_t>(stage) << 8U) |
       static_cast<std::uint32_t>(status);
   for (;;) {{
@@ -309,16 +309,16 @@ void CheckOperational(Status status, FirmwareStage stage) noexcept {{
 }}
 
 }}  // namespace
-}}  // namespace xrobot::generated::{node_name}
+}}  // namespace aster::generated::{node_name}
 
 extern \"C\" void {implementation['entry']}(void) {{
-  using namespace xrobot::generated::{node_name};
-  using xrobot::runtime::ExecutionContext;
-  using xrobot::runtime::ExecutionKind;
-  using xrobot::runtime::Status;
+  using namespace aster::generated::{node_name};
+  using aster::runtime::ExecutionContext;
+  using aster::runtime::ExecutionKind;
+  using aster::runtime::Status;
 
   {implementation['initialize']}();
-  static xrobot::backend::libxr::SteadyClock clock;
+  static aster::backend::libxr::SteadyClock clock;
   static {implementation['class']} board(clock);
   static NodeHardware hardware;
   const ExecutionContext execution(\"firmware_main\", ExecutionKind::kThread, 10U);
@@ -371,8 +371,8 @@ def _relative_path(path: Path, base: Path) -> str:
 def _cmake_package_path(plan: DeploymentPlan, package: str) -> str:
     relative = _relative_path(plan.package_paths[package], plan.workspace_root)
     if relative == ".":
-        return "${XROBOT_WORKSPACE_ROOT}"
-    return f"${{XROBOT_WORKSPACE_ROOT}}/{relative}"
+        return "${ASTER_WORKSPACE_ROOT}"
+    return f"${{ASTER_WORKSPACE_ROOT}}/{relative}"
 
 
 def _test_option(package: str) -> str:
@@ -404,7 +404,7 @@ def render_node_cmake(plan: DeploymentPlan, node_name: str, node_dir: Path) -> s
     implementation = board.document["implementation"]
     workspace_relative = _relative_path(plan.workspace_root, node_dir)
     board_relative = _relative_path(board.package_path, plan.workspace_root)
-    backend_path = _cmake_package_path(plan, "xrobot-libxr-backend")
+    backend_path = _cmake_package_path(plan, "aster-libxr-backend")
     requirements = _build_requirements(plan, node_name)
 
     package_lines: list[str] = []
@@ -435,22 +435,22 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-get_filename_component(_xrobot_default_workspace_root
+get_filename_component(_aster_default_workspace_root
   \"${{CMAKE_CURRENT_LIST_DIR}}/{workspace_relative}\" ABSOLUTE)
-set(XROBOT_WORKSPACE_ROOT \"${{_xrobot_default_workspace_root}}\" CACHE PATH
+set(ASTER_WORKSPACE_ROOT \"${{_aster_default_workspace_root}}\" CACHE PATH
     \"Workspace containing workspace.yaml\")
 set(LIBXR_SYSTEM \"{implementation['system']}\" CACHE STRING \"\" FORCE)
 set(LIBXR_DRIVER \"{implementation['libxr_driver']}\" CACHE STRING \"\" FORCE)
 set(LIBXR_NO_EIGEN ON CACHE BOOL \"\" FORCE)
 set(LIBXR_STATIC_BUILD ON CACHE BOOL \"\" FORCE)
-set(XROBOT_RUNTIME_BUILD_TESTS OFF CACHE BOOL \"\" FORCE)
-set(XROBOT_TRANSPORTS_BUILD_TESTS OFF CACHE BOOL \"\" FORCE)
-set(XROBOT_LIBXR_BACKEND_BUILD_TESTS OFF CACHE BOOL \"\" FORCE)
+set(ASTER_RUNTIME_BUILD_TESTS OFF CACHE BOOL \"\" FORCE)
+set(ASTER_TRANSPORTS_BUILD_TESTS OFF CACHE BOOL \"\" FORCE)
+set(ASTER_LIBXR_BACKEND_BUILD_TESTS OFF CACHE BOOL \"\" FORCE)
 
-add_subdirectory(\"${{XROBOT_WORKSPACE_ROOT}}/{board_relative}\"
+add_subdirectory(\"${{ASTER_WORKSPACE_ROOT}}/{board_relative}\"
                  \"${{CMAKE_CURRENT_BINARY_DIR}}/board\")
 add_subdirectory(\"{backend_path}\"
-                 \"${{CMAKE_CURRENT_BINARY_DIR}}/xrobot-libxr-backend\")
+                 \"${{CMAKE_CURRENT_BINARY_DIR}}/aster-libxr-backend\")
 target_link_libraries(xr PUBLIC {implementation['platform_target']})
 {implementation['cmake_enable']}()
 

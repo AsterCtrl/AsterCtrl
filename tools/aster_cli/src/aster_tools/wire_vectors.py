@@ -6,8 +6,8 @@ import struct
 
 import yaml
 
-from xrobot_tools.cpp_codegen import record_wire_sizes, topological_records
-from xrobot_tools.interface_model import (
+from aster_tools.cpp_codegen import record_wire_sizes, topological_records
+from aster_tools.interface_model import (
     FieldDefinition,
     InterfaceError,
     InterfaceModel,
@@ -97,7 +97,7 @@ def render_test_vectors(model: InterfaceModel) -> str:
             }
         )
     document = {
-        "api_version": "xrobot.io/schema/v1alpha1",
+        "api_version": "aster.dev/schema/v1alpha1",
         "kind": "TypeSupportTestVectors",
         "deployment_schema_hash": model.deployment_schema_hash,
         "vectors": vectors,

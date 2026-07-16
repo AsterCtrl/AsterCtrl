@@ -6,12 +6,12 @@ from pathlib import Path
 import pytest
 import yaml
 
-from xrobot_tools.deployment import (
+from aster_tools.deployment import (
     DeploymentError,
     _can_route_cost,
     compile_deployment,
 )
-from xrobot_tools.interfaces import generate_interfaces
+from aster_tools.interfaces import generate_interfaces
 
 
 def write(root: Path, relative: str, content: str) -> None:
@@ -25,11 +25,11 @@ def create_workspace(tmp_path: Path, max_rate_hz: int = 100) -> tuple[Path, Path
         tmp_path,
         "robot-msgs/package.yaml",
         """\
-api_version: xrobot.io/v1alpha1
+api_version: aster.dev/v1alpha1
 kind: Package
 metadata: {name: robot-msgs, version: 0.1.0, license: Apache-2.0}
 spec:
-  build: {system: xrobot-schema}
+  build: {system: aster-schema}
   exports: {schemas: [schemas/msg]}
   dependencies: []
 """,
@@ -38,7 +38,7 @@ spec:
         tmp_path,
         "robot-msgs/schemas/msg/Command.msg.yaml",
         """\
-api_version: xrobot.io/schema/v1alpha1
+api_version: aster.dev/schema/v1alpha1
 kind: Message
 metadata: {name: Command, namespace: test.msg}
 spec:
@@ -57,7 +57,7 @@ spec:
 #include <string_view>
 
 #include "robot_msgs/robot_msgs.hpp"
-#include "xrobot/runtime/module.hpp"
+#include "aster/runtime/module.hpp"
 
 namespace test {
 
@@ -70,15 +70,15 @@ class Device {
   std::uint16_t bias{};
 };
 
-class Source final : public xrobot::runtime::Module {
+class Source final : public aster::runtime::Module {
  public:
   explicit Source(std::string_view name) noexcept : name_(name) {}
 
   std::string_view Name() const noexcept override { return name_; }
 
-  xrobot::runtime::Status Initialize(
-      xrobot::runtime::ModuleContext& context) noexcept override {
-    using xrobot::runtime::IsOk;
+  aster::runtime::Status Initialize(
+      aster::runtime::ModuleContext& context) noexcept override {
+    using aster::runtime::IsOk;
     if (auto status = context.ResolveTopicPublisher("command", publisher_);
         !IsOk(status)) return status;
     if (auto status = context.ResolveParameter("input_source", input_source_);
@@ -88,15 +88,15 @@ class Source final : public xrobot::runtime::Module {
     if (auto status = context.BindPeriodicTask("control", {Run, this});
         !IsOk(status)) return status;
     context_ = &context;
-    return xrobot::runtime::Status::kOk;
+    return aster::runtime::Status::kOk;
   }
 
-  xrobot::runtime::Status Start() noexcept override {
+  aster::runtime::Status Start() noexcept override {
     if (context_ == nullptr || running_) {
-      return xrobot::runtime::Status::kInvalidState;
+      return aster::runtime::Status::kInvalidState;
     }
     running_ = true;
-    return xrobot::runtime::Status::kOk;
+    return aster::runtime::Status::kOk;
   }
 
   void Shutdown() noexcept override { running_ = false; }
@@ -106,7 +106,7 @@ class Source final : public xrobot::runtime::Module {
 
  private:
   static void Run(void* state,
-                  const xrobot::runtime::ExecutionContext& execution) noexcept {
+                  const aster::runtime::ExecutionContext& execution) noexcept {
     auto& self = *static_cast<Source*>(state);
     if (!self.running_) return;
     ++cycles;
@@ -117,10 +117,10 @@ class Source final : public xrobot::runtime::Module {
   }
 
   std::string_view name_;
-  xrobot::runtime::ModuleContext* context_{};
-  xrobot::runtime::Parameter<std::uint32_t>* input_source_{};
+  aster::runtime::ModuleContext* context_{};
+  aster::runtime::Parameter<std::uint32_t>* input_source_{};
   Device* device_{};
-  xrobot::runtime::TopicPublisher<test::msg::Command> publisher_;
+  aster::runtime::TopicPublisher<test::msg::Command> publisher_;
   bool running_{};
 };
 
@@ -137,20 +137,20 @@ class Source final : public xrobot::runtime::Module {
 #include <string_view>
 
 #include "robot_msgs/robot_msgs.hpp"
-#include "xrobot/runtime/module.hpp"
+#include "aster/runtime/module.hpp"
 
 namespace test {
 
-class Sink final : public xrobot::runtime::Module {
+class Sink final : public aster::runtime::Module {
  public:
   explicit Sink(std::string_view name) noexcept : name_(name) {}
 
   std::string_view Name() const noexcept override { return name_; }
 
-  xrobot::runtime::Status Initialize(
-      xrobot::runtime::ModuleContext& context) noexcept override {
-    using xrobot::runtime::IsOk;
-    xrobot::runtime::TopicSubscriber<test::msg::Command> subscriber;
+  aster::runtime::Status Initialize(
+      aster::runtime::ModuleContext& context) noexcept override {
+    using aster::runtime::IsOk;
+    aster::runtime::TopicSubscriber<test::msg::Command> subscriber;
     if (auto status = context.ResolveTopicSubscriber("command", subscriber);
         !IsOk(status)) return status;
     if (auto status = subscriber.Bind(Receive, this); !IsOk(status)) {
@@ -159,9 +159,9 @@ class Sink final : public xrobot::runtime::Module {
     return context.BindPeriodicTask("control", {Run, this});
   }
 
-  xrobot::runtime::Status Start() noexcept override {
+  aster::runtime::Status Start() noexcept override {
     running_ = true;
-    return xrobot::runtime::Status::kOk;
+    return aster::runtime::Status::kOk;
   }
 
   void Shutdown() noexcept override { running_ = false; }
@@ -172,14 +172,14 @@ class Sink final : public xrobot::runtime::Module {
  private:
   static void Receive(
       void*, const test::msg::Command& command,
-      const xrobot::runtime::MessageInfo&,
-      const xrobot::runtime::ExecutionContext&) noexcept {
+      const aster::runtime::MessageInfo&,
+      const aster::runtime::ExecutionContext&) noexcept {
     last = command;
     ++received;
   }
 
   static void Run(void*,
-                  const xrobot::runtime::ExecutionContext&) noexcept {}
+                  const aster::runtime::ExecutionContext&) noexcept {}
 
   std::string_view name_;
   bool running_{};
@@ -209,7 +209,7 @@ class Sink final : public xrobot::runtime::Module {
             tmp_path,
             f"{package}/package.yaml",
             f"""\
-api_version: xrobot.io/v1alpha1
+api_version: aster.dev/v1alpha1
 kind: Package
 metadata: {{name: {package}, version: 0.1.0, license: Apache-2.0}}
 spec:
@@ -224,7 +224,7 @@ spec:
             tmp_path,
             f"{package}/module.yaml",
             f"""\
-api_version: xrobot.io/v1alpha1
+api_version: aster.dev/v1alpha1
 kind: Module
 metadata: {{name: {package}, version: 0.1.0}}
 spec:
@@ -243,7 +243,7 @@ spec:
         tmp_path,
         "workspace.yaml",
         """\
-api_version: xrobot.io/v1alpha1
+api_version: aster.dev/v1alpha1
 kind: Workspace
 metadata: {name: test-workspace}
 packages:
@@ -256,7 +256,7 @@ packages:
         tmp_path,
         "package.lock.yaml",
         """\
-api_version: xrobot.io/v1alpha1
+api_version: aster.dev/v1alpha1
 kind: PackageLock
 metadata: {workspace: test-workspace}
 packages:
@@ -269,7 +269,7 @@ packages:
         tmp_path,
         "robot.yaml",
         """\
-api_version: xrobot.io/v1alpha1
+api_version: aster.dev/v1alpha1
 kind: Robot
 metadata: {name: test-robot}
 instances:
@@ -290,7 +290,7 @@ instances:
             tmp_path,
             f"hardware/{node}.yaml",
             f"""\
-api_version: xrobot.io/v1alpha1
+api_version: aster.dev/v1alpha1
 kind: HardwareProfile
 metadata: {{name: {node}, board: test/{node}}}
 spec:
@@ -304,23 +304,23 @@ spec:
         tmp_path,
         "deployment.yaml",
         f"""\
-api_version: xrobot.io/v1alpha1
+api_version: aster.dev/v1alpha1
 kind: Deployment
 metadata: {{name: dual-node}}
 application: robot.yaml
 time_authority: node_a
 nodes:
   node_a:
-    runtime: xrobot-mcu
+    runtime: aster-mcu
     target: {{bsp: test/a, hardware: hardware/node_a.yaml, profile: debug}}
     instances: [command_source]
   node_b:
-    runtime: xrobot-mcu
+    runtime: aster-mcu
     target: {{bsp: test/b, hardware: hardware/node_b.yaml, profile: debug}}
     instances: [command_sink]
 links:
   robot_can:
-    transport: xrobot-can
+    transport: aster-can
     endpoints:
       - {{node: node_a, resource: robot_bus}}
       - {{node: node_b, resource: robot_bus}}
@@ -436,14 +436,14 @@ def test_compiles_a_deterministic_cross_node_deployment(tmp_path: Path) -> None:
 
 #include "node_a/node_composition.hpp"
 #include "node_b/node_composition.hpp"
-#include "xrobot/runtime/cooperative_executor.hpp"
-#include "xrobot/runtime/hardware_registry.hpp"
-#include "xrobot/runtime/port_registry.hpp"
-#include "xrobot/runtime/topic.hpp"
+#include "aster/runtime/cooperative_executor.hpp"
+#include "aster/runtime/hardware_registry.hpp"
+#include "aster/runtime/port_registry.hpp"
+#include "aster/runtime/topic.hpp"
 
 namespace {
 
-class Clock final : public xrobot::runtime::SteadyClock {
+class Clock final : public aster::runtime::SteadyClock {
  public:
   std::uint64_t NowNs() const noexcept override { return now_ns; }
   std::uint64_t now_ns{1'000'000};
@@ -452,7 +452,7 @@ class Clock final : public xrobot::runtime::SteadyClock {
 }  // namespace
 
 int main() {
-  using namespace xrobot::runtime;
+  using namespace aster::runtime;
   Clock clock;
   CooperativeExecutor<2> delivery("delivery", 3);
   StaticTopic<test::msg::Command, 1> topic("/control/command");
@@ -477,8 +477,8 @@ int main() {
   assert(source_hardware.Add("source_device", device) == Status::kOk);
   assert(source_hardware.Seal() == Status::kOk);
 
-  xrobot::generated::node_a::NodeComposition source(clock);
-  xrobot::generated::node_b::NodeComposition sink(clock);
+  aster::generated::node_a::NodeComposition source(clock);
+  aster::generated::node_b::NodeComposition sink(clock);
   assert(source.Configure(source_ports, &source_hardware) == Status::kOk);
   assert(sink.Configure(sink_ports) == Status::kOk);
   assert(source.Initialize() == Status::kOk);
@@ -505,8 +505,8 @@ int main() {
 """,
     )
     repository_root = Path(__file__).parents[2]
-    runtime = repository_root / "xrobot-runtime"
-    transports = repository_root / "xrobot-transports"
+    runtime = repository_root / "aster-runtime"
+    transports = repository_root / "aster-transports"
     composition_executable = tmp_path / "composition_test"
     subprocess.run(
         [
@@ -577,7 +577,7 @@ def test_generates_a_typed_direct_uart_hardware_adapter(tmp_path: Path) -> None:
         source_manifest.read_text(encoding="utf-8").replace(
             "  hardware: [device]",
             "  hardware:\n"
-            "    - {name: device, type: xrobot.hardware.ByteReader/v1}",
+            "    - {name: device, type: aster.hardware.ByteReader/v1}",
         ),
         encoding="utf-8",
     )
@@ -606,14 +606,14 @@ def test_generates_board_driven_firmware_projects(tmp_path: Path) -> None:
     write(tmp_path, "sink/CMakeLists.txt", "add_library(sink INTERFACE)\n")
     write(
         tmp_path,
-        "xrobot-libxr-backend/CMakeLists.txt",
-        "add_library(xrobot_libxr_backend INTERFACE)\n",
+        "aster-libxr-backend/CMakeLists.txt",
+        "add_library(aster_libxr_backend INTERFACE)\n",
     )
     write(
         tmp_path,
         "test-bsp/package.yaml",
         """\
-api_version: xrobot.io/v1alpha1
+api_version: aster.dev/v1alpha1
 kind: Package
 metadata: {name: test-bsp, version: 0.1.0, license: Apache-2.0}
 spec:
@@ -645,14 +645,14 @@ spec:
     workspace.write_text(
         workspace.read_text(encoding="utf-8")
         + "  - {name: test-bsp, source: {type: path, path: test-bsp}}\n"
-        + "  - {name: xrobot-libxr-backend, source: {type: path, path: xrobot-libxr-backend}}\n",
+        + "  - {name: aster-libxr-backend, source: {type: path, path: aster-libxr-backend}}\n",
         encoding="utf-8",
     )
     lock = tmp_path / "package.lock.yaml"
     lock.write_text(
         lock.read_text(encoding="utf-8")
         + "  test-bsp: {source: test-bsp, commit: dddddddddddddddddddddddddddddddddddddddd}\n"
-        + "  xrobot-libxr-backend: {source: xrobot-libxr-backend, commit: eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee}\n",
+        + "  aster-libxr-backend: {source: aster-libxr-backend, commit: eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee}\n",
         encoding="utf-8",
     )
     deployment.write_text(
@@ -686,7 +686,7 @@ spec:
     assert "composition.Start()" in entry
     cmake = (output / "nodes/node_a/CMakeLists.txt").read_text()
     assert "target_link_libraries(xr PUBLIC test::platform)" in cmake
-    assert "xrobot-libxr-backend" in cmake
+    assert "aster-libxr-backend" in cmake
     assert "test_firmware(node_a_firmware)" in cmake
     presets = yaml.safe_load((output / "nodes/node_a/CMakePresets.json").read_text())
     assert presets["configurePresets"][0]["cacheVariables"][
@@ -721,7 +721,7 @@ def test_reports_a_typed_hardware_contract_mismatch(tmp_path: Path) -> None:
     assert report["nodes"]["node_a"]["hardware_blockers"] == [
         "instance command_source: hardware device requires "
         "srm.hardware.MotorGroup/v1, but source_device provides "
-        "xrobot.hardware.ByteReader/v1"
+        "aster.hardware.ByteReader/v1"
     ]
     assert not (output / "nodes/node_a/node_hardware.hpp").exists()
 
@@ -772,21 +772,21 @@ def test_generated_compositions_route_a_topic_over_can(tmp_path: Path) -> None:
 
 #include "node_a/node_composition.hpp"
 #include "node_b/node_composition.hpp"
-#include "xrobot/runtime/hardware_registry.hpp"
-#include "xrobot/transport/can/link.hpp"
+#include "aster/runtime/hardware_registry.hpp"
+#include "aster/transport/can/link.hpp"
 
 namespace {
 
-class Clock final : public xrobot::runtime::SteadyClock {
+class Clock final : public aster::runtime::SteadyClock {
  public:
   std::uint64_t NowNs() const noexcept override { return now_ns; }
   std::uint64_t now_ns{1'000'000};
 };
 
-using xrobot::runtime::ExecutionContext;
-using xrobot::runtime::Status;
-using xrobot::transport::can::CanFrame;
-using xrobot::transport::can::CanFrameReceiver;
+using aster::runtime::ExecutionContext;
+using aster::runtime::Status;
+using aster::transport::can::CanFrame;
+using aster::transport::can::CanFrameReceiver;
 
 struct Wire {
   CanFrameReceiver receiver;
@@ -816,8 +816,8 @@ Status SendFrame(void* state, const CanFrame& frame,
 }  // namespace
 
 int main() {
-  using namespace xrobot::runtime;
-  using xrobot::generated::CanLinkWriter;
+  using namespace aster::runtime;
+  using aster::generated::CanLinkWriter;
   Clock clock;
   const ExecutionContext receive_context(
       "can-rx", ExecutionKind::kThread, 6);
@@ -830,8 +830,8 @@ int main() {
   std::array<CanLinkWriter, 1> source_links{{
       {"robot_can", {SendFrame, &source_to_sink}},
   }};
-  xrobot::generated::node_b::NodeComposition sink(clock, sink_links);
-  xrobot::generated::node_a::NodeComposition source(clock, source_links);
+  aster::generated::node_b::NodeComposition sink(clock, sink_links);
+  aster::generated::node_a::NodeComposition source(clock, source_links);
   source_to_sink.receiver = sink.CanReceiver("robot_can");
   sink_to_source.receiver = source.CanReceiver("robot_can");
 
@@ -841,7 +841,7 @@ int main() {
   assert(source_hardware.Add("source_device", device) == Status::kOk);
   assert(source_hardware.Seal() == Status::kOk);
 
-  xrobot::generated::node_a::NodeComposition missing_link(clock);
+  aster::generated::node_a::NodeComposition missing_link(clock);
   assert(missing_link.Configure(&source_hardware) == Status::kInvalidArgument);
   assert(source.Configure(&source_hardware) == Status::kOk);
   assert(sink.Configure() == Status::kOk);
@@ -895,8 +895,8 @@ int main() {
     )
 
     repository_root = Path(__file__).parents[2]
-    runtime = repository_root / "xrobot-runtime"
-    transports = repository_root / "xrobot-transports"
+    runtime = repository_root / "aster-runtime"
+    transports = repository_root / "aster-transports"
     executable = tmp_path / "generated_transport_test"
     subprocess.run(
         [
@@ -937,7 +937,7 @@ def test_generated_composition_runs_local_service_and_action(tmp_path: Path) -> 
         tmp_path,
         "robot-msgs/schemas/srv/SetEnabled.srv.yaml",
         """\
-api_version: xrobot.io/schema/v1alpha1
+api_version: aster.dev/schema/v1alpha1
 kind: Service
 metadata: {name: SetEnabled, namespace: test.srv}
 spec:
@@ -951,7 +951,7 @@ spec:
         tmp_path,
         "robot-msgs/schemas/action/Move.action.yaml",
         """\
-api_version: xrobot.io/schema/v1alpha1
+api_version: aster.dev/schema/v1alpha1
 kind: Action
 metadata: {name: Move, namespace: test.action}
 spec:
@@ -967,7 +967,7 @@ spec:
         tmp_path,
         "rpc/package.yaml",
         """\
-api_version: xrobot.io/v1alpha1
+api_version: aster.dev/v1alpha1
 kind: Package
 metadata: {name: rpc, version: 0.1.0, license: Apache-2.0}
 spec:
@@ -991,54 +991,54 @@ spec:
 #include <string_view>
 
 #include "robot_msgs/robot_msgs.hpp"
-#include "xrobot/runtime/module.hpp"
+#include "aster/runtime/module.hpp"
 
 namespace test {
 
-class ServiceServerModule final : public xrobot::runtime::Module {
+class ServiceServerModule final : public aster::runtime::Module {
  public:
   explicit ServiceServerModule(std::string_view name) noexcept : name_(name) {}
   std::string_view Name() const noexcept override { return name_; }
 
-  xrobot::runtime::Status Initialize(
-      xrobot::runtime::ModuleContext& context) noexcept override {
+  aster::runtime::Status Initialize(
+      aster::runtime::ModuleContext& context) noexcept override {
     if (const auto status = context.ResolveServiceServer("service", server_);
-        status != xrobot::runtime::Status::kOk) return status;
+        status != aster::runtime::Status::kOk) return status;
     return server_.BindHandler(Handle, this);
   }
-  xrobot::runtime::Status Start() noexcept override {
-    return xrobot::runtime::Status::kOk;
+  aster::runtime::Status Start() noexcept override {
+    return aster::runtime::Status::kOk;
   }
   void Shutdown() noexcept override {}
 
   inline static std::uint32_t calls{};
 
  private:
-  static xrobot::runtime::Status Handle(
+  static aster::runtime::Status Handle(
       void*, const test::srv::SetEnabledRequest& request,
       test::srv::SetEnabledResponse& response,
-      const xrobot::runtime::ServiceCallInfo&,
-      const xrobot::runtime::ExecutionContext&) noexcept {
+      const aster::runtime::ServiceCallInfo&,
+      const aster::runtime::ExecutionContext&) noexcept {
     ++calls;
     response.accepted = request.enabled;
-    return xrobot::runtime::Status::kOk;
+    return aster::runtime::Status::kOk;
   }
 
   std::string_view name_;
-  xrobot::runtime::ServiceServer<test::srv::SetEnabled> server_;
+  aster::runtime::ServiceServer<test::srv::SetEnabled> server_;
 };
 
-class ServiceClientModule final : public xrobot::runtime::Module {
+class ServiceClientModule final : public aster::runtime::Module {
  public:
   explicit ServiceClientModule(std::string_view name) noexcept : name_(name) {}
   std::string_view Name() const noexcept override { return name_; }
 
-  xrobot::runtime::Status Initialize(
-      xrobot::runtime::ModuleContext& context) noexcept override {
+  aster::runtime::Status Initialize(
+      aster::runtime::ModuleContext& context) noexcept override {
     context_ = &context;
     return context.ResolveServiceClient("service", client_);
   }
-  xrobot::runtime::Status Start() noexcept override {
+  aster::runtime::Status Start() noexcept override {
     return client_.CallAsync({true}, Complete, this,
                              context_->executor()->context());
   }
@@ -1049,69 +1049,69 @@ class ServiceClientModule final : public xrobot::runtime::Module {
 
  private:
   static void Complete(
-      void*, xrobot::runtime::Status status,
+      void*, aster::runtime::Status status,
       const test::srv::SetEnabledResponse& response,
-      const xrobot::runtime::ServiceCallInfo&,
-      const xrobot::runtime::ExecutionContext&) noexcept {
-    if (status == xrobot::runtime::Status::kOk) {
+      const aster::runtime::ServiceCallInfo&,
+      const aster::runtime::ExecutionContext&) noexcept {
+    if (status == aster::runtime::Status::kOk) {
       ++completions;
       accepted = response.accepted;
     }
   }
 
   std::string_view name_;
-  xrobot::runtime::ModuleContext* context_{};
-  xrobot::runtime::ServiceClient<test::srv::SetEnabled> client_;
+  aster::runtime::ModuleContext* context_{};
+  aster::runtime::ServiceClient<test::srv::SetEnabled> client_;
 };
 
-class ActionServerModule final : public xrobot::runtime::Module {
+class ActionServerModule final : public aster::runtime::Module {
  public:
   explicit ActionServerModule(std::string_view name) noexcept : name_(name) {}
   std::string_view Name() const noexcept override { return name_; }
 
-  xrobot::runtime::Status Initialize(
-      xrobot::runtime::ModuleContext& context) noexcept override {
+  aster::runtime::Status Initialize(
+      aster::runtime::ModuleContext& context) noexcept override {
     if (const auto status = context.ResolveActionServer("action", server_);
-        status != xrobot::runtime::Status::kOk) return status;
+        status != aster::runtime::Status::kOk) return status;
     return server_.BindHandlers(Accept, Cancel, this);
   }
-  xrobot::runtime::Status Start() noexcept override {
-    return xrobot::runtime::Status::kOk;
+  aster::runtime::Status Start() noexcept override {
+    return aster::runtime::Status::kOk;
   }
   void Shutdown() noexcept override {}
 
   inline static std::uint32_t goals{};
 
  private:
-  static xrobot::runtime::Status Accept(
+  static aster::runtime::Status Accept(
       void*, const test::action::MoveGoal&,
-      xrobot::runtime::ActionGoalHandle,
-      const xrobot::runtime::ExecutionContext&) noexcept {
+      aster::runtime::ActionGoalHandle,
+      const aster::runtime::ExecutionContext&) noexcept {
     ++goals;
-    return xrobot::runtime::Status::kOk;
+    return aster::runtime::Status::kOk;
   }
-  static xrobot::runtime::Status Cancel(
-      void*, xrobot::runtime::ActionGoalHandle,
-      const xrobot::runtime::ExecutionContext&) noexcept {
-    return xrobot::runtime::Status::kOk;
+  static aster::runtime::Status Cancel(
+      void*, aster::runtime::ActionGoalHandle,
+      const aster::runtime::ExecutionContext&) noexcept {
+    return aster::runtime::Status::kOk;
   }
 
   std::string_view name_;
-  xrobot::runtime::ActionServer<test::action::Move> server_;
+  aster::runtime::ActionServer<test::action::Move> server_;
 };
 
-class ActionClientModule final : public xrobot::runtime::Module {
+class ActionClientModule final : public aster::runtime::Module {
  public:
   explicit ActionClientModule(std::string_view name) noexcept : name_(name) {}
   std::string_view Name() const noexcept override { return name_; }
 
-  xrobot::runtime::Status Initialize(
-      xrobot::runtime::ModuleContext& context) noexcept override {
+  aster::runtime::Status Initialize(
+      aster::runtime::ModuleContext& context) noexcept override {
     context_ = &context;
     return context.ResolveActionClient("action", client_);
   }
-  xrobot::runtime::Status Start() noexcept override {
-    xrobot::runtime::ActionCallbacks<test::action::Move> callbacks{
+  aster::runtime::Status Start() noexcept override {
+    aster::runtime::ActionCallbacks<test::action::Move> callbacks{
         GoalResponse, nullptr, Result, nullptr, this};
     return client_.SendGoal({1.5F}, callbacks, 0,
                             context_->executor()->context(), handle_);
@@ -1122,20 +1122,20 @@ class ActionClientModule final : public xrobot::runtime::Module {
 
  private:
   static void GoalResponse(
-      void*, xrobot::runtime::ActionGoalHandle,
-      xrobot::runtime::Status status,
-      const xrobot::runtime::ExecutionContext&) noexcept {
-    if (status == xrobot::runtime::Status::kOk) ++accepted;
+      void*, aster::runtime::ActionGoalHandle,
+      aster::runtime::Status status,
+      const aster::runtime::ExecutionContext&) noexcept {
+    if (status == aster::runtime::Status::kOk) ++accepted;
   }
   static void Result(
-      void*, xrobot::runtime::ActionGoalHandle,
-      xrobot::runtime::Status, const test::action::MoveResult&,
-      const xrobot::runtime::ExecutionContext&) noexcept {}
+      void*, aster::runtime::ActionGoalHandle,
+      aster::runtime::Status, const test::action::MoveResult&,
+      const aster::runtime::ExecutionContext&) noexcept {}
 
   std::string_view name_;
-  xrobot::runtime::ModuleContext* context_{};
-  xrobot::runtime::ActionClient<test::action::Move> client_;
-  xrobot::runtime::ActionGoalHandle handle_{};
+  aster::runtime::ModuleContext* context_{};
+  aster::runtime::ActionClient<test::action::Move> client_;
+  aster::runtime::ActionGoalHandle handle_{};
 };
 
 }  // namespace test
@@ -1152,7 +1152,7 @@ class ActionClientModule final : public xrobot::runtime::Module {
             tmp_path,
             f"rpc/{name}.module.yaml",
             f"""\
-api_version: xrobot.io/v1alpha1
+api_version: aster.dev/v1alpha1
 kind: Module
 metadata: {{name: {name}, version: 0.1.0}}
 spec:
@@ -1231,51 +1231,51 @@ spec:
 
 #include "node_a/node_composition.hpp"
 #include "node_b/node_composition.hpp"
-#include "xrobot/runtime/hardware_registry.hpp"
+#include "aster/runtime/hardware_registry.hpp"
 
 namespace {
 
-class Clock final : public xrobot::runtime::SteadyClock {
+class Clock final : public aster::runtime::SteadyClock {
  public:
   std::uint64_t NowNs() const noexcept override { return now_ns; }
   std::uint64_t now_ns{1'000'000};
 };
 
 struct Wire {
-  xrobot::transport::can::CanFrameReceiver receiver;
-  const xrobot::runtime::ExecutionContext* context{};
+  aster::transport::can::CanFrameReceiver receiver;
+  const aster::runtime::ExecutionContext* context{};
   std::uint64_t receive_time_ns{};
 };
 
-xrobot::runtime::Status SendFrame(
-    void* state, const xrobot::transport::can::CanFrame& frame,
-    const xrobot::runtime::ExecutionContext&) noexcept {
+aster::runtime::Status SendFrame(
+    void* state, const aster::transport::can::CanFrame& frame,
+    const aster::runtime::ExecutionContext&) noexcept {
   auto& wire = *static_cast<Wire*>(state);
   const auto status = wire.receiver.Accept(
       frame, wire.receive_time_ns, *wire.context);
-  return status == xrobot::runtime::Status::kUnavailable
-             ? xrobot::runtime::Status::kOk
+  return status == aster::runtime::Status::kUnavailable
+             ? aster::runtime::Status::kOk
              : status;
 }
 
 }  // namespace
 
 int main() {
-  using namespace xrobot::runtime;
+  using namespace aster::runtime;
   Clock clock;
   const ExecutionContext can_context("can-rx", ExecutionKind::kThread, 6);
   const ExecutionContext runtime_context(
       "runtime", ExecutionKind::kThread, 9);
   Wire a_to_b{{}, &can_context, clock.now_ns};
   Wire b_to_a{{}, &can_context, clock.now_ns};
-  std::array<xrobot::generated::CanLinkWriter, 1> a_links{{
+  std::array<aster::generated::CanLinkWriter, 1> a_links{{
       {"robot_can", {SendFrame, &a_to_b}},
   }};
-  std::array<xrobot::generated::CanLinkWriter, 1> b_links{{
+  std::array<aster::generated::CanLinkWriter, 1> b_links{{
       {"robot_can", {SendFrame, &b_to_a}},
   }};
-  xrobot::generated::node_a::NodeComposition node_a(clock, a_links);
-  xrobot::generated::node_b::NodeComposition node_b(clock, b_links);
+  aster::generated::node_a::NodeComposition node_a(clock, a_links);
+  aster::generated::node_b::NodeComposition node_b(clock, b_links);
   a_to_b.receiver = node_b.CanReceiver("robot_can");
   b_to_a.receiver = node_a.CanReceiver("robot_can");
 
@@ -1313,8 +1313,8 @@ int main() {
     )
 
     repository_root = Path(__file__).parents[2]
-    runtime = repository_root / "xrobot-runtime"
-    transports = repository_root / "xrobot-transports"
+    runtime = repository_root / "aster-runtime"
+    transports = repository_root / "aster-transports"
     executable = tmp_path / "local_rpc_test"
     subprocess.run(
         [
@@ -1387,55 +1387,55 @@ int main() {
 
 #include "node_a/node_composition.hpp"
 #include "node_b/node_composition.hpp"
-#include "xrobot/runtime/hardware_registry.hpp"
+#include "aster/runtime/hardware_registry.hpp"
 
 namespace {
 
-class Clock final : public xrobot::runtime::SteadyClock {
+class Clock final : public aster::runtime::SteadyClock {
  public:
   std::uint64_t NowNs() const noexcept override { return now_ns; }
   std::uint64_t now_ns{1'000'000};
 };
 
 struct Wire {
-  xrobot::transport::can::CanFrameReceiver receiver;
-  const xrobot::runtime::ExecutionContext* context{};
+  aster::transport::can::CanFrameReceiver receiver;
+  const aster::runtime::ExecutionContext* context{};
   std::uint64_t receive_time_ns{};
   std::size_t drop_index{static_cast<std::size_t>(-1)};
   std::size_t frame_index{};
 };
 
-xrobot::runtime::Status SendFrame(
-    void* state, const xrobot::transport::can::CanFrame& frame,
-    const xrobot::runtime::ExecutionContext&) noexcept {
+aster::runtime::Status SendFrame(
+    void* state, const aster::transport::can::CanFrame& frame,
+    const aster::runtime::ExecutionContext&) noexcept {
   auto& wire = *static_cast<Wire*>(state);
   const auto frame_index = wire.frame_index++;
-  if (frame_index == wire.drop_index) return xrobot::runtime::Status::kOk;
+  if (frame_index == wire.drop_index) return aster::runtime::Status::kOk;
   const auto status = wire.receiver.Accept(
       frame, wire.receive_time_ns, *wire.context);
-  return status == xrobot::runtime::Status::kUnavailable
-             ? xrobot::runtime::Status::kOk
+  return status == aster::runtime::Status::kUnavailable
+             ? aster::runtime::Status::kOk
              : status;
 }
 
 }  // namespace
 
 int main() {
-  using namespace xrobot::runtime;
+  using namespace aster::runtime;
   Clock clock;
   const ExecutionContext can_context("can-rx", ExecutionKind::kThread, 6);
   const ExecutionContext runtime_context(
       "runtime", ExecutionKind::kThread, 9);
   Wire a_to_b{{}, &can_context, clock.now_ns};
   Wire b_to_a{{}, &can_context, clock.now_ns};
-  std::array<xrobot::generated::CanLinkWriter, 1> a_links{{
+  std::array<aster::generated::CanLinkWriter, 1> a_links{{
       {"robot_can", {SendFrame, &a_to_b}},
   }};
-  std::array<xrobot::generated::CanLinkWriter, 1> b_links{{
+  std::array<aster::generated::CanLinkWriter, 1> b_links{{
       {"robot_can", {SendFrame, &b_to_a}},
   }};
-  xrobot::generated::node_a::NodeComposition node_a(clock, a_links);
-  xrobot::generated::node_b::NodeComposition node_b(clock, b_links);
+  aster::generated::node_a::NodeComposition node_a(clock, a_links);
+  aster::generated::node_b::NodeComposition node_b(clock, b_links);
   a_to_b.receiver = node_b.CanReceiver("robot_can");
   b_to_a.receiver = node_a.CanReceiver("robot_can");
 
@@ -1608,7 +1608,7 @@ def test_route_ids_avoid_reserved_standard_can_ids(tmp_path: Path) -> None:
     assert lock["routes"] == {"/control/command": 9}
 
 
-def test_rejects_reserved_xrobot_can_control_plane_id(tmp_path: Path) -> None:
+def test_rejects_reserved_aster_can_control_plane_id(tmp_path: Path) -> None:
     workspace, deployment = create_workspace(tmp_path)
     hardware = tmp_path / "hardware/node_a.yaml"
     hardware.write_text(
@@ -1709,26 +1709,26 @@ def test_deployment_compiler_lock_changes_deployment_hash(tmp_path: Path) -> Non
     workspace, deployment = create_workspace(tmp_path)
     write(
         tmp_path,
-        "xrobot-tools/package.yaml",
+        "aster-tools/package.yaml",
         """\
-api_version: xrobot.io/v1alpha1
+api_version: aster.dev/v1alpha1
 kind: Package
-metadata: {name: xrobot-tools, version: 0.1.0, license: Apache-2.0}
+metadata: {name: aster-tools, version: 0.1.0, license: Apache-2.0}
 spec:
   build: {system: python}
-  exports: {tools: [xrctl]}
+  exports: {tools: [asterctl]}
   dependencies: []
 """,
     )
     workspace.write_text(
         workspace.read_text(encoding="utf-8")
-        + "  - {name: xrobot-tools, source: {type: path, path: xrobot-tools}}\n",
+        + "  - {name: aster-tools, source: {type: path, path: aster-tools}}\n",
         encoding="utf-8",
     )
     package_lock = tmp_path / "package.lock.yaml"
     package_lock.write_text(
         package_lock.read_text(encoding="utf-8")
-        + "  xrobot-tools: {source: xrobot-tools, commit: "
+        + "  aster-tools: {source: aster-tools, commit: "
         + "dddddddddddddddddddddddddddddddddddddddd}\n",
         encoding="utf-8",
     )

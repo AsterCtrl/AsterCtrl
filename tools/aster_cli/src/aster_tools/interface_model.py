@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
-from xrobot_tools.validation import ValidationError, load_yaml, validate_mapping
+from aster_tools.validation import ValidationError, load_yaml, validate_mapping
 
 
 class InterfaceError(ValueError):

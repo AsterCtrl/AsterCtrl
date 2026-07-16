@@ -7,8 +7,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from xrobot_tools.interface_model import InterfaceModel, load_interface_model
-from xrobot_tools.validation import validate_document
+from aster_tools.interface_model import InterfaceModel, load_interface_model
+from aster_tools.validation import validate_document
 
 
 class WorkspaceError(ValueError):

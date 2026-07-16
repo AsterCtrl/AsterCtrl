@@ -39,7 +39,7 @@ def load_yaml(path: Path) -> dict[str, Any]:
 
 
 def load_schema(name: str) -> dict[str, Any]:
-    resource = files("xrobot_tools.schemas").joinpath(name)
+    resource = files("aster_tools.schemas").joinpath(name)
     return json.loads(resource.read_text(encoding="utf-8"))
 
 

@@ -1,8 +1,8 @@
-api_version: xrobot.io/v1alpha1
+api_version: aster.dev/v1alpha1
 kind: Package
 
 metadata:
-  name: xrobot-tools
+  name: aster-tools
   version: 0.1.0-dev
   license: Apache-2.0
 
@@ -11,5 +11,5 @@ spec:
     system: python
   exports:
     tools:
-      - xrctl
+      - asterctl
   dependencies: []

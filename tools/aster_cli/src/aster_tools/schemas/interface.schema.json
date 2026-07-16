@@ -4,7 +4,7 @@
   "additionalProperties": false,
   "required": ["api_version", "kind", "metadata", "spec"],
   "properties": {
-    "api_version": {"const": "xrobot.io/schema/v1alpha1"},
+    "api_version": {"const": "aster.dev/schema/v1alpha1"},
     "kind": {"enum": ["Message", "Service", "Action"]},
     "metadata": {
       "type": "object",

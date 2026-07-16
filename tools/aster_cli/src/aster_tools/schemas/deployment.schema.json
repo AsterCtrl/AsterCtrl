@@ -4,7 +4,7 @@
   "additionalProperties": false,
   "required": ["api_version", "kind", "metadata", "application", "nodes", "links", "qos_profiles", "route_rules"],
   "properties": {
-    "api_version": {"const": "xrobot.io/v1alpha1"},
+    "api_version": {"const": "aster.dev/v1alpha1"},
     "kind": {"const": "Deployment"},
     "metadata": {
       "type": "object",
@@ -43,7 +43,7 @@
       "additionalProperties": false,
       "required": ["runtime", "target", "instances"],
       "properties": {
-        "runtime": {"enum": ["xrobot-mcu", "xrobot-host", "aimrt"]},
+        "runtime": {"enum": ["aster-mcu", "aster-host", "aimrt"]},
         "target": {
           "type": "object",
           "additionalProperties": false,

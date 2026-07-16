@@ -4,7 +4,7 @@
   "additionalProperties": false,
   "required": ["api_version", "kind", "metadata", "deployment_hash", "schema_hash", "protocol_version", "nodes", "routes", "types", "backends"],
   "properties": {
-    "api_version": {"const": "xrobot.io/v1alpha1"},
+    "api_version": {"const": "aster.dev/v1alpha1"},
     "kind": {"const": "DeploymentLock"},
     "metadata": {
       "type": "object",

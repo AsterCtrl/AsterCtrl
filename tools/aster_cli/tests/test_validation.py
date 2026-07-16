@@ -4,19 +4,19 @@ from pathlib import Path
 
 import pytest
 
-from xrobot_tools.validation import ValidationError, validate_document
+from aster_tools.validation import ValidationError, validate_document
 
 
 WORKSPACE = """\
-api_version: xrobot.io/v1alpha1
+api_version: aster.dev/v1alpha1
 kind: Workspace
 metadata:
   name: test-workspace
 packages:
-  - name: xrobot-runtime
+  - name: aster-runtime
     source:
       type: path
-      path: ../xrobot-runtime
+      path: ../aster-runtime
 """
 
 
@@ -41,7 +41,7 @@ def test_rejects_unknown_keys_with_a_precise_path(tmp_path: Path) -> None:
 def test_rejects_unknown_document_kinds(tmp_path: Path) -> None:
     path = tmp_path / "unknown.yaml"
     path.write_text(
-        "api_version: xrobot.io/v1alpha1\nkind: Mystery\nmetadata: {name: x}\n",
+        "api_version: aster.dev/v1alpha1\nkind: Mystery\nmetadata: {name: x}\n",
         encoding="utf-8",
     )
 

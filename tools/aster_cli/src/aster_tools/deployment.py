@@ -9,14 +9,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from xrobot_tools.cpp_codegen import record_wire_sizes
-from xrobot_tools.interface_model import (
+from aster_tools.cpp_codegen import record_wire_sizes
+from aster_tools.interface_model import (
     InterfaceError,
     InterfaceModel,
     hash16,
 )
-from xrobot_tools.validation import ValidationError, validate_document
-from xrobot_tools.workspace_model import (
+from aster_tools.validation import ValidationError, validate_document
+from aster_tools.workspace_model import (
     BoardExport,
     ModuleManifest,
     Workspace,
@@ -181,9 +181,9 @@ def _load_hardware(
                     )
                 owners_by_id[arbitration_id] = reservation["owner"]
     for link_name, link in deployment["links"].items():
-        if link["transport"] == "xrobot-can" and len(link["endpoints"]) != 2:
+        if link["transport"] == "aster-can" and len(link["endpoints"]) != 2:
             raise DeploymentError(
-                f"xrobot-can link {link_name!r} requires exactly two endpoints in v1"
+                f"aster-can link {link_name!r} requires exactly two endpoints in v1"
             )
         endpoint_nodes: set[str] = set()
         for endpoint in link["endpoints"]:
@@ -204,19 +204,19 @@ def _load_hardware(
                     f"link {link_name!r}: node {node_name!r} has no resource "
                     f"{resource_name!r}"
                 )
-            if link["transport"] == "xrobot-can" and resources[resource_name]["kind"] != "can":
+            if link["transport"] == "aster-can" and resources[resource_name]["kind"] != "can":
                 raise DeploymentError(
                     f"link {link_name!r}: resource {resource_name!r} is not CAN"
                 )
-        if link["transport"] == "xrobot-can":
+        if link["transport"] == "aster-can":
             authority = deployment.get("time_authority")
             if authority is None:
                 raise DeploymentError(
-                    f"xrobot-can link {link_name!r} requires time_authority"
+                    f"aster-can link {link_name!r} requires time_authority"
                 )
             if authority not in endpoint_nodes:
                 raise DeploymentError(
-                    f"xrobot-can link {link_name!r} does not include time authority "
+                    f"aster-can link {link_name!r} does not include time authority "
                     f"node {authority!r}"
                 )
     return profiles
@@ -578,7 +578,7 @@ def _fast_can_cost(payload_sizes: list[int], mtu: int) -> tuple[int, int]:
                 remaining -= chunk
             if len(payloads) > 16:
                 raise DeploymentError(
-                    "xrobot-can Fast Path payload exceeds 16 classic CAN fragments"
+                    "aster-can Fast Path payload exceeds 16 classic CAN fragments"
                 )
         frame_count += len(payloads)
         total_bits += sum(_classic_frame_bits(payload) for payload in payloads)
@@ -595,7 +595,7 @@ def _reliable_can_cost(payload_sizes: list[int], mtu: int) -> tuple[int, int]:
         fragments = (size + fragment_payload - 1) // fragment_payload
         if fragments > 16:
             raise DeploymentError(
-                "xrobot-can Reliable Path payload exceeds 16 classic CAN fragments"
+                "aster-can Reliable Path payload exceeds 16 classic CAN fragments"
             )
         remaining = size
         for _ in range(fragments):
@@ -623,14 +623,14 @@ def _wire_payload_sizes(kind: str, record_sizes: list[int]) -> list[int]:
             result_size + 6,
             6,  # Cancel response.
         ]
-    raise DeploymentError(f"unsupported xrobot-can route kind {kind!r}")
+    raise DeploymentError(f"unsupported aster-can route kind {kind!r}")
 
 
 def _can_route_cost(
     kind: str, record_sizes: list[int], mtu: int
 ) -> tuple[int, int, int]:
     if mtu != 8:
-        raise DeploymentError("xrobot-can v1 classic CAN requires mtu_bytes: 8")
+        raise DeploymentError("aster-can v1 classic CAN requires mtu_bytes: 8")
     payload_sizes = _wire_payload_sizes(kind, record_sizes)
     if kind == "topic":
         frame_count, bits = _fast_can_cost(payload_sizes, mtu)
@@ -660,22 +660,22 @@ def _compile_routes(
         qos_name, qos, via = _select_qos(name, deployment)
         if kind == "topic" and qos["reliability"] != "best_effort":
             raise DeploymentError(
-                f"xrobot-can Fast Topic route {name!r} requires best_effort reliability"
+                f"aster-can Fast Topic route {name!r} requires best_effort reliability"
             )
         if kind in {"service", "action"}:
             if qos["reliability"] != "reliable":
                 raise DeploymentError(
-                    f"xrobot-can {kind} route {name!r} requires reliable reliability"
+                    f"aster-can {kind} route {name!r} requires reliable reliability"
                 )
             if len(destination_nodes) != 1:
                 raise DeploymentError(
-                    f"xrobot-can {kind} route {name!r} requires exactly one "
+                    f"aster-can {kind} route {name!r} requires exactly one "
                     "remote client node in v1"
                 )
         link_name, link = _select_link(
             name, {source.node, *destination_nodes}, deployment, via
         )
-        if link["transport"] != "xrobot-can":
+        if link["transport"] != "aster-can":
             raise DeploymentError(
                 f"transport {link['transport']!r} is not implemented for route {name!r}"
             )
@@ -713,7 +713,7 @@ def _compile_budgets(
     budgets: list[LinkBudget] = []
     for name in sorted(deployment["links"]):
         link = deployment["links"][name]
-        if link["transport"] != "xrobot-can":
+        if link["transport"] != "aster-can":
             continue
         bitrate = int(link["options"].get("bitrate_bps", 0))
         if bitrate <= 0:
@@ -799,8 +799,8 @@ def _build_plan(
         for name, endpoints in sorted(_collect_ports(instances).items())
     }
     model = workspace.interface_model()
-    if workspace.has_package("xrobot-tools"):
-        workspace.package("xrobot-tools")
+    if workspace.has_package("aster-tools"):
+        workspace.package("aster-tools")
     routes = _compile_routes(bindings, deployment, model)
     budgets = _compile_budgets(deployment, routes)
     type_hashes = {route.type_name: route.type_hash for route in routes}
@@ -848,7 +848,7 @@ def compile_deployment(
     authoritative_lock = Path(lock_path).resolve() if lock_path is not None else None
     try:
         plan = _build_plan(workspace, deployment)
-        from xrobot_tools.deployment_output import write_deployment
+        from aster_tools.deployment_output import write_deployment
 
         write_deployment(plan, output, authoritative_lock)
     except (ValidationError, WorkspaceError, InterfaceError) as error:

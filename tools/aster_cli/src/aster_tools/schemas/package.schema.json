@@ -4,7 +4,7 @@
   "additionalProperties": false,
   "required": ["api_version", "kind", "metadata", "spec"],
   "properties": {
-    "api_version": {"const": "xrobot.io/v1alpha1"},
+    "api_version": {"const": "aster.dev/v1alpha1"},
     "kind": {"const": "Package"},
     "metadata": {
       "type": "object",
@@ -26,7 +26,7 @@
           "additionalProperties": false,
           "required": ["system"],
           "properties": {
-            "system": {"enum": ["cmake", "python", "npm", "xrobot-schema", "none"]}
+            "system": {"enum": ["cmake", "python", "npm", "aster-schema", "none"]}
           }
         },
         "exports": {"type": "object", "additionalProperties": true},
