@@ -1,12 +1,12 @@
 #pragma once
 
 #include "libxr_def.hpp"
-#include "xrobot/runtime/status.hpp"
+#include "aster/runtime/status.hpp"
 
-namespace xrobot::backend::libxr {
+namespace aster::backend::libxr {
 
-constexpr xrobot::runtime::Status MapError(LibXR::ErrorCode error) noexcept {
-  using xrobot::runtime::Status;
+constexpr aster::runtime::Status MapError(LibXR::ErrorCode error) noexcept {
+  using aster::runtime::Status;
 
   switch (error) {
     case LibXR::ErrorCode::OK:
@@ -39,4 +39,4 @@ constexpr xrobot::runtime::Status MapError(LibXR::ErrorCode error) noexcept {
   return Status::kInternal;
 }
 
-}  // namespace xrobot::backend::libxr
+}  // namespace aster::backend::libxr

@@ -1,4 +1,4 @@
-#include "xrobot/backend/libxr/stm32_usbd_cdc_endpoint.hpp"
+#include "aster/backend/libxr/stm32_usbd_cdc_endpoint.hpp"
 
 #include <array>
 #include <cassert>
@@ -7,13 +7,13 @@
 
 namespace {
 
-using xrobot::backend::libxr::Stm32UsbdCdcDriver;
-using xrobot::backend::libxr::Stm32UsbdCdcEndpoint;
-using xrobot::runtime::ExecutionContext;
-using xrobot::runtime::ExecutionKind;
-using xrobot::runtime::Status;
+using aster::backend::libxr::Stm32UsbdCdcDriver;
+using aster::backend::libxr::Stm32UsbdCdcEndpoint;
+using aster::runtime::ExecutionContext;
+using aster::runtime::ExecutionKind;
+using aster::runtime::Status;
 
-class FakeClock final : public xrobot::runtime::SteadyClock {
+class FakeClock final : public aster::runtime::SteadyClock {
  public:
   std::uint64_t NowNs() const noexcept override { return now_ns; }
   std::uint64_t now_ns{};

@@ -1,4 +1,4 @@
-#include "xrobot/backend/libxr/uart_reader_adapter.hpp"
+#include "aster/backend/libxr/uart_reader_adapter.hpp"
 
 #include <array>
 #include <cassert>
@@ -19,10 +19,10 @@ MillisecondTimestamp Timebase::GetMilliseconds() {
 
 namespace {
 
-using xrobot::backend::libxr::UartReaderAdapter;
-using xrobot::runtime::ExecutionContext;
-using xrobot::runtime::ExecutionKind;
-using xrobot::runtime::Status;
+using aster::backend::libxr::UartReaderAdapter;
+using aster::runtime::ExecutionContext;
+using aster::runtime::ExecutionKind;
+using aster::runtime::Status;
 
 class FakeUart final : public LibXR::UART {
  public:

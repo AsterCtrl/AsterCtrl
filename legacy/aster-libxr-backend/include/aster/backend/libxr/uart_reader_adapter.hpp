@@ -6,11 +6,11 @@
 #include <span>
 
 #include "uart.hpp"
-#include "xrobot/backend/libxr/error.hpp"
-#include "xrobot/backend/libxr/resources.hpp"
-#include "xrobot/runtime/byte_reader.hpp"
+#include "aster/backend/libxr/error.hpp"
+#include "aster/backend/libxr/resources.hpp"
+#include "aster/runtime/byte_reader.hpp"
 
-namespace xrobot::backend::libxr {
+namespace aster::backend::libxr {
 
 struct UartReaderAdapterStats {
   std::uint32_t read_calls{};
@@ -20,16 +20,16 @@ struct UartReaderAdapterStats {
   std::uint32_t discards{};
 };
 
-class UartReaderAdapter final : public xrobot::runtime::ByteReader {
+class UartReaderAdapter final : public aster::runtime::ByteReader {
  public:
   explicit UartReaderAdapter(LibXR::UART& uart) noexcept : uart_(uart) {}
   explicit UartReaderAdapter(UartResource& uart) noexcept : uart_(uart.get()) {}
 
-  xrobot::runtime::Status Read(
+  aster::runtime::Status Read(
       std::span<std::byte> destination, std::size_t& bytes_read,
-      const xrobot::runtime::ExecutionContext& caller) noexcept override {
-    using xrobot::runtime::ExecutionKind;
-    using xrobot::runtime::Status;
+      const aster::runtime::ExecutionContext& caller) noexcept override {
+    using aster::runtime::ExecutionKind;
+    using aster::runtime::Status;
 
     bytes_read = 0;
     if (destination.empty() || caller.kind() == ExecutionKind::kInterrupt) {
@@ -51,7 +51,7 @@ class UartReaderAdapter final : public xrobot::runtime::ByteReader {
     LibXR::ReadOperation operation;
     const auto error = uart_.Read(
         {static_cast<void*>(destination.data()), count}, operation, false);
-    const auto status = xrobot::backend::libxr::MapError(error);
+    const auto status = aster::backend::libxr::MapError(error);
     if (status != Status::kOk) {
       ++stats_.failures;
       return status;
@@ -61,10 +61,10 @@ class UartReaderAdapter final : public xrobot::runtime::ByteReader {
     return Status::kOk;
   }
 
-  xrobot::runtime::Status Discard(
-      const xrobot::runtime::ExecutionContext& caller) noexcept override {
-    using xrobot::runtime::ExecutionKind;
-    using xrobot::runtime::Status;
+  aster::runtime::Status Discard(
+      const aster::runtime::ExecutionContext& caller) noexcept override {
+    using aster::runtime::ExecutionKind;
+    using aster::runtime::Status;
 
     if (caller.kind() == ExecutionKind::kInterrupt) {
       ++stats_.failures;
@@ -74,7 +74,7 @@ class UartReaderAdapter final : public xrobot::runtime::ByteReader {
       ++stats_.failures;
       return Status::kInvalidState;
     }
-    const auto status = xrobot::backend::libxr::MapError(
+    const auto status = aster::backend::libxr::MapError(
         uart_.read_port_->ClearQueuedData(false));
     if (status == Status::kOk) {
       ++stats_.discards;
@@ -91,4 +91,4 @@ class UartReaderAdapter final : public xrobot::runtime::ByteReader {
   UartReaderAdapterStats stats_{};
 };
 
-}  // namespace xrobot::backend::libxr
+}  // namespace aster::backend::libxr

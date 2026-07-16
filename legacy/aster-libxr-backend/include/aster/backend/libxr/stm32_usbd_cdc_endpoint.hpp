@@ -6,10 +6,10 @@
 #include <cstdint>
 #include <span>
 
-#include "xrobot/backend/libxr/resources.hpp"
-#include "xrobot/runtime/runtime_services.hpp"
+#include "aster/backend/libxr/resources.hpp"
+#include "aster/runtime/runtime_services.hpp"
 
-namespace xrobot::backend::libxr {
+namespace aster::backend::libxr {
 
 struct Stm32UsbdCdcDriver {
   using Callback = void (*)(std::uint16_t);
@@ -45,11 +45,11 @@ class Stm32UsbdCdcEndpoint final : public ByteStreamEndpoint {
   static_assert(std::atomic<std::uint32_t>::is_always_lock_free);
 
   Stm32UsbdCdcEndpoint(Stm32UsbdCdcDriver driver,
-                       xrobot::runtime::SteadyClock& clock) noexcept
+                       aster::runtime::SteadyClock& clock) noexcept
       : driver_(driver), clock_(clock) {}
 
-  xrobot::runtime::Status Initialize() noexcept {
-    using xrobot::runtime::Status;
+  aster::runtime::Status Initialize() noexcept {
+    using aster::runtime::Status;
     if (initialized_ || active_ != nullptr) return Status::kInvalidState;
     if (driver_.register_callbacks == nullptr || driver_.transmit == nullptr ||
         driver_.receive_buffer_size < MaximumChunkBytes ||
@@ -67,12 +67,12 @@ class Stm32UsbdCdcEndpoint final : public ByteStreamEndpoint {
     return Status::kOk;
   }
 
-  xrobot::runtime::Status Read(
+  aster::runtime::Status Read(
       std::span<std::byte> output, std::size_t& bytes_read,
       std::uint64_t& completion_time_ns,
-      const xrobot::runtime::ExecutionContext& caller) noexcept override {
-    using xrobot::runtime::ExecutionKind;
-    using xrobot::runtime::Status;
+      const aster::runtime::ExecutionContext& caller) noexcept override {
+    using aster::runtime::ExecutionKind;
+    using aster::runtime::Status;
     bytes_read = 0U;
     completion_time_ns = 0U;
     if (!initialized_) return Status::kInvalidState;
@@ -96,11 +96,11 @@ class Stm32UsbdCdcEndpoint final : public ByteStreamEndpoint {
     return Status::kOk;
   }
 
-  xrobot::runtime::Status Write(
+  aster::runtime::Status Write(
       std::span<const std::byte> input,
-      const xrobot::runtime::ExecutionContext& caller) noexcept override {
-    using xrobot::runtime::ExecutionKind;
-    using xrobot::runtime::Status;
+      const aster::runtime::ExecutionContext& caller) noexcept override {
+    using aster::runtime::ExecutionKind;
+    using aster::runtime::Status;
     if (!initialized_) return Status::kInvalidState;
     if (input.empty() || input.size() > MaximumChunkBytes ||
         caller.kind() == ExecutionKind::kInterrupt) {
@@ -123,10 +123,10 @@ class Stm32UsbdCdcEndpoint final : public ByteStreamEndpoint {
     return Status::kOk;
   }
 
-  xrobot::runtime::Status Poll(
-      const xrobot::runtime::ExecutionContext& caller) noexcept override {
-    using xrobot::runtime::ExecutionKind;
-    using xrobot::runtime::Status;
+  aster::runtime::Status Poll(
+      const aster::runtime::ExecutionContext& caller) noexcept override {
+    using aster::runtime::ExecutionKind;
+    using aster::runtime::Status;
     if (!initialized_) return Status::kInvalidState;
     if (caller.kind() != ExecutionKind::kThread) {
       return Status::kInvalidArgument;
@@ -226,7 +226,7 @@ class Stm32UsbdCdcEndpoint final : public ByteStreamEndpoint {
   inline static Stm32UsbdCdcEndpoint* active_{};
 
   Stm32UsbdCdcDriver driver_;
-  xrobot::runtime::SteadyClock& clock_;
+  aster::runtime::SteadyClock& clock_;
   std::array<Chunk, ReceiveQueueCapacity + 1U> receive_queue_{};
   std::array<Chunk, TransmitQueueCapacity + 1U> transmit_queue_{};
   std::atomic<std::uint32_t> rx_head_{};
@@ -247,4 +247,4 @@ class Stm32UsbdCdcEndpoint final : public ByteStreamEndpoint {
   bool initialized_{};
 };
 
-}  // namespace xrobot::backend::libxr
+}  // namespace aster::backend::libxr

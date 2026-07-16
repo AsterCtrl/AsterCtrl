@@ -9,17 +9,17 @@
 #include "pwm.hpp"
 #include "spi.hpp"
 #include "uart.hpp"
-#include "xrobot/runtime/execution_context.hpp"
-#include "xrobot/runtime/status.hpp"
+#include "aster/runtime/execution_context.hpp"
+#include "aster/runtime/status.hpp"
 
-namespace xrobot::backend::libxr {
+namespace aster::backend::libxr {
 
 class UartResource {
  public:
   explicit UartResource(LibXR::UART& uart) noexcept : uart_(uart) {}
 
   static constexpr std::string_view TypeName() noexcept {
-    return "xrobot.resource.Uart/v1";
+    return "aster.resource.Uart/v1";
   }
   LibXR::UART& get() const noexcept { return uart_; }
 
@@ -32,7 +32,7 @@ class SpiResource {
   explicit SpiResource(LibXR::SPI& spi) noexcept : spi_(spi) {}
 
   static constexpr std::string_view TypeName() noexcept {
-    return "xrobot.resource.Spi/v1";
+    return "aster.resource.Spi/v1";
   }
   LibXR::SPI& get() const noexcept { return spi_; }
 
@@ -45,7 +45,7 @@ class GpioResource {
   explicit GpioResource(LibXR::GPIO& gpio) noexcept : gpio_(gpio) {}
 
   static constexpr std::string_view TypeName() noexcept {
-    return "xrobot.resource.Gpio/v1";
+    return "aster.resource.Gpio/v1";
   }
   LibXR::GPIO& get() const noexcept { return gpio_; }
 
@@ -58,7 +58,7 @@ class PwmResource {
   explicit PwmResource(LibXR::PWM& pwm) noexcept : pwm_(pwm) {}
 
   static constexpr std::string_view TypeName() noexcept {
-    return "xrobot.resource.Pwm/v1";
+    return "aster.resource.Pwm/v1";
   }
   LibXR::PWM& get() const noexcept { return pwm_; }
 
@@ -71,18 +71,18 @@ class ByteStreamEndpoint {
   virtual ~ByteStreamEndpoint() = default;
 
   static constexpr std::string_view TypeName() noexcept {
-    return "xrobot.resource.ByteStream/v1";
+    return "aster.resource.ByteStream/v1";
   }
 
-  virtual xrobot::runtime::Status Read(
+  virtual aster::runtime::Status Read(
       std::span<std::byte> output, std::size_t& bytes_read,
       std::uint64_t& completion_time_ns,
-      const xrobot::runtime::ExecutionContext& caller) noexcept = 0;
-  virtual xrobot::runtime::Status Write(
+      const aster::runtime::ExecutionContext& caller) noexcept = 0;
+  virtual aster::runtime::Status Write(
       std::span<const std::byte> input,
-      const xrobot::runtime::ExecutionContext& caller) noexcept = 0;
-  virtual xrobot::runtime::Status Poll(
-      const xrobot::runtime::ExecutionContext& caller) noexcept = 0;
+      const aster::runtime::ExecutionContext& caller) noexcept = 0;
+  virtual aster::runtime::Status Poll(
+      const aster::runtime::ExecutionContext& caller) noexcept = 0;
 };
 
-}  // namespace xrobot::backend::libxr
+}  // namespace aster::backend::libxr

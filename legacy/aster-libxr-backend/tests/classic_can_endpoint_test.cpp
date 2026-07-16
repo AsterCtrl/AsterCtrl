@@ -3,7 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 
-#include "xrobot/backend/libxr/classic_can_endpoint.hpp"
+#include "aster/backend/libxr/classic_can_endpoint.hpp"
 
 namespace LibXR {
 
@@ -19,11 +19,11 @@ MillisecondTimestamp Timebase::GetMilliseconds() {
 
 namespace {
 
-using xrobot::backend::libxr::ClassicCanFrame;
-using xrobot::backend::libxr::LibxrClassicCanEndpoint;
-using xrobot::runtime::ExecutionContext;
-using xrobot::runtime::ExecutionKind;
-using xrobot::runtime::Status;
+using aster::backend::libxr::ClassicCanFrame;
+using aster::backend::libxr::LibxrClassicCanEndpoint;
+using aster::runtime::ExecutionContext;
+using aster::runtime::ExecutionKind;
+using aster::runtime::Status;
 
 class FakeCan final : public LibXR::CAN {
  public:

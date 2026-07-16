@@ -6,7 +6,7 @@
 #include <cstdlib>
 #include <new>
 
-#include "xrobot/backend/libxr/can_adapter.hpp"
+#include "aster/backend/libxr/can_adapter.hpp"
 
 namespace LibXR {
 
@@ -67,15 +67,15 @@ void operator delete[](void* memory, std::size_t, std::align_val_t) noexcept {
 
 namespace {
 
-using xrobot::backend::libxr::CanAdapter;
-using xrobot::backend::libxr::CanFilterRange;
-using xrobot::backend::libxr::LibxrClassicCanEndpoint;
-using xrobot::runtime::ExecutionContext;
-using xrobot::runtime::ExecutionKind;
-using xrobot::runtime::Status;
-using xrobot::transport::can::CanArbitrationId;
-using xrobot::transport::can::CanFrame;
-using xrobot::transport::can::CanPriority;
+using aster::backend::libxr::CanAdapter;
+using aster::backend::libxr::CanFilterRange;
+using aster::backend::libxr::LibxrClassicCanEndpoint;
+using aster::runtime::ExecutionContext;
+using aster::runtime::ExecutionKind;
+using aster::runtime::Status;
+using aster::transport::can::CanArbitrationId;
+using aster::transport::can::CanFrame;
+using aster::transport::can::CanPriority;
 
 class FakeCan final : public LibXR::CAN {
  public:

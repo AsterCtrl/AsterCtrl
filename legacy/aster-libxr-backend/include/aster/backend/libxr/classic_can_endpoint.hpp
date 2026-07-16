@@ -8,12 +8,12 @@
 #include <string_view>
 
 #include "can.hpp"
-#include "xrobot/backend/libxr/error.hpp"
-#include "xrobot/runtime/execution_context.hpp"
-#include "xrobot/runtime/status.hpp"
-#include "xrobot/transport/can/link.hpp"
+#include "aster/backend/libxr/error.hpp"
+#include "aster/runtime/execution_context.hpp"
+#include "aster/runtime/status.hpp"
+#include "aster/transport/can/link.hpp"
 
-namespace xrobot::backend::libxr {
+namespace aster::backend::libxr {
 
 struct ClassicCanFrame {
   std::uint16_t id{};
@@ -41,15 +41,15 @@ class ClassicCanEndpoint {
   virtual ~ClassicCanEndpoint() = default;
 
   static constexpr std::string_view TypeName() noexcept {
-    return "xrobot.hardware.ClassicCanEndpoint/v1";
+    return "aster.hardware.ClassicCanEndpoint/v1";
   }
 
-  virtual xrobot::runtime::Status Subscribe(
+  virtual aster::runtime::Status Subscribe(
       std::uint16_t first_id, std::uint16_t last_id,
       ClassicCanReceiver receiver) noexcept = 0;
-  virtual xrobot::runtime::Status Write(
+  virtual aster::runtime::Status Write(
       const ClassicCanFrame& frame,
-      const xrobot::runtime::ExecutionContext& caller) noexcept = 0;
+      const aster::runtime::ExecutionContext& caller) noexcept = 0;
 };
 
 struct ClassicCanEndpointStats {
@@ -68,16 +68,16 @@ class LibxrClassicCanEndpoint final : public ClassicCanEndpoint {
 
   LibxrClassicCanEndpoint(
       LibXR::CAN& can,
-      xrobot::transport::can::CanClockReader clock) noexcept
+      aster::transport::can::CanClockReader clock) noexcept
       : can_(can), clock_(clock) {}
 
   LibxrClassicCanEndpoint(const LibxrClassicCanEndpoint&) = delete;
   LibxrClassicCanEndpoint& operator=(const LibxrClassicCanEndpoint&) = delete;
 
-  xrobot::runtime::Status Subscribe(
+  aster::runtime::Status Subscribe(
       std::uint16_t first_id, std::uint16_t last_id,
       ClassicCanReceiver receiver) noexcept override {
-    using xrobot::runtime::Status;
+    using aster::runtime::Status;
 
     if (initialized_) return Status::kInvalidState;
     if (receiver.receive == nullptr || first_id > last_id || last_id > 0x7ffU) {
@@ -90,8 +90,8 @@ class LibxrClassicCanEndpoint final : public ClassicCanEndpoint {
     return Status::kOk;
   }
 
-  xrobot::runtime::Status Initialize() noexcept {
-    using xrobot::runtime::Status;
+  aster::runtime::Status Initialize() noexcept {
+    using aster::runtime::Status;
 
     if (initialized_) return Status::kInvalidState;
     if (clock_.read == nullptr || subscription_count_ == 0U) {
@@ -104,11 +104,11 @@ class LibxrClassicCanEndpoint final : public ClassicCanEndpoint {
     return Status::kOk;
   }
 
-  xrobot::runtime::Status Write(
+  aster::runtime::Status Write(
       const ClassicCanFrame& frame,
-      const xrobot::runtime::ExecutionContext& caller) noexcept override {
-    using xrobot::runtime::ExecutionKind;
-    using xrobot::runtime::Status;
+      const aster::runtime::ExecutionContext& caller) noexcept override {
+    using aster::runtime::ExecutionKind;
+    using aster::runtime::Status;
 
     if (!initialized_) return Status::kInvalidState;
     if (caller.kind() == ExecutionKind::kInterrupt || frame.id > 0x7ffU ||
@@ -182,7 +182,7 @@ class LibxrClassicCanEndpoint final : public ClassicCanEndpoint {
   }
 
   LibXR::CAN& can_;
-  xrobot::transport::can::CanClockReader clock_;
+  aster::transport::can::CanClockReader clock_;
   std::array<Subscription, SubscriptionCapacity> subscriptions_{};
   std::size_t subscription_count_{};
   LibXR::CAN::Callback receive_callback_{};
@@ -194,4 +194,4 @@ class LibxrClassicCanEndpoint final : public ClassicCanEndpoint {
   std::atomic<std::uint32_t> tx_failures_{};
 };
 
-}  // namespace xrobot::backend::libxr
+}  // namespace aster::backend::libxr
