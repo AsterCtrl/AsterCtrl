@@ -141,7 +141,7 @@ void ServiceCallsAreAsynchronousAndBounded() {
   ServerState server;
   ClientState first_client;
   ClientState second_client;
-  StaticService<test::SetMode, 1> service("robot/set-mode", executor,
+  StaticService<test::SetMode, 1> service("system/set-mode", executor,
                                          HandleSetMode, &server);
   const ExecutionContext caller("control", ExecutionKind::kThread, 5);
 
@@ -170,7 +170,7 @@ void HandlerErrorsReachTheCompletionCallback() {
   CooperativeExecutor<1> executor("service", 4);
   ServerState server{0, Status::kUnavailable};
   ClientState client_state;
-  StaticService<test::SetMode, 1> service("robot/set-mode", executor,
+  StaticService<test::SetMode, 1> service("system/set-mode", executor,
                                          HandleSetMode, &server);
   const ExecutionContext caller("control", ExecutionKind::kThread, 5);
 
@@ -199,7 +199,7 @@ void UnboundServiceStartsEmptyInNonzeroStorage() {
   storage.fill(std::byte{0xa5});
   CooperativeExecutor<1> executor("service", 4);
   ServerState server;
-  auto* const service = ::new (storage.data()) Service("robot/set-mode", executor);
+  auto* const service = ::new (storage.data()) Service("system/set-mode", executor);
 
   assert(service->server().BindHandler(HandleSetMode, &server) == Status::kOk);
   service->~Service();

@@ -202,7 +202,7 @@ void UnboundActionCanBindHandlersAfterConstruction() {
   alignas(Action) std::array<std::byte, sizeof(Action)> storage;
   storage.fill(std::byte{0xa5});
   auto* action = std::construct_at(reinterpret_cast<Action*>(storage.data()),
-                                   "robot/move", executor);
+                                   "system/move", executor);
 
   assert(action->server().BindHandlers(AcceptGoal, AcceptCancel,
                                        &server_state) == Status::kOk);
@@ -216,7 +216,7 @@ void GoalFeedbackAndResultFollowTheActionStateMachine() {
   CooperativeExecutor<2> executor("action", 4);
   ServerState server_state;
   ClientState client_state;
-  StaticAction<test::Move, 1> action("robot/move", executor, AcceptGoal,
+  StaticAction<test::Move, 1> action("system/move", executor, AcceptGoal,
                                     AcceptCancel, &server_state);
   const ExecutionContext caller("planner", ExecutionKind::kThread, 3);
   ActionGoalHandle handle;
@@ -251,7 +251,7 @@ void CancellationIsRequestedOnTheServerExecutor() {
   CooperativeExecutor<2> executor("action", 4);
   ServerState server_state;
   ClientState client_state;
-  StaticAction<test::Move, 1> action("robot/move", executor, AcceptGoal,
+  StaticAction<test::Move, 1> action("system/move", executor, AcceptGoal,
                                     AcceptCancel, &server_state);
   const ExecutionContext caller("planner", ExecutionKind::kThread, 3);
   ActionGoalHandle handle;
@@ -276,7 +276,7 @@ void DeadlineExpiresAnAcceptedGoal() {
   CooperativeExecutor<1> executor("action", 4);
   ServerState server_state;
   ClientState client_state;
-  StaticAction<test::Move, 1> action("robot/move", executor, AcceptGoal,
+  StaticAction<test::Move, 1> action("system/move", executor, AcceptGoal,
                                     AcceptCancel, &server_state);
   const ExecutionContext caller("planner", ExecutionKind::kThread, 3);
   ActionGoalHandle handle;

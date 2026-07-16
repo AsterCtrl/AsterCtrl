@@ -134,7 +134,7 @@ void LatestDeliveryCoalescesWithoutInlineCallbacks() {
   Recorder recorder;
   TopicSubscription<test::Command, 1> subscription(
       executor, DeliveryPolicy::kLatest, Record, &recorder);
-  StaticTopic<test::Command, 1> topic("robot/command");
+  StaticTopic<test::Command, 1> topic("system/command");
   const ExecutionContext publisher("input", ExecutionKind::kThread, 4);
 
   assert(executor.Initialize() == Status::kOk);
@@ -161,7 +161,7 @@ void KeepAllDeliveryAppliesBoundedBackpressure() {
   Recorder recorder;
   TopicSubscription<test::Command, 2> subscription(
       executor, DeliveryPolicy::kKeepAll, Record, &recorder);
-  StaticTopic<test::Command, 1> topic("robot/events");
+  StaticTopic<test::Command, 1> topic("system/events");
   const ExecutionContext publisher("input", ExecutionKind::kThread, 4);
 
   assert(executor.Initialize() == Status::kOk);
@@ -189,7 +189,7 @@ void TopicMustBeSealedBeforePublishing() {
   Recorder recorder;
   TopicSubscription<test::Command, 1> subscription(
       executor, DeliveryPolicy::kLatest, Record, &recorder);
-  StaticTopic<test::Command, 1> topic("robot/command");
+  StaticTopic<test::Command, 1> topic("system/command");
   const ExecutionContext publisher("input", ExecutionKind::kThread, 4);
 
   assert(topic.publisher().Publish(test::Command{10}, 1'000, publisher) ==
@@ -203,7 +203,7 @@ void SchedulingFailureCannotLeaveSilentlyStuckLatestData() {
   CongestedRecorder recorder{{}, &executor, {}, false};
   TopicSubscription<test::Command, 1> subscription(
       executor, DeliveryPolicy::kLatest, RecordAndFillExecutor, &recorder);
-  StaticTopic<test::Command, 1> topic("robot/command");
+  StaticTopic<test::Command, 1> topic("system/command");
   const ExecutionContext publisher("input", ExecutionKind::kThread, 4);
 
   assert(executor.Initialize() == Status::kOk);
@@ -225,7 +225,7 @@ void StaticChannelFansOutThroughModuleContexts() {
   CooperativeExecutor<2> first_executor("first", 5);
   CooperativeExecutor<2> second_executor("second", 4);
   StaticTopicChannel<test::Command, 2, 1> channel(
-      "robot/state", DeliveryPolicy::kLatest);
+      "system/state", DeliveryPolicy::kLatest);
   StaticPortRegistry<2> ports;
   Recorder first;
   Recorder second;
@@ -235,8 +235,8 @@ void StaticChannelFansOutThroughModuleContexts() {
   assert(second_executor.Initialize() == Status::kOk);
   assert(first_executor.Start() == Status::kOk);
   assert(second_executor.Start() == Status::kOk);
-  assert(ports.AddTopicPublisher("robot/state", channel) == Status::kOk);
-  assert(ports.AddTopicSubscriber("robot/state", channel) == Status::kOk);
+  assert(ports.AddTopicPublisher("system/state", channel) == Status::kOk);
+  assert(ports.AddTopicSubscriber("system/state", channel) == Status::kOk);
   assert(ports.Seal() == Status::kOk);
 
   ModuleContext first_context(
@@ -249,13 +249,13 @@ void StaticChannelFansOutThroughModuleContexts() {
   aster::runtime::TopicSubscriber<test::Command> second_subscriber;
   TopicPublisher<test::Command> publisher;
 
-  assert(first_context.ResolveTopicSubscriber("robot/state", first_subscriber) ==
+  assert(first_context.ResolveTopicSubscriber("system/state", first_subscriber) ==
          Status::kOk);
-  assert(second_context.ResolveTopicSubscriber("robot/state",
+  assert(second_context.ResolveTopicSubscriber("system/state",
                                                second_subscriber) == Status::kOk);
   assert(first_subscriber.Bind(Record, &first) == Status::kOk);
   assert(second_subscriber.Bind(Record, &second) == Status::kOk);
-  assert(first_context.ResolveTopicPublisher("robot/state", publisher) ==
+  assert(first_context.ResolveTopicPublisher("system/state", publisher) ==
          Status::kOk);
   assert(channel.Seal() == Status::kOk);
 

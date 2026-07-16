@@ -1,6 +1,6 @@
-# Aster Runtime
+# AsterCtrl Runtime
 
-Portable runtime contracts for distributed robot applications.
+Portable runtime contracts for distributed control applications.
 
 This repository owns Module lifecycle, execution contexts, executors, messaging,
 parameters, diagnostics, and compatibility adapters. Platform integrations live

@@ -135,7 +135,7 @@ void Receive(void* state, const test::Command& command, const MessageInfo&,
 
 void ContextResolvesGeneratedResourcesWithoutOwningThem() {
   CooperativeExecutor<2> executor("control", 4);
-  StaticTopic<test::Command, 1> topic("robot/command");
+  StaticTopic<test::Command, 1> topic("system/command");
   TopicSubscription<test::Command, 1> subscription(
       executor, DeliveryPolicy::kLatest);
   StaticPortRegistry<2> ports;
