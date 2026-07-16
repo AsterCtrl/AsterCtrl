@@ -13,7 +13,7 @@ kind: Workspace
 metadata:
   name: test-workspace
 interfaces:
-  package: robot-msgs
+  package: control-interfaces
   path: schemas
 packages:
   - name: aster-runtime

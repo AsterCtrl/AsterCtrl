@@ -5,7 +5,7 @@
   "required": ["api_version", "kind", "metadata", "instances"],
   "properties": {
     "api_version": {"const": "aster.dev/v1alpha1"},
-    "kind": {"const": "Robot"},
+    "kind": {"const": "Application"},
     "metadata": {
       "type": "object",
       "additionalProperties": false,

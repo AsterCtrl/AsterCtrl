@@ -20,7 +20,7 @@ SCHEMA_BY_KIND = {
     "Package": "package.schema.json",
     "Module": "module.schema.json",
     "Workspace": "workspace.schema.json",
-    "Robot": "robot.schema.json",
+    "Application": "application.schema.json",
     "HardwareProfile": "hardware.schema.json",
     "Deployment": "deployment.schema.json",
     "PackageLock": "package-lock.schema.json",

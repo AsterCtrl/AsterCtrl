@@ -15,6 +15,7 @@ dependencies = [
 ]
 
 [project.scripts]
+aster = "aster_tools.cli:main"
 asterctl = "aster_tools.cli:main"
 
 [tool.setuptools.packages.find]

@@ -75,13 +75,13 @@ def test_generates_deterministic_cpp_typesupport_and_lock(tmp_path: Path) -> Non
     write_schema(schema_root, "action/Move.action.yaml", ACTION)
 
     first = generate_interfaces(schema_root, output)
-    first_header = (output / "include/robot_msgs/robot_msgs.hpp").read_bytes()
+    first_header = (output / "include/aster/interfaces.hpp").read_bytes()
     first_lock = (output / "schema.lock.yaml").read_bytes()
     first_vectors = (output / "test_vectors.yaml").read_bytes()
     second = generate_interfaces(schema_root, output)
 
     assert first == second
-    assert (output / "include/robot_msgs/robot_msgs.hpp").read_bytes() == first_header
+    assert (output / "include/aster/interfaces.hpp").read_bytes() == first_header
     assert (output / "schema.lock.yaml").read_bytes() == first_lock
     assert (output / "test_vectors.yaml").read_bytes() == first_vectors
     text = first_header.decode()
@@ -138,7 +138,7 @@ def test_generated_header_compiles_and_round_trips(tmp_path: Path) -> None:
 #include <array>
 #include <cassert>
 
-#include "robot_msgs/robot_msgs.hpp"
+#include "aster/interfaces.hpp"
 
 int main() {
   static_assert(aster::runtime::MessageType<test::msg::Command>);

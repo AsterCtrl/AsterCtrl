@@ -1,4 +1,4 @@
-"""Validated in-memory model for Schema First robot interfaces."""
+"""Validated in-memory model for Schema First control interfaces."""
 
 from __future__ import annotations
 

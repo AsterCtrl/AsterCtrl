@@ -101,7 +101,7 @@ class DeploymentPlan:
     deployment_hash: str
     schema_hash: str
     deployment: dict[str, Any]
-    robot: dict[str, Any]
+    application: dict[str, Any]
     instances: tuple[Instance, ...]
     hardware: dict[str, dict[str, Any]]
     boards: dict[str, BoardExport | None]
@@ -126,9 +126,9 @@ def _resolve_path(base: Path, value: str) -> Path:
 
 
 def _place_instances(
-    robot: dict[str, Any], deployment: dict[str, Any]
+    application: dict[str, Any], deployment: dict[str, Any]
 ) -> dict[str, str]:
-    declared = set(robot["instances"])
+    declared = set(application["instances"])
     placed: dict[str, str] = {}
     for node_name, node in deployment["nodes"].items():
         for instance in node["instances"]:
@@ -253,13 +253,13 @@ def _load_boards(
 
 def _load_instances(
     workspace: Workspace,
-    robot: dict[str, Any],
+    application: dict[str, Any],
     placements: dict[str, str],
     hardware: dict[str, dict[str, Any]],
 ) -> tuple[Instance, ...]:
     instances: list[Instance] = []
-    for name in sorted(robot["instances"]):
-        config = robot["instances"][name]
+    for name in sorted(application["instances"]):
+        config = application["instances"][name]
         manifest = workspace.module(config["package"], config["module"])
         node = placements[name]
         hardware_descriptors = manifest.document["spec"].get("hardware", [])
@@ -786,12 +786,14 @@ def _build_plan(
 ) -> DeploymentPlan:
     workspace = Workspace(workspace_path)
     deployment = validate_document(deployment_path)
-    robot_path = _resolve_path(deployment_path.parent, deployment["application"])
-    robot = validate_document(robot_path)
-    placements = _place_instances(robot, deployment)
+    application_path = _resolve_path(
+        deployment_path.parent, deployment["application"]
+    )
+    application = validate_document(application_path)
+    placements = _place_instances(application, deployment)
     hardware = _load_hardware(deployment_path, deployment)
     boards = _load_boards(workspace, deployment, hardware)
-    instances = _load_instances(workspace, robot, placements, hardware)
+    instances = _load_instances(workspace, application, placements, hardware)
     bindings = {
         name: tuple(
             sorted(endpoints, key=lambda item: (item.node, item.instance, item.port))
@@ -807,7 +809,7 @@ def _build_plan(
     deployment_hash = hash16(
         {
             "deployment": deployment,
-            "robot": robot,
+            "application": application,
             "package_lock": workspace.resolved_package_lock,
             "modules": [item.manifest.document for item in instances],
             "hardware": hardware,
@@ -825,7 +827,7 @@ def _build_plan(
         deployment_hash=deployment_hash,
         schema_hash=model.deployment_schema_hash,
         deployment=deployment,
-        robot=robot,
+        application=application,
         instances=instances,
         hardware=hardware,
         boards=boards,

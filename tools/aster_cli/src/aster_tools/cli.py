@@ -28,7 +28,7 @@ def generate_schema(args: argparse.Namespace) -> int:
     return 0
 
 
-def compile_robot_deployment(args: argparse.Namespace) -> int:
+def compile_deployment_command(args: argparse.Namespace) -> int:
     from aster_tools.deployment import compile_deployment
 
     result = compile_deployment(
@@ -42,7 +42,7 @@ def compile_robot_deployment(args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="asterctl")
+    parser = argparse.ArgumentParser(prog="aster")
     parser.add_argument("--version", action="version", version=__version__)
     commands = parser.add_subparsers(dest="command")
 
@@ -59,7 +59,7 @@ def build_parser() -> argparse.ArgumentParser:
     generate.add_argument("output", type=Path)
     generate.set_defaults(handler=generate_schema)
 
-    deploy = commands.add_parser("deploy", help="compile a static robot deployment")
+    deploy = commands.add_parser("deploy", help="compile a static control deployment")
     deploy_commands = deploy.add_subparsers(dest="deploy_command")
     compile_command = deploy_commands.add_parser(
         "compile", help="validate and generate one deployment"
@@ -70,7 +70,7 @@ def build_parser() -> argparse.ArgumentParser:
     compile_command.add_argument(
         "--lock", type=Path, help="authoritative deployment lock to update"
     )
-    compile_command.set_defaults(handler=compile_robot_deployment)
+    compile_command.set_defaults(handler=compile_deployment_command)
     return parser
 
 

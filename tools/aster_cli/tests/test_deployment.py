@@ -23,11 +23,11 @@ def write(root: Path, relative: str, content: str) -> None:
 def create_workspace(tmp_path: Path, max_rate_hz: int = 100) -> tuple[Path, Path]:
     write(
         tmp_path,
-        "robot-msgs/package.yaml",
+        "control-interfaces/package.yaml",
         """\
 api_version: aster.dev/v1alpha1
 kind: Package
-metadata: {name: robot-msgs, version: 0.1.0, license: Apache-2.0}
+metadata: {name: control-interfaces, version: 0.1.0, license: Apache-2.0}
 spec:
   build: {system: aster-schema}
   exports: {schemas: [schemas/msg]}
@@ -36,7 +36,7 @@ spec:
     )
     write(
         tmp_path,
-        "robot-msgs/schemas/msg/Command.msg.yaml",
+        "control-interfaces/schemas/msg/Command.msg.yaml",
         """\
 api_version: aster.dev/schema/v1alpha1
 kind: Message
@@ -56,7 +56,7 @@ spec:
 #include <cstdint>
 #include <string_view>
 
-#include "robot_msgs/robot_msgs.hpp"
+#include "aster/interfaces.hpp"
 #include "aster/runtime/module.hpp"
 
 namespace test {
@@ -136,7 +136,7 @@ class Source final : public aster::runtime::Module {
 #include <cstdint>
 #include <string_view>
 
-#include "robot_msgs/robot_msgs.hpp"
+#include "aster/interfaces.hpp"
 #include "aster/runtime/module.hpp"
 
 namespace test {
@@ -217,7 +217,7 @@ spec:
   exports:
     modules:
       - {{name: {package}, manifest: module.yaml}}
-  dependencies: [robot-msgs]
+  dependencies: [control-interfaces]
 """,
         )
         write(
@@ -246,9 +246,9 @@ spec:
 api_version: aster.dev/v1alpha1
 kind: Workspace
 metadata: {name: test-workspace}
-interfaces: {package: robot-msgs, path: schemas}
+interfaces: {package: control-interfaces, path: schemas}
 packages:
-  - {name: robot-msgs, source: {type: path, path: robot-msgs}}
+  - {name: control-interfaces, source: {type: path, path: control-interfaces}}
   - {name: source, source: {type: path, path: source}}
   - {name: sink, source: {type: path, path: sink}}
 """,
@@ -261,18 +261,18 @@ api_version: aster.dev/v1alpha1
 kind: PackageLock
 metadata: {workspace: test-workspace}
 packages:
-  robot-msgs: {source: robot-msgs, commit: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}
+  control-interfaces: {source: control-interfaces, commit: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}
   source: {source: source, commit: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb}
   sink: {source: sink, commit: cccccccccccccccccccccccccccccccccccccccc}
 """,
     )
     write(
         tmp_path,
-        "robot.yaml",
+        "application.yaml",
         """\
 api_version: aster.dev/v1alpha1
-kind: Robot
-metadata: {name: test-robot}
+kind: Application
+metadata: {name: test-application}
 instances:
   command_source:
     package: source
@@ -296,7 +296,7 @@ kind: HardwareProfile
 metadata: {{name: {node}, board: test/{node}}}
 spec:
   resources:
-    robot_bus: {{kind: can, backend: libxr, resource: can1, options: {{}}}}
+    control_bus: {{kind: can, backend: libxr, resource: can1, options: {{}}}}
     source_device: {{kind: test, backend: fake, resource: source0, options: {{}}}}
   devices: {{}}
 """,
@@ -308,7 +308,7 @@ spec:
 api_version: aster.dev/v1alpha1
 kind: Deployment
 metadata: {{name: dual-node}}
-application: robot.yaml
+application: application.yaml
 time_authority: node_a
 nodes:
   node_a:
@@ -320,11 +320,11 @@ nodes:
     target: {{bsp: test/b, hardware: hardware/node_b.yaml, profile: debug}}
     instances: [command_sink]
 links:
-  robot_can:
+  control_can:
     transport: aster-can
     endpoints:
-      - {{node: node_a, resource: robot_bus}}
-      - {{node: node_b, resource: robot_bus}}
+      - {{node: node_a, resource: control_bus}}
+      - {{node: node_b, resource: control_bus}}
     options: {{frame: classic, bitrate_bps: 1000000, mtu_bytes: 8}}
     budget: {{utilization_limit: 0.65}}
 qos_profiles:
@@ -343,7 +343,7 @@ qos_profiles:
 route_rules:
   - match: {{topic: /control/**}}
     qos: control
-reserved_bandwidth: {{robot_can: 0.20}}
+reserved_bandwidth: {{control_can: 0.20}}
 """,
     )
     return tmp_path / "workspace.yaml", tmp_path / "deployment.yaml"
@@ -427,7 +427,7 @@ def test_compiles_a_deterministic_cross_node_deployment(tmp_path: Path) -> None:
     }
 
     generated_messages = tmp_path / "generated-messages"
-    generate_interfaces(tmp_path / "robot-msgs/schemas", generated_messages)
+    generate_interfaces(tmp_path / "control-interfaces/schemas", generated_messages)
     write(
         tmp_path,
         "composition_test.cpp",
@@ -542,8 +542,8 @@ int main() {
     )
     subprocess.run([str(composition_executable)], check=True)
     budget = yaml.safe_load((output / "reports/link_budget.yaml").read_text())
-    assert budget["links"]["robot_can"]["within_budget"] is True
-    assert budget["links"]["robot_can"]["control_utilization"] > 0
+    assert budget["links"]["control_can"]["within_budget"] is True
+    assert budget["links"]["control_can"]["control_utilization"] > 0
     executors = yaml.safe_load((output / "reports/executors.yaml").read_text())
     assert executors["nodes"]["node_a"][0]["name"] == "command_source__control"
     module_graph = yaml.safe_load(
@@ -729,9 +729,9 @@ def test_reports_a_typed_hardware_contract_mismatch(tmp_path: Path) -> None:
 
 def test_generated_compositions_route_a_topic_over_can(tmp_path: Path) -> None:
     workspace, deployment = create_workspace(tmp_path)
-    robot = tmp_path / "robot.yaml"
-    robot.write_text(
-        robot.read_text(encoding="utf-8")
+    application = tmp_path / "application.yaml"
+    application.write_text(
+        application.read_text(encoding="utf-8")
         + """\
   command_observer:
     package: sink
@@ -761,7 +761,7 @@ def test_generated_compositions_route_a_topic_over_can(tmp_path: Path) -> None:
     assert (output / "nodes/node_b/node_ports.hpp").is_file()
 
     generated_messages = tmp_path / "generated-messages"
-    generate_interfaces(tmp_path / "robot-msgs/schemas", generated_messages)
+    generate_interfaces(tmp_path / "control-interfaces/schemas", generated_messages)
     write(
         tmp_path,
         "generated_transport_test.cpp",
@@ -826,15 +826,15 @@ int main() {
   Wire source_to_sink{{}, &receive_context, clock.now_ns};
   Wire sink_to_source{{}, &receive_context, clock.now_ns};
   std::array<CanLinkWriter, 1> sink_links{{
-      {"robot_can", {SendFrame, &sink_to_source}},
+      {"control_can", {SendFrame, &sink_to_source}},
   }};
   std::array<CanLinkWriter, 1> source_links{{
-      {"robot_can", {SendFrame, &source_to_sink}},
+      {"control_can", {SendFrame, &source_to_sink}},
   }};
   aster::generated::node_b::NodeComposition sink(clock, sink_links);
   aster::generated::node_a::NodeComposition source(clock, source_links);
-  source_to_sink.receiver = sink.CanReceiver("robot_can");
-  sink_to_source.receiver = source.CanReceiver("robot_can");
+  source_to_sink.receiver = sink.CanReceiver("control_can");
+  sink_to_source.receiver = source.CanReceiver("control_can");
 
   StaticHardwareRegistry<1> source_hardware;
   test::Device device;
@@ -936,7 +936,7 @@ def test_generated_composition_runs_local_service_and_action(tmp_path: Path) -> 
     workspace, deployment = create_workspace(tmp_path)
     write(
         tmp_path,
-        "robot-msgs/schemas/srv/SetEnabled.srv.yaml",
+        "control-interfaces/schemas/srv/SetEnabled.srv.yaml",
         """\
 api_version: aster.dev/schema/v1alpha1
 kind: Service
@@ -950,7 +950,7 @@ spec:
     )
     write(
         tmp_path,
-        "robot-msgs/schemas/action/Move.action.yaml",
+        "control-interfaces/schemas/action/Move.action.yaml",
         """\
 api_version: aster.dev/schema/v1alpha1
 kind: Action
@@ -979,7 +979,7 @@ spec:
       - {name: service-client, manifest: service-client.module.yaml}
       - {name: action-server, manifest: action-server.module.yaml}
       - {name: action-client, manifest: action-client.module.yaml}
-  dependencies: [robot-msgs]
+  dependencies: [control-interfaces]
 """,
     )
     write(
@@ -991,7 +991,7 @@ spec:
 #include <cstdint>
 #include <string_view>
 
-#include "robot_msgs/robot_msgs.hpp"
+#include "aster/interfaces.hpp"
 #include "aster/runtime/module.hpp"
 
 namespace test {
@@ -1180,9 +1180,9 @@ spec:
         "commit": "dddddddddddddddddddddddddddddddddddddddd",
     }
     lock_path.write_text(yaml.safe_dump(lock, sort_keys=False))
-    robot_path = tmp_path / "robot.yaml"
-    robot = yaml.safe_load(robot_path.read_text(encoding="utf-8"))
-    robot["instances"].update(
+    application_path = tmp_path / "application.yaml"
+    application = yaml.safe_load(application_path.read_text(encoding="utf-8"))
+    application["instances"].update(
         {
             "local_service_server": {
                 "package": "rpc",
@@ -1206,7 +1206,7 @@ spec:
             },
         }
     )
-    robot_path.write_text(yaml.safe_dump(robot, sort_keys=False))
+    application_path.write_text(yaml.safe_dump(application, sort_keys=False))
     deployment_document = yaml.safe_load(deployment.read_text(encoding="utf-8"))
     deployment_document["nodes"]["node_b"]["instances"].extend(
         [
@@ -1221,7 +1221,7 @@ spec:
     output = tmp_path / "generated"
     compile_deployment(workspace, deployment, output)
     generated_messages = tmp_path / "generated-messages"
-    generate_interfaces(tmp_path / "robot-msgs/schemas", generated_messages)
+    generate_interfaces(tmp_path / "control-interfaces/schemas", generated_messages)
     write(
         tmp_path,
         "local_rpc_test.cpp",
@@ -1270,15 +1270,15 @@ int main() {
   Wire a_to_b{{}, &can_context, clock.now_ns};
   Wire b_to_a{{}, &can_context, clock.now_ns};
   std::array<aster::generated::CanLinkWriter, 1> a_links{{
-      {"robot_can", {SendFrame, &a_to_b}},
+      {"control_can", {SendFrame, &a_to_b}},
   }};
   std::array<aster::generated::CanLinkWriter, 1> b_links{{
-      {"robot_can", {SendFrame, &b_to_a}},
+      {"control_can", {SendFrame, &b_to_a}},
   }};
   aster::generated::node_a::NodeComposition node_a(clock, a_links);
   aster::generated::node_b::NodeComposition node_b(clock, b_links);
-  a_to_b.receiver = node_b.CanReceiver("robot_can");
-  b_to_a.receiver = node_a.CanReceiver("robot_can");
+  a_to_b.receiver = node_b.CanReceiver("control_can");
+  b_to_a.receiver = node_a.CanReceiver("control_can");
 
   StaticHardwareRegistry<1> source_hardware;
   test::Device device;
@@ -1430,15 +1430,15 @@ int main() {
   Wire a_to_b{{}, &can_context, clock.now_ns};
   Wire b_to_a{{}, &can_context, clock.now_ns};
   std::array<aster::generated::CanLinkWriter, 1> a_links{{
-      {"robot_can", {SendFrame, &a_to_b}},
+      {"control_can", {SendFrame, &a_to_b}},
   }};
   std::array<aster::generated::CanLinkWriter, 1> b_links{{
-      {"robot_can", {SendFrame, &b_to_a}},
+      {"control_can", {SendFrame, &b_to_a}},
   }};
   aster::generated::node_a::NodeComposition node_a(clock, a_links);
   aster::generated::node_b::NodeComposition node_b(clock, b_links);
-  a_to_b.receiver = node_b.CanReceiver("robot_can");
-  b_to_a.receiver = node_a.CanReceiver("robot_can");
+  a_to_b.receiver = node_b.CanReceiver("control_can");
+  b_to_a.receiver = node_a.CanReceiver("control_can");
 
   StaticHardwareRegistry<1> source_hardware;
   test::Device device;
@@ -1586,7 +1586,7 @@ def test_multiple_executors_require_one_explicit_default_for_composition(
 def test_rejects_a_classic_can_budget_overflow(tmp_path: Path) -> None:
     workspace, deployment = create_workspace(tmp_path, max_rate_hz=10000)
 
-    with pytest.raises(DeploymentError, match="robot_can.*utilization"):
+    with pytest.raises(DeploymentError, match="control_can.*utilization"):
         compile_deployment(workspace, deployment, tmp_path / "generated")
 
 
@@ -1595,8 +1595,8 @@ def test_route_ids_avoid_reserved_standard_can_ids(tmp_path: Path) -> None:
     hardware = tmp_path / "hardware/node_a.yaml"
     hardware.write_text(
         hardware.read_text(encoding="utf-8").replace(
-            "robot_bus: {kind: can, backend: libxr, resource: can1, options: {}}",
-            "robot_bus: {kind: can, backend: libxr, resource: can1, "
+            "control_bus: {kind: can, backend: libxr, resource: can1, options: {}}",
+            "control_bus: {kind: can, backend: libxr, resource: can1, "
             "options: {}, reserved_standard_ids: [{id: 0x208, owner: legacy}]}"
         ),
         encoding="utf-8",
@@ -1614,8 +1614,8 @@ def test_rejects_reserved_aster_can_control_plane_id(tmp_path: Path) -> None:
     hardware = tmp_path / "hardware/node_a.yaml"
     hardware.write_text(
         hardware.read_text(encoding="utf-8").replace(
-            "robot_bus: {kind: can, backend: libxr, resource: can1, options: {}}",
-            "robot_bus: {kind: can, backend: libxr, resource: can1, "
+            "control_bus: {kind: can, backend: libxr, resource: can1, options: {}}",
+            "control_bus: {kind: can, backend: libxr, resource: can1, "
             "options: {}, reserved_standard_ids: [{id: 1, owner: legacy}]}"
         ),
         encoding="utf-8",
@@ -1635,8 +1635,8 @@ def test_rejects_a_locked_route_that_conflicts_with_reserved_can_id(
     hardware = tmp_path / "hardware/node_a.yaml"
     hardware.write_text(
         hardware.read_text(encoding="utf-8").replace(
-            "robot_bus: {kind: can, backend: libxr, resource: can1, options: {}}",
-            "robot_bus: {kind: can, backend: libxr, resource: can1, "
+            "control_bus: {kind: can, backend: libxr, resource: can1, options: {}}",
+            "control_bus: {kind: can, backend: libxr, resource: can1, "
             "options: {}, reserved_standard_ids: [{id: 0x208, owner: legacy}]}"
         ),
         encoding="utf-8",
@@ -1717,7 +1717,7 @@ kind: Package
 metadata: {name: aster-tools, version: 0.1.0, license: Apache-2.0}
 spec:
   build: {system: python}
-  exports: {tools: [asterctl]}
+  exports: {tools: [aster]}
   dependencies: []
 """,
     )
@@ -1750,9 +1750,9 @@ spec:
 
 def test_rejects_unknown_instance_parameters(tmp_path: Path) -> None:
     workspace, deployment = create_workspace(tmp_path)
-    robot = tmp_path / "robot.yaml"
-    robot.write_text(
-        robot.read_text(encoding="utf-8").replace(
+    application = tmp_path / "application.yaml"
+    application.write_text(
+        application.read_text(encoding="utf-8").replace(
             "parameters: {input_source: 0, gain: 0.25}",
             "parameters: {input_source: 0, gain: 0.25, typo: 1}",
         ),
@@ -1775,9 +1775,9 @@ def test_rejects_invalid_instance_parameter_values(
     tmp_path: Path, parameter_config: str, message: str
 ) -> None:
     workspace, deployment = create_workspace(tmp_path)
-    robot = tmp_path / "robot.yaml"
-    robot.write_text(
-        robot.read_text(encoding="utf-8").replace(
+    application = tmp_path / "application.yaml"
+    application.write_text(
+        application.read_text(encoding="utf-8").replace(
             "{input_source: 0, gain: 0.25}", parameter_config
         ),
         encoding="utf-8",
