@@ -246,6 +246,7 @@ spec:
 api_version: aster.dev/v1alpha1
 kind: Workspace
 metadata: {name: test-workspace}
+interfaces: {package: robot-msgs, path: schemas}
 packages:
   - {name: robot-msgs, source: {type: path, path: robot-msgs}}
   - {name: source, source: {type: path, path: source}}

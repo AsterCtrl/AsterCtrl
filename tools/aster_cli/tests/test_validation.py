@@ -12,6 +12,9 @@ api_version: aster.dev/v1alpha1
 kind: Workspace
 metadata:
   name: test-workspace
+interfaces:
+  package: robot-msgs
+  path: schemas
 packages:
   - name: aster-runtime
     source:

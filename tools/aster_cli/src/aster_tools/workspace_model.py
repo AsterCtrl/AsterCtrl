@@ -184,8 +184,14 @@ class Workspace:
         return package.boards[board_name]
 
     def interface_model(self) -> InterfaceModel:
-        package = self.package("robot-msgs")
-        return load_interface_model(package.path / "schemas")
+        interface_config = self.document["interfaces"]
+        package = self.package(interface_config["package"])
+        schema_path = (package.path / interface_config["path"]).resolve()
+        if package.path.resolve() not in schema_path.parents:
+            raise WorkspaceError("interface path escapes its Package")
+        if not schema_path.is_dir():
+            raise WorkspaceError(f"{schema_path}: interface schema path not found")
+        return load_interface_model(schema_path)
 
     def _verify_git_lock(self, name: str, path: Path) -> None:
         if not (path / ".git").exists():

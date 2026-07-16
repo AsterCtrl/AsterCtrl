@@ -17,6 +17,7 @@ def test_validate_command_accepts_a_known_document(tmp_path) -> None:
 api_version: aster.dev/v1alpha1
 kind: Workspace
 metadata: {name: test}
+interfaces: {package: robot-msgs, path: schemas}
 packages: []
 """,
         encoding="utf-8",

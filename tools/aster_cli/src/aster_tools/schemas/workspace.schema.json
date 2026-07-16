@@ -2,11 +2,20 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
   "additionalProperties": false,
-  "required": ["api_version", "kind", "metadata", "packages"],
+  "required": ["api_version", "kind", "metadata", "interfaces", "packages"],
   "properties": {
     "api_version": {"const": "aster.dev/v1alpha1"},
     "kind": {"const": "Workspace"},
     "metadata": {"$ref": "#/$defs/metadata"},
+    "interfaces": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["package", "path"],
+      "properties": {
+        "package": {"type": "string", "pattern": "^[a-z][a-z0-9-]*$"},
+        "path": {"type": "string", "minLength": 1}
+      }
+    },
     "packages": {
       "type": "array",
       "items": {"$ref": "#/$defs/packageSource"}
