@@ -5,14 +5,14 @@
 #include <span>
 
 #include "allocation_tracker.hpp"
-#include "xrobot/transport/can/control_plane.hpp"
-#include "xrobot/transport/can/fast_path.hpp"
-#include "xrobot/transport/can/reliable_path.hpp"
+#include "aster/transport/can/control_plane.hpp"
+#include "aster/transport/can/fast_path.hpp"
+#include "aster/transport/can/reliable_path.hpp"
 
 namespace {
 
-using xrobot::runtime::Status;
-using namespace xrobot::transport::can;
+using aster::runtime::Status;
+using namespace aster::transport::can;
 
 void ArbitrationIdCarriesPriorityAndRoute() {
   std::uint16_t encoded{};
@@ -251,7 +251,7 @@ void ControlPlaneHasStableCompactWireVectors() {
 }  // namespace
 
 int main() {
-  const auto allocations = xrobot_test::AllocationCount();
+  const auto allocations = aster_test::AllocationCount();
   ArbitrationIdCarriesPriorityAndRoute();
   FastPathUsesSingleAndFragmentedFixedFrames();
   FastPathDropsAnIncompleteOlderSample();
@@ -259,6 +259,6 @@ int main() {
   ReliablePathAcknowledgesAndRetriesWholeMessages();
   CompatibilityHeartbeatTimeAndFreshnessAreExplicit();
   ControlPlaneHasStableCompactWireVectors();
-  assert(xrobot_test::AllocationCount() == allocations);
+  assert(aster_test::AllocationCount() == allocations);
   return 0;
 }

@@ -4,9 +4,9 @@
 #include <span>
 
 #include "allocation_tracker.hpp"
-#include "xrobot/runtime/cooperative_executor.hpp"
-#include "xrobot/runtime/service.hpp"
-#include "xrobot/transport/can/service_bridge.hpp"
+#include "aster/runtime/cooperative_executor.hpp"
+#include "aster/runtime/service.hpp"
+#include "aster/transport/can/service_bridge.hpp"
 
 namespace test {
 
@@ -23,7 +23,7 @@ struct Add {};
 
 }  // namespace test
 
-namespace xrobot::runtime {
+namespace aster::runtime {
 
 template <>
 struct TypeSupport<test::AddRequest> {
@@ -102,17 +102,17 @@ struct ServiceTypeSupport<test::Add> {
   }
 };
 
-}  // namespace xrobot::runtime
+}  // namespace aster::runtime
 
 namespace {
 
-using xrobot::runtime::CooperativeExecutor;
-using xrobot::runtime::ExecutionContext;
-using xrobot::runtime::ExecutionKind;
-using xrobot::runtime::ServiceCallInfo;
-using xrobot::runtime::StaticService;
-using xrobot::runtime::Status;
-using namespace xrobot::transport::can;
+using aster::runtime::CooperativeExecutor;
+using aster::runtime::ExecutionContext;
+using aster::runtime::ExecutionKind;
+using aster::runtime::ServiceCallInfo;
+using aster::runtime::StaticService;
+using aster::runtime::Status;
+using namespace aster::transport::can;
 
 Status Add(void*, const test::AddRequest& request, test::AddResponse& response,
            const ServiceCallInfo&,
@@ -277,9 +277,9 @@ void ServiceRetriesAfterAFrameIsLost() {
 }  // namespace
 
 int main() {
-  const auto allocations = xrobot_test::AllocationCount();
+  const auto allocations = aster_test::AllocationCount();
   ServiceUsesTheSameClientInterfaceAcrossCan();
   ServiceRetriesAfterAFrameIsLost();
-  assert(xrobot_test::AllocationCount() == allocations);
+  assert(aster_test::AllocationCount() == allocations);
   return 0;
 }

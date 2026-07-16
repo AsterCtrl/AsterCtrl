@@ -6,9 +6,9 @@
 #include <cstdint>
 #include <span>
 
-#include "xrobot/transport/can/protocol.hpp"
+#include "aster/transport/can/protocol.hpp"
 
-namespace xrobot::transport::can {
+namespace aster::transport::can {
 
 class FastCodec {
  public:
@@ -259,4 +259,4 @@ class FastReassembler {
   FastReassemblyStats stats_{};
 };
 
-}  // namespace xrobot::transport::can
+}  // namespace aster::transport::can

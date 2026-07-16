@@ -6,9 +6,9 @@
 #include <cstdint>
 #include <span>
 
-#include "xrobot/transport/can/protocol.hpp"
+#include "aster/transport/can/protocol.hpp"
 
-namespace xrobot::transport::can {
+namespace aster::transport::can {
 
 enum class ReliableSubtype : std::uint8_t {
   kData = 0,
@@ -273,4 +273,4 @@ class ReliableReceiver {
   ReliableReceiverStats stats_{};
 };
 
-}  // namespace xrobot::transport::can
+}  // namespace aster::transport::can

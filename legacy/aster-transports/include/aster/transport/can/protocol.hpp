@@ -6,11 +6,11 @@
 #include <optional>
 #include <span>
 
-#include "xrobot/runtime/status.hpp"
+#include "aster/runtime/status.hpp"
 
-namespace xrobot::transport::can {
+namespace aster::transport::can {
 
-using xrobot::runtime::Status;
+using aster::runtime::Status;
 
 inline constexpr std::uint16_t kMaximumRouteId = 511;
 inline constexpr std::uint16_t kFirstApplicationRouteId = 8;
@@ -91,4 +91,4 @@ struct LinkStats {
   std::uint32_t deadline_misses{};
 };
 
-}  // namespace xrobot::transport::can
+}  // namespace aster::transport::can

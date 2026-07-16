@@ -6,9 +6,9 @@
 #include <cstdint>
 #include <span>
 
-#include "xrobot/transport/can/protocol.hpp"
+#include "aster/transport/can/protocol.hpp"
 
-namespace xrobot::transport::can {
+namespace aster::transport::can {
 
 inline constexpr std::uint16_t kHandshakeRouteId = 1;
 inline constexpr std::uint16_t kHeartbeatRouteId = 2;
@@ -339,4 +339,4 @@ class FreshnessGuard {
   FreshnessState state_{FreshnessState::kUnarmed};
 };
 
-}  // namespace xrobot::transport::can
+}  // namespace aster::transport::can

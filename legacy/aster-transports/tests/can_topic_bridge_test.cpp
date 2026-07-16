@@ -5,9 +5,9 @@
 #include <span>
 
 #include "allocation_tracker.hpp"
-#include "xrobot/runtime/cooperative_executor.hpp"
-#include "xrobot/runtime/topic.hpp"
-#include "xrobot/transport/can/topic_bridge.hpp"
+#include "aster/runtime/cooperative_executor.hpp"
+#include "aster/runtime/topic.hpp"
+#include "aster/transport/can/topic_bridge.hpp"
 
 namespace test {
 
@@ -17,7 +17,7 @@ struct Command {
 
 }  // namespace test
 
-namespace xrobot::runtime {
+namespace aster::runtime {
 
 template <>
 struct TypeSupport<test::Command> {
@@ -54,19 +54,19 @@ struct TypeSupport<test::Command> {
   }
 };
 
-}  // namespace xrobot::runtime
+}  // namespace aster::runtime
 
 namespace {
 
-using xrobot::runtime::CooperativeExecutor;
-using xrobot::runtime::DeliveryPolicy;
-using xrobot::runtime::ExecutionContext;
-using xrobot::runtime::ExecutionKind;
-using xrobot::runtime::MessageInfo;
-using xrobot::runtime::StaticTopic;
-using xrobot::runtime::Status;
-using xrobot::runtime::TopicSubscription;
-using namespace xrobot::transport::can;
+using aster::runtime::CooperativeExecutor;
+using aster::runtime::DeliveryPolicy;
+using aster::runtime::ExecutionContext;
+using aster::runtime::ExecutionKind;
+using aster::runtime::MessageInfo;
+using aster::runtime::StaticTopic;
+using aster::runtime::Status;
+using aster::runtime::TopicSubscription;
+using namespace aster::transport::can;
 
 struct Receiver {
   test::Command command;
@@ -220,10 +220,10 @@ void EgressEnforcesTheConfiguredMaximumRate() {
 }  // namespace
 
 int main() {
-  const auto allocations = xrobot_test::AllocationCount();
+  const auto allocations = aster_test::AllocationCount();
   SameTopicContractCrossesTheSimulatedCanLink();
   MissingFragmentDoesNotLeakAPartialMessageAndLatestRecovers();
   EgressEnforcesTheConfiguredMaximumRate();
-  assert(xrobot_test::AllocationCount() == allocations);
+  assert(aster_test::AllocationCount() == allocations);
   return 0;
 }

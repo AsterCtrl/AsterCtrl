@@ -4,14 +4,14 @@
 #include <cstdint>
 
 #include "allocation_tracker.hpp"
-#include "xrobot/transport/can/link_control.hpp"
+#include "aster/transport/can/link_control.hpp"
 
 namespace {
 
-using xrobot::runtime::ExecutionContext;
-using xrobot::runtime::ExecutionKind;
-using xrobot::runtime::Status;
-using namespace xrobot::transport::can;
+using aster::runtime::ExecutionContext;
+using aster::runtime::ExecutionKind;
+using aster::runtime::Status;
+using namespace aster::transport::can;
 
 struct Clock {
   std::uint64_t now_ns{1'000'000};
@@ -163,10 +163,10 @@ void HeartbeatTimeoutClosesAndFreshTrafficReopensTheGate() {
 }  // namespace
 
 int main() {
-  const auto allocations = xrobot_test::AllocationCount();
+  const auto allocations = aster_test::AllocationCount();
   CompatiblePeersEnableApplicationTrafficAndNetworkTime();
   SchemaMismatchNeverEnablesApplicationTraffic();
   HeartbeatTimeoutClosesAndFreshTrafficReopensTheGate();
-  assert(xrobot_test::AllocationCount() == allocations);
+  assert(aster_test::AllocationCount() == allocations);
   return 0;
 }

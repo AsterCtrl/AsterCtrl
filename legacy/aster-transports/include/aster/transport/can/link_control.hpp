@@ -4,13 +4,13 @@
 #include <cstddef>
 #include <cstdint>
 
-#include "xrobot/runtime/execution_context.hpp"
-#include "xrobot/runtime/status.hpp"
-#include "xrobot/transport/can/control_plane.hpp"
-#include "xrobot/transport/can/link.hpp"
-#include "xrobot/transport/can/reliable_path.hpp"
+#include "aster/runtime/execution_context.hpp"
+#include "aster/runtime/status.hpp"
+#include "aster/transport/can/control_plane.hpp"
+#include "aster/transport/can/link.hpp"
+#include "aster/transport/can/reliable_path.hpp"
 
-namespace xrobot::transport::can {
+namespace aster::transport::can {
 
 struct CanLinkControlConfig {
   Handshake local;
@@ -57,8 +57,8 @@ class CanLinkControlPlane {
   CanLinkControlPlane& operator=(CanLinkControlPlane&&) = delete;
 
   Status Poll(std::uint64_t now_ns,
-              const xrobot::runtime::ExecutionContext& caller) noexcept {
-    using xrobot::runtime::ExecutionKind;
+              const aster::runtime::ExecutionContext& caller) noexcept {
+    using aster::runtime::ExecutionKind;
 
     if (!valid_) return Status::kInvalidArgument;
     if (caller.kind() == ExecutionKind::kInterrupt ||
@@ -147,7 +147,7 @@ class CanLinkControlPlane {
   }
 
   Status Accept(const CanFrame& frame, std::uint64_t receive_local_time_ns,
-                const xrobot::runtime::ExecutionContext& caller) noexcept {
+                const aster::runtime::ExecutionContext& caller) noexcept {
     if (!valid_) return Status::kInvalidArgument;
     const auto id = CanArbitrationId::Decode(frame.arbitration_id);
     if (!id.has_value() || id->priority != CanPriority::kCritical) {
@@ -225,7 +225,7 @@ class CanLinkControlPlane {
   }
 
   Status PumpHandshake(
-      const xrobot::runtime::ExecutionContext& caller) noexcept {
+      const aster::runtime::ExecutionContext& caller) noexcept {
     CanFrame frame;
     while (handshake_sender_.NextFrame(frame) == Status::kOk) {
       const auto status = physical_writer_.Send(frame, caller);
@@ -236,7 +236,7 @@ class CanLinkControlPlane {
 
   Status AcceptHandshake(
       const CanFrame& frame,
-      const xrobot::runtime::ExecutionContext& caller) noexcept {
+      const aster::runtime::ExecutionContext& caller) noexcept {
     if (frame.size == 0 ||
         GetFrameKind(frame.data[0]) != FrameKind::kReliable) {
       return Status::kInvalidArgument;
@@ -291,7 +291,7 @@ class CanLinkControlPlane {
 
   static Status WriteApplication(
       void* state, const CanFrame& frame,
-      const xrobot::runtime::ExecutionContext& caller) noexcept {
+      const aster::runtime::ExecutionContext& caller) noexcept {
     auto& self = *static_cast<CanLinkControlPlane*>(state);
     const auto id = CanArbitrationId::Decode(frame.arbitration_id);
     if (!id.has_value() || id->route_id < kFirstApplicationRouteId) {
@@ -351,4 +351,4 @@ class CanLinkControlPlane {
   CanLinkControlStats stats_{};
 };
 
-}  // namespace xrobot::transport::can
+}  // namespace aster::transport::can

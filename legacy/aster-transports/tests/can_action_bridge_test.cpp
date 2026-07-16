@@ -4,9 +4,9 @@
 #include <span>
 
 #include "allocation_tracker.hpp"
-#include "xrobot/runtime/action.hpp"
-#include "xrobot/runtime/cooperative_executor.hpp"
-#include "xrobot/transport/can/action_bridge.hpp"
+#include "aster/runtime/action.hpp"
+#include "aster/runtime/cooperative_executor.hpp"
+#include "aster/transport/can/action_bridge.hpp"
 
 namespace test {
 
@@ -23,7 +23,7 @@ struct Move {};
 
 }  // namespace test
 
-namespace xrobot::runtime {
+namespace aster::runtime {
 
 template <>
 struct TypeSupport<test::MoveGoal> {
@@ -120,18 +120,18 @@ struct ActionTypeSupport<test::Move> {
   }
 };
 
-}  // namespace xrobot::runtime
+}  // namespace aster::runtime
 
 namespace {
 
-using xrobot::runtime::ActionCallbacks;
-using xrobot::runtime::ActionGoalHandle;
-using xrobot::runtime::CooperativeExecutor;
-using xrobot::runtime::ExecutionContext;
-using xrobot::runtime::ExecutionKind;
-using xrobot::runtime::StaticAction;
-using xrobot::runtime::Status;
-using namespace xrobot::transport::can;
+using aster::runtime::ActionCallbacks;
+using aster::runtime::ActionGoalHandle;
+using aster::runtime::CooperativeExecutor;
+using aster::runtime::ExecutionContext;
+using aster::runtime::ExecutionKind;
+using aster::runtime::StaticAction;
+using aster::runtime::Status;
+using namespace aster::transport::can;
 
 struct LocalState {
   ActionGoalHandle handle;
@@ -405,10 +405,10 @@ void ActionTimeoutReleasesTheClientForANewGoal() {
 }  // namespace
 
 int main() {
-  const auto allocations = xrobot_test::AllocationCount();
+  const auto allocations = aster_test::AllocationCount();
   ActionGoalFeedbackResultAndCancelCrossCan();
   ActionRetriesAnIncompleteGoalAfterFrameLoss();
   ActionTimeoutReleasesTheClientForANewGoal();
-  assert(xrobot_test::AllocationCount() == allocations);
+  assert(aster_test::AllocationCount() == allocations);
   return 0;
 }

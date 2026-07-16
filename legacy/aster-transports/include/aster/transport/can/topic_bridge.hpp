@@ -5,12 +5,12 @@
 #include <cstdint>
 #include <span>
 
-#include "xrobot/runtime/topic.hpp"
-#include "xrobot/transport/can/control_plane.hpp"
-#include "xrobot/transport/can/fast_path.hpp"
-#include "xrobot/transport/can/link.hpp"
+#include "aster/runtime/topic.hpp"
+#include "aster/transport/can/control_plane.hpp"
+#include "aster/transport/can/fast_path.hpp"
+#include "aster/transport/can/link.hpp"
 
-namespace xrobot::transport::can {
+namespace aster::transport::can {
 
 struct TopicEgressStats {
   std::uint32_t messages{};
@@ -20,11 +20,11 @@ struct TopicEgressStats {
   std::uint32_t send_failures{};
 };
 
-template <xrobot::runtime::MessageType Message>
-class FastTopicEgress final : public xrobot::runtime::TopicSink<Message> {
+template <aster::runtime::MessageType Message>
+class FastTopicEgress final : public aster::runtime::TopicSink<Message> {
  public:
   static constexpr std::size_t kMessageSize =
-      xrobot::runtime::TypeSupport<Message>::descriptor().max_serialized_size;
+      aster::runtime::TypeSupport<Message>::descriptor().max_serialized_size;
   static constexpr std::size_t kPayloadSize = kMessageSize + 2;
   static constexpr std::size_t kMaximumFrames =
       kPayloadSize <= 7 ? 1 : (kPayloadSize + 5) / 6;
@@ -40,8 +40,8 @@ class FastTopicEgress final : public xrobot::runtime::TopicSink<Message> {
         minimum_period_ns_(minimum_period_ns) {}
 
   Status Deliver(
-      const Message& message, const xrobot::runtime::MessageInfo& info,
-      const xrobot::runtime::ExecutionContext& caller) noexcept override {
+      const Message& message, const aster::runtime::MessageInfo& info,
+      const aster::runtime::ExecutionContext& caller) noexcept override {
     const auto source_time_ns = time_.ToNetworkTime(info.source_timestamp_ns);
     if (has_last_send_ && source_time_ns >= last_send_time_ns_ &&
         source_time_ns - last_send_time_ns_ < minimum_period_ns_) {
@@ -53,7 +53,7 @@ class FastTopicEgress final : public xrobot::runtime::TopicSink<Message> {
     payload_[0] = static_cast<std::byte>(tick & 0xffU);
     payload_[1] = static_cast<std::byte>(tick >> 8U);
     std::size_t written{};
-    const auto encode_status = xrobot::runtime::TypeSupport<Message>::Encode(
+    const auto encode_status = aster::runtime::TypeSupport<Message>::Encode(
         message, std::span<std::byte>(payload_).subspan(2), written);
     if (encode_status != Status::kOk || written != kMessageSize) {
       ++stats_.encode_failures;
@@ -105,20 +105,20 @@ struct TopicIngressStats {
   std::uint32_t publish_failures{};
 };
 
-template <xrobot::runtime::MessageType Message>
+template <aster::runtime::MessageType Message>
 class FastTopicIngress {
  public:
   static constexpr std::size_t kMessageSize =
-      xrobot::runtime::TypeSupport<Message>::descriptor().max_serialized_size;
+      aster::runtime::TypeSupport<Message>::descriptor().max_serialized_size;
   static constexpr std::size_t kPayloadSize = kMessageSize + 2;
 
   constexpr FastTopicIngress(
-      std::uint16_t route_id, xrobot::runtime::TopicPublisher<Message> publisher,
+      std::uint16_t route_id, aster::runtime::TopicPublisher<Message> publisher,
       FreshnessConfig freshness) noexcept
       : route_id_(route_id), publisher_(publisher), freshness_(freshness) {}
 
   Status Accept(const CanFrame& frame, std::uint64_t receive_network_time_ns,
-                const xrobot::runtime::ExecutionContext& caller) noexcept {
+                const aster::runtime::ExecutionContext& caller) noexcept {
     const auto id = CanArbitrationId::Decode(frame.arbitration_id);
     if (!id.has_value()) {
       return Status::kInvalidArgument;
@@ -147,7 +147,7 @@ class FastTopicIngress {
       return Status::kTimeout;
     }
     Message message;
-    const auto decode_status = xrobot::runtime::TypeSupport<Message>::Decode(
+    const auto decode_status = aster::runtime::TypeSupport<Message>::Decode(
         reassembled.payload.subspan(2), message);
     if (decode_status != Status::kOk) {
       ++stats_.decode_failures;
@@ -187,10 +187,10 @@ class FastTopicIngress {
   }
 
   std::uint16_t route_id_{};
-  xrobot::runtime::TopicPublisher<Message> publisher_;
+  aster::runtime::TopicPublisher<Message> publisher_;
   FastReassembler<kPayloadSize> reassembler_;
   FreshnessGuard freshness_;
   TopicIngressStats stats_{};
 };
 
-}  // namespace xrobot::transport::can
+}  // namespace aster::transport::can

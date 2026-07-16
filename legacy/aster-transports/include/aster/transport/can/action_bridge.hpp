@@ -6,10 +6,10 @@
 #include <cstdint>
 #include <span>
 
-#include "xrobot/runtime/action.hpp"
-#include "xrobot/transport/can/service_bridge.hpp"
+#include "aster/runtime/action.hpp"
+#include "aster/transport/can/service_bridge.hpp"
 
-namespace xrobot::transport::can {
+namespace aster::transport::can {
 
 enum class ActionWireOperation : std::uint8_t {
   kGoal = 0,
@@ -77,18 +77,18 @@ struct ActionClientTransportStats {
   std::uint32_t timeouts{};
 };
 
-template <xrobot::runtime::ActionType Action>
-class CanActionClient final : public xrobot::runtime::ActionClientEndpoint<Action> {
+template <aster::runtime::ActionType Action>
+class CanActionClient final : public aster::runtime::ActionClientEndpoint<Action> {
  public:
-  using Goal = xrobot::runtime::ActionGoal<Action>;
-  using Feedback = xrobot::runtime::ActionFeedback<Action>;
-  using Result = xrobot::runtime::ActionResult<Action>;
+  using Goal = aster::runtime::ActionGoal<Action>;
+  using Feedback = aster::runtime::ActionFeedback<Action>;
+  using Result = aster::runtime::ActionResult<Action>;
   static constexpr std::size_t kGoalSize =
-      xrobot::runtime::TypeSupport<Goal>::descriptor().max_serialized_size;
+      aster::runtime::TypeSupport<Goal>::descriptor().max_serialized_size;
   static constexpr std::size_t kFeedbackSize =
-      xrobot::runtime::TypeSupport<Feedback>::descriptor().max_serialized_size;
+      aster::runtime::TypeSupport<Feedback>::descriptor().max_serialized_size;
   static constexpr std::size_t kResultSize =
-      xrobot::runtime::TypeSupport<Result>::descriptor().max_serialized_size;
+      aster::runtime::TypeSupport<Result>::descriptor().max_serialized_size;
   static constexpr std::size_t kClientPayloadSize = 13U + kGoalSize;
   static constexpr std::size_t kServerPayloadSize =
       std::max({std::size_t{6}, 5U + kFeedbackSize, 6U + kResultSize});
@@ -104,10 +104,10 @@ class CanActionClient final : public xrobot::runtime::ActionClientEndpoint<Actio
         retry_timeout_ns_(retry_timeout_ns),
         maximum_retries_(maximum_retries) {}
 
-  Status SendGoal(const Goal& goal, xrobot::runtime::ActionCallbacks<Action> callbacks,
+  Status SendGoal(const Goal& goal, aster::runtime::ActionCallbacks<Action> callbacks,
                   std::uint64_t deadline_ns,
-                  const xrobot::runtime::ExecutionContext& caller,
-                  xrobot::runtime::ActionGoalHandle& handle) noexcept override {
+                  const aster::runtime::ExecutionContext& caller,
+                  aster::runtime::ActionGoalHandle& handle) noexcept override {
     handle = {};
     if (active_ || callbacks.on_goal_response == nullptr ||
         callbacks.on_result == nullptr || clock_.read == nullptr) {
@@ -125,7 +125,7 @@ class CanActionClient final : public xrobot::runtime::ActionClientEndpoint<Actio
     action_detail::WriteU64(deadline_ns,
                             std::span<std::byte>(outbound_).subspan<5, 8>());
     std::size_t written{};
-    const auto encode_status = xrobot::runtime::TypeSupport<Goal>::Encode(
+    const auto encode_status = aster::runtime::TypeSupport<Goal>::Encode(
         goal, std::span<std::byte>(outbound_).subspan(13), written);
     if (encode_status != Status::kOk || written != kGoalSize) {
       ++stats_.rejected;
@@ -147,8 +147,8 @@ class CanActionClient final : public xrobot::runtime::ActionClientEndpoint<Actio
     return Status::kOk;
   }
 
-  Status Cancel(xrobot::runtime::ActionGoalHandle handle,
-                const xrobot::runtime::ExecutionContext& caller) noexcept override {
+  Status Cancel(aster::runtime::ActionGoalHandle handle,
+                const aster::runtime::ExecutionContext& caller) noexcept override {
     if (!active_ || handle != handle_ || action_detail::SenderBusy(sender_.state())) {
       return Status::kInvalidState;
     }
@@ -165,7 +165,7 @@ class CanActionClient final : public xrobot::runtime::ActionClientEndpoint<Actio
   }
 
   Status Accept(const CanFrame& frame, std::uint64_t,
-                const xrobot::runtime::ExecutionContext& caller) noexcept {
+                const aster::runtime::ExecutionContext& caller) noexcept {
     if (frame.size == 0 || GetFrameKind(frame.data[0]) != FrameKind::kReliable) {
       return Status::kInvalidArgument;
     }
@@ -213,7 +213,7 @@ class CanActionClient final : public xrobot::runtime::ActionClientEndpoint<Actio
   }
 
   Status Poll(std::uint64_t now_ns,
-              const xrobot::runtime::ExecutionContext& caller) noexcept {
+              const aster::runtime::ExecutionContext& caller) noexcept {
     const auto status = sender_.Poll(now_ns);
     if (status == Status::kOk) {
       return Pump(caller);
@@ -239,8 +239,8 @@ class CanActionClient final : public xrobot::runtime::ActionClientEndpoint<Actio
     return status;
   }
 
-  xrobot::runtime::ActionClient<Action> client() noexcept {
-    return xrobot::runtime::ActionClient<Action>(*this);
+  aster::runtime::ActionClient<Action> client() noexcept {
+    return aster::runtime::ActionClient<Action>(*this);
   }
   const ActionClientTransportStats& stats() const noexcept { return stats_; }
 
@@ -252,7 +252,7 @@ class CanActionClient final : public xrobot::runtime::ActionClientEndpoint<Actio
   };
 
   Status SendOutbound(std::size_t size, ActionWireOperation operation,
-                      const xrobot::runtime::ExecutionContext& caller) noexcept {
+                      const aster::runtime::ExecutionContext& caller) noexcept {
     if (action_detail::SenderBusy(sender_.state())) {
       return Status::kCapacityExceeded;
     }
@@ -271,7 +271,7 @@ class CanActionClient final : public xrobot::runtime::ActionClientEndpoint<Actio
     return Pump(caller);
   }
 
-  Status Pump(const xrobot::runtime::ExecutionContext& caller) noexcept {
+  Status Pump(const aster::runtime::ExecutionContext& caller) noexcept {
     CanFrame frame;
     while (sender_.NextFrame(frame) == Status::kOk) {
       const auto status = writer_.Send(frame, caller);
@@ -284,7 +284,7 @@ class CanActionClient final : public xrobot::runtime::ActionClientEndpoint<Actio
 
   Status HandleGoalResponse(
       const ReassembledMessage& message,
-      const xrobot::runtime::ExecutionContext& caller) noexcept {
+      const aster::runtime::ExecutionContext& caller) noexcept {
     if (message.payload.size() != 6) {
       return DecodeFailure();
     }
@@ -304,12 +304,12 @@ class CanActionClient final : public xrobot::runtime::ActionClientEndpoint<Actio
 
   Status HandleFeedback(
       const ReassembledMessage& message,
-      const xrobot::runtime::ExecutionContext& caller) noexcept {
+      const aster::runtime::ExecutionContext& caller) noexcept {
     if (message.payload.size() != 5U + kFeedbackSize) {
       return DecodeFailure();
     }
     Feedback feedback;
-    const auto status = xrobot::runtime::TypeSupport<Feedback>::Decode(
+    const auto status = aster::runtime::TypeSupport<Feedback>::Decode(
         message.payload.subspan(5), feedback);
     if (status != Status::kOk) {
       return DecodeFailure();
@@ -322,7 +322,7 @@ class CanActionClient final : public xrobot::runtime::ActionClientEndpoint<Actio
   }
 
   Status HandleResult(const ReassembledMessage& message,
-                      const xrobot::runtime::ExecutionContext& caller) noexcept {
+                      const aster::runtime::ExecutionContext& caller) noexcept {
     if (message.payload.size() != 6U + kResultSize) {
       return DecodeFailure();
     }
@@ -331,7 +331,7 @@ class CanActionClient final : public xrobot::runtime::ActionClientEndpoint<Actio
       return DecodeFailure();
     }
     Result result;
-    const auto decode_status = xrobot::runtime::TypeSupport<Result>::Decode(
+    const auto decode_status = aster::runtime::TypeSupport<Result>::Decode(
         message.payload.subspan(6), result);
     if (decode_status != Status::kOk) {
       return DecodeFailure();
@@ -347,7 +347,7 @@ class CanActionClient final : public xrobot::runtime::ActionClientEndpoint<Actio
 
   Status HandleCancelResponse(
       const ReassembledMessage& message,
-      const xrobot::runtime::ExecutionContext& caller) noexcept {
+      const aster::runtime::ExecutionContext& caller) noexcept {
     if (message.payload.size() != 6 || callbacks_.on_cancel_response == nullptr) {
       return DecodeFailure();
     }
@@ -383,8 +383,8 @@ class CanActionClient final : public xrobot::runtime::ActionClientEndpoint<Actio
   std::array<std::byte, kClientPayloadSize> outbound_{};
   ReliableSender<kClientPayloadSize> sender_;
   ReliableReceiver<kServerPayloadSize> receiver_;
-  xrobot::runtime::ActionGoalHandle handle_{};
-  xrobot::runtime::ActionCallbacks<Action> callbacks_{};
+  aster::runtime::ActionGoalHandle handle_{};
+  aster::runtime::ActionCallbacks<Action> callbacks_{};
   bool active_{};
   ActionClientTransportStats stats_{};
 };
@@ -399,24 +399,24 @@ struct ActionServerTransportStats {
   std::uint32_t send_failures{};
 };
 
-template <xrobot::runtime::ActionType Action>
+template <aster::runtime::ActionType Action>
 class CanActionServer {
  public:
-  using Goal = xrobot::runtime::ActionGoal<Action>;
-  using Feedback = xrobot::runtime::ActionFeedback<Action>;
-  using Result = xrobot::runtime::ActionResult<Action>;
+  using Goal = aster::runtime::ActionGoal<Action>;
+  using Feedback = aster::runtime::ActionFeedback<Action>;
+  using Result = aster::runtime::ActionResult<Action>;
   static constexpr std::size_t kGoalSize =
-      xrobot::runtime::TypeSupport<Goal>::descriptor().max_serialized_size;
+      aster::runtime::TypeSupport<Goal>::descriptor().max_serialized_size;
   static constexpr std::size_t kFeedbackSize =
-      xrobot::runtime::TypeSupport<Feedback>::descriptor().max_serialized_size;
+      aster::runtime::TypeSupport<Feedback>::descriptor().max_serialized_size;
   static constexpr std::size_t kResultSize =
-      xrobot::runtime::TypeSupport<Result>::descriptor().max_serialized_size;
+      aster::runtime::TypeSupport<Result>::descriptor().max_serialized_size;
   static constexpr std::size_t kClientPayloadSize = 13U + kGoalSize;
   static constexpr std::size_t kServerPayloadSize =
       std::max({std::size_t{6}, 5U + kFeedbackSize, 6U + kResultSize});
 
   constexpr CanActionServer(std::uint16_t route_id, CanPriority priority,
-                            xrobot::runtime::ActionClient<Action> local_action,
+                            aster::runtime::ActionClient<Action> local_action,
                             CanFrameWriter writer, CanClockReader clock,
                             std::uint64_t retry_timeout_ns = 5'000'000,
                             std::uint8_t maximum_retries = 2) noexcept
@@ -429,7 +429,7 @@ class CanActionServer {
         maximum_retries_(maximum_retries) {}
 
   Status Accept(const CanFrame& frame, std::uint64_t,
-                const xrobot::runtime::ExecutionContext& caller) noexcept {
+                const aster::runtime::ExecutionContext& caller) noexcept {
     if (frame.size == 0 || GetFrameKind(frame.data[0]) != FrameKind::kReliable) {
       return Status::kInvalidArgument;
     }
@@ -465,7 +465,7 @@ class CanActionServer {
   }
 
   Status Poll(std::uint64_t now_ns,
-              const xrobot::runtime::ExecutionContext& caller) noexcept {
+              const aster::runtime::ExecutionContext& caller) noexcept {
     const auto status = sender_.Poll(now_ns);
     return status == Status::kOk ? Pump(caller) : status;
   }
@@ -474,8 +474,8 @@ class CanActionServer {
 
  private:
   static void GoalResponseThunk(
-      void* state, xrobot::runtime::ActionGoalHandle, Status status,
-      const xrobot::runtime::ExecutionContext& context) noexcept {
+      void* state, aster::runtime::ActionGoalHandle, Status status,
+      const aster::runtime::ExecutionContext& context) noexcept {
     auto& self = *static_cast<CanActionServer*>(state);
     if (self.SendStatus(ActionWireOperation::kGoalResponse, status, context) !=
         Status::kOk) {
@@ -487,14 +487,14 @@ class CanActionServer {
   }
 
   static void FeedbackThunk(
-      void* state, xrobot::runtime::ActionGoalHandle,
+      void* state, aster::runtime::ActionGoalHandle,
       const Feedback& feedback,
-      const xrobot::runtime::ExecutionContext& context) noexcept {
+      const aster::runtime::ExecutionContext& context) noexcept {
     auto& self = *static_cast<CanActionServer*>(state);
     self.outbound_[0] = static_cast<std::byte>(ActionWireOperation::kFeedback);
     self.WriteToken();
     std::size_t written{};
-    const auto status = xrobot::runtime::TypeSupport<Feedback>::Encode(
+    const auto status = aster::runtime::TypeSupport<Feedback>::Encode(
         feedback, std::span<std::byte>(self.outbound_).subspan(5), written);
     if (status != Status::kOk || written != kFeedbackSize ||
         self.SendOutbound(5U + kFeedbackSize, context) != Status::kOk) {
@@ -505,15 +505,15 @@ class CanActionServer {
   }
 
   static void ResultThunk(
-      void* state, xrobot::runtime::ActionGoalHandle, Status status,
+      void* state, aster::runtime::ActionGoalHandle, Status status,
       const Result& result,
-      const xrobot::runtime::ExecutionContext& context) noexcept {
+      const aster::runtime::ExecutionContext& context) noexcept {
     auto& self = *static_cast<CanActionServer*>(state);
     self.outbound_[0] = static_cast<std::byte>(ActionWireOperation::kResult);
     self.WriteToken();
     self.outbound_[5] = static_cast<std::byte>(status);
     std::size_t written{};
-    const auto encode_status = xrobot::runtime::TypeSupport<Result>::Encode(
+    const auto encode_status = aster::runtime::TypeSupport<Result>::Encode(
         result, std::span<std::byte>(self.outbound_).subspan(6), written);
     self.active_ = false;
     if (encode_status != Status::kOk || written != kResultSize ||
@@ -525,8 +525,8 @@ class CanActionServer {
   }
 
   static void CancelResponseThunk(
-      void* state, xrobot::runtime::ActionGoalHandle, Status status,
-      const xrobot::runtime::ExecutionContext& context) noexcept {
+      void* state, aster::runtime::ActionGoalHandle, Status status,
+      const aster::runtime::ExecutionContext& context) noexcept {
     auto& self = *static_cast<CanActionServer*>(state);
     if (self.SendStatus(ActionWireOperation::kCancelResponse, status, context) !=
         Status::kOk) {
@@ -535,7 +535,7 @@ class CanActionServer {
   }
 
   Status HandleGoal(std::uint32_t token, const ReassembledMessage& message,
-                    const xrobot::runtime::ExecutionContext& caller) noexcept {
+                    const aster::runtime::ExecutionContext& caller) noexcept {
     if (message.payload.size() != kClientPayloadSize || active_) {
       ++stats_.rejected;
       return active_ ? SendStatusForToken(
@@ -544,7 +544,7 @@ class CanActionServer {
                      : DecodeFailure();
     }
     Goal goal;
-    const auto status = xrobot::runtime::TypeSupport<Goal>::Decode(
+    const auto status = aster::runtime::TypeSupport<Goal>::Decode(
         message.payload.subspan(13), goal);
     if (status != Status::kOk) {
       return DecodeFailure();
@@ -552,7 +552,7 @@ class CanActionServer {
     remote_token_ = token;
     active_ = true;
     const auto deadline = action_detail::ReadU64(message.payload.subspan<5, 8>());
-    xrobot::runtime::ActionCallbacks<Action> callbacks{
+    aster::runtime::ActionCallbacks<Action> callbacks{
         GoalResponseThunk, FeedbackThunk, ResultThunk, CancelResponseThunk, this};
     const auto call_status = local_action_.SendGoal(
         goal, callbacks, deadline, caller, local_handle_);
@@ -567,7 +567,7 @@ class CanActionServer {
   }
 
   Status HandleCancel(std::uint32_t token, const ReassembledMessage& message,
-                      const xrobot::runtime::ExecutionContext& caller) noexcept {
+                      const aster::runtime::ExecutionContext& caller) noexcept {
     if (message.payload.size() != 5 || !active_ || token != remote_token_) {
       return SendStatusForToken(token, ActionWireOperation::kCancelResponse,
                                 Status::kInvalidState, caller);
@@ -581,13 +581,13 @@ class CanActionServer {
   }
 
   Status SendStatus(ActionWireOperation operation, Status status,
-                    const xrobot::runtime::ExecutionContext& caller) noexcept {
+                    const aster::runtime::ExecutionContext& caller) noexcept {
     return SendStatusForToken(remote_token_, operation, status, caller);
   }
 
   Status SendStatusForToken(
       std::uint32_t token, ActionWireOperation operation, Status status,
-      const xrobot::runtime::ExecutionContext& caller) noexcept {
+      const aster::runtime::ExecutionContext& caller) noexcept {
     outbound_[0] = static_cast<std::byte>(operation);
     action_detail::WriteU32(token,
                             std::span<std::byte>(outbound_).subspan<1, 4>());
@@ -601,7 +601,7 @@ class CanActionServer {
   }
 
   Status SendOutbound(std::size_t size,
-                      const xrobot::runtime::ExecutionContext& caller) noexcept {
+                      const aster::runtime::ExecutionContext& caller) noexcept {
     if (action_detail::SenderBusy(sender_.state())) {
       return Status::kCapacityExceeded;
     }
@@ -614,7 +614,7 @@ class CanActionServer {
     return status == Status::kOk ? Pump(caller) : status;
   }
 
-  Status Pump(const xrobot::runtime::ExecutionContext& caller) noexcept {
+  Status Pump(const aster::runtime::ExecutionContext& caller) noexcept {
     CanFrame frame;
     while (sender_.NextFrame(frame) == Status::kOk) {
       const auto status = writer_.Send(frame, caller);
@@ -632,7 +632,7 @@ class CanActionServer {
 
   std::uint16_t route_id_{};
   CanPriority priority_{CanPriority::kBackground};
-  xrobot::runtime::ActionClient<Action> local_action_;
+  aster::runtime::ActionClient<Action> local_action_;
   CanFrameWriter writer_;
   CanClockReader clock_;
   std::uint64_t retry_timeout_ns_{};
@@ -642,9 +642,9 @@ class CanActionServer {
   std::array<std::byte, kServerPayloadSize> outbound_{};
   ReliableReceiver<kClientPayloadSize> receiver_;
   ReliableSender<kServerPayloadSize> sender_;
-  xrobot::runtime::ActionGoalHandle local_handle_{};
+  aster::runtime::ActionGoalHandle local_handle_{};
   bool active_{};
   ActionServerTransportStats stats_{};
 };
 
-}  // namespace xrobot::transport::can
+}  // namespace aster::transport::can

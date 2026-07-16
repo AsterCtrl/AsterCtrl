@@ -1,11 +1,11 @@
-# xrobot-transports
+# Aster Transports
 
 Transport backends for the framework Channel and internal RPC primitives.
 
 The first production backend is the compact, deployment-compiled classic CAN
 data plane. Application modules do not depend on this repository directly.
 
-## xrobot-can v1
+## aster-can v1
 
 - The 11-bit arbitration ID contains a 2-bit priority and a 9-bit static Route
   ID. Application Route IDs are `8..511`; `1..7` remain control-plane IDs.

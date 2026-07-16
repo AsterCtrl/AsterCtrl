@@ -5,7 +5,7 @@
 #include <cstdlib>
 #include <new>
 
-namespace xrobot_test {
+namespace aster_test {
 
 std::atomic<std::size_t> allocation_count{};
 
@@ -27,19 +27,19 @@ std::size_t AllocationCount() noexcept {
   return allocation_count.load(std::memory_order_relaxed);
 }
 
-}  // namespace xrobot_test
+}  // namespace aster_test
 
 void* operator new(std::size_t size) {
-  return xrobot_test::Allocate(size, alignof(std::max_align_t));
+  return aster_test::Allocate(size, alignof(std::max_align_t));
 }
 void* operator new[](std::size_t size) {
-  return xrobot_test::Allocate(size, alignof(std::max_align_t));
+  return aster_test::Allocate(size, alignof(std::max_align_t));
 }
 void* operator new(std::size_t size, std::align_val_t alignment) {
-  return xrobot_test::Allocate(size, static_cast<std::size_t>(alignment));
+  return aster_test::Allocate(size, static_cast<std::size_t>(alignment));
 }
 void* operator new[](std::size_t size, std::align_val_t alignment) {
-  return xrobot_test::Allocate(size, static_cast<std::size_t>(alignment));
+  return aster_test::Allocate(size, static_cast<std::size_t>(alignment));
 }
 void operator delete(void* memory) noexcept { std::free(memory); }
 void operator delete[](void* memory) noexcept { std::free(memory); }

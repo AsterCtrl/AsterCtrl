@@ -8,7 +8,7 @@
       "binaryDir": "${sourceDir}/build/host-debug",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
-        "XROBOT_TRANSPORTS_BUILD_TESTS": "ON"
+        "ASTER_TRANSPORTS_BUILD_TESTS": "ON"
       }
     }
   ],

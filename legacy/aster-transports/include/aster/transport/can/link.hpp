@@ -2,21 +2,21 @@
 
 #include <cstdint>
 
-#include "xrobot/runtime/execution_context.hpp"
-#include "xrobot/transport/can/protocol.hpp"
+#include "aster/runtime/execution_context.hpp"
+#include "aster/transport/can/protocol.hpp"
 
-namespace xrobot::transport::can {
+namespace aster::transport::can {
 
 using CanFrameWrite = Status (*)(
     void*, const CanFrame&,
-    const xrobot::runtime::ExecutionContext&) noexcept;
+    const aster::runtime::ExecutionContext&) noexcept;
 
 struct CanFrameWriter {
   CanFrameWrite write{};
   void* state{};
 
   Status Send(const CanFrame& frame,
-              const xrobot::runtime::ExecutionContext& context) const noexcept {
+              const aster::runtime::ExecutionContext& context) const noexcept {
     return write == nullptr ? Status::kUnavailable : write(state, frame, context);
   }
 };
@@ -45,18 +45,18 @@ struct CanTimeConverter {
 
 using CanFrameReceive = Status (*)(
     void*, const CanFrame&, std::uint64_t,
-    const xrobot::runtime::ExecutionContext&) noexcept;
+    const aster::runtime::ExecutionContext&) noexcept;
 
 struct CanFrameReceiver {
   CanFrameReceive receive{};
   void* state{};
 
   Status Accept(const CanFrame& frame, std::uint64_t receive_time_ns,
-                const xrobot::runtime::ExecutionContext& context) const noexcept {
+                const aster::runtime::ExecutionContext& context) const noexcept {
     return receive == nullptr
                ? Status::kUnavailable
                : receive(state, frame, receive_time_ns, context);
   }
 };
 
-}  // namespace xrobot::transport::can
+}  // namespace aster::transport::can
