@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aster-framework-tools"
+version = "0.1.0.dev0"
+description = "Deployment compiler and code generation tools for Aster systems"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+dependencies = [
+  "jsonschema>=4.23,<5",
+  "PyYAML>=6,<7",
+]
+
+[project.scripts]
+aster = "aster_tools.cli:main"
+asterctl = "aster_tools.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+aster_tools = ["schemas/*.json"]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+pythonpath = ["src"]
+testpaths = ["tests"]

@@ -1,0 +1,1787 @@
+from __future__ import annotations
+
+import subprocess
+from pathlib import Path
+
+import pytest
+import yaml
+
+from aster_tools.deployment import (
+    DeploymentError,
+    _can_route_cost,
+    compile_deployment,
+)
+from aster_tools.interfaces import generate_interfaces
+
+
+def write(root: Path, relative: str, content: str) -> None:
+    path = root / relative
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
+
+
+def create_workspace(tmp_path: Path, max_rate_hz: int = 100) -> tuple[Path, Path]:
+    write(
+        tmp_path,
+        "control-interfaces/package.yaml",
+        """\
+api_version: aster.dev/v1alpha1
+kind: Package
+metadata: {name: control-interfaces, version: 0.1.0, license: Apache-2.0}
+spec:
+  build: {system: aster-schema}
+  exports: {schemas: [schemas/msg]}
+  dependencies: []
+""",
+    )
+    write(
+        tmp_path,
+        "control-interfaces/schemas/msg/Command.msg.yaml",
+        """\
+api_version: aster.dev/schema/v1alpha1
+kind: Message
+metadata: {name: Command, namespace: test.msg}
+spec:
+  fields:
+    - {name: value, type: uint16}
+    - {name: auxiliary, type: uint32}
+""",
+    )
+    write(
+        tmp_path,
+        "source/include/test/source.hpp",
+        """\
+#pragma once
+
+#include <cstdint>
+#include <string_view>
+
+#include "aster/interfaces.hpp"
+#include "aster/runtime/module.hpp"
+
+namespace test {
+
+class Device {
+ public:
+  static constexpr std::string_view TypeName() noexcept {
+    return "test.hardware.SourceDevice/v1";
+  }
+
+  std::uint16_t bias{};
+};
+
+class Source final : public aster::runtime::Module {
+ public:
+  explicit Source(std::string_view name) noexcept : name_(name) {}
+
+  std::string_view Name() const noexcept override { return name_; }
+
+  aster::runtime::Status Initialize(
+      aster::runtime::ModuleContext& context) noexcept override {
+    using aster::runtime::IsOk;
+    if (auto status = context.ResolveTopicPublisher("command", publisher_);
+        !IsOk(status)) return status;
+    if (auto status = context.ResolveParameter("input_source", input_source_);
+        !IsOk(status)) return status;
+    if (auto status = context.ResolveHardware("device", device_);
+        !IsOk(status)) return status;
+    if (auto status = context.BindPeriodicTask("control", {Run, this});
+        !IsOk(status)) return status;
+    context_ = &context;
+    return aster::runtime::Status::kOk;
+  }
+
+  aster::runtime::Status Start() noexcept override {
+    if (context_ == nullptr || running_) {
+      return aster::runtime::Status::kInvalidState;
+    }
+    running_ = true;
+    return aster::runtime::Status::kOk;
+  }
+
+  void Shutdown() noexcept override { running_ = false; }
+
+  inline static std::uint16_t last_value{};
+  inline static std::uint32_t cycles{};
+
+ private:
+  static void Run(void* state,
+                  const aster::runtime::ExecutionContext& execution) noexcept {
+    auto& self = *static_cast<Source*>(state);
+    if (!self.running_) return;
+    ++cycles;
+    last_value = static_cast<std::uint16_t>(
+        self.input_source_->value() + self.device_->bias);
+    self.publisher_.Publish({last_value, cycles}, self.context_->NowNs(),
+                            execution);
+  }
+
+  std::string_view name_;
+  aster::runtime::ModuleContext* context_{};
+  aster::runtime::Parameter<std::uint32_t>* input_source_{};
+  Device* device_{};
+  aster::runtime::TopicPublisher<test::msg::Command> publisher_;
+  bool running_{};
+};
+
+}  // namespace test
+""",
+    )
+    write(
+        tmp_path,
+        "sink/include/test/sink.hpp",
+        """\
+#pragma once
+
+#include <cstdint>
+#include <string_view>
+
+#include "aster/interfaces.hpp"
+#include "aster/runtime/module.hpp"
+
+namespace test {
+
+class Sink final : public aster::runtime::Module {
+ public:
+  explicit Sink(std::string_view name) noexcept : name_(name) {}
+
+  std::string_view Name() const noexcept override { return name_; }
+
+  aster::runtime::Status Initialize(
+      aster::runtime::ModuleContext& context) noexcept override {
+    using aster::runtime::IsOk;
+    aster::runtime::TopicSubscriber<test::msg::Command> subscriber;
+    if (auto status = context.ResolveTopicSubscriber("command", subscriber);
+        !IsOk(status)) return status;
+    if (auto status = subscriber.Bind(Receive, this); !IsOk(status)) {
+      return status;
+    }
+    return context.BindPeriodicTask("control", {Run, this});
+  }
+
+  aster::runtime::Status Start() noexcept override {
+    running_ = true;
+    return aster::runtime::Status::kOk;
+  }
+
+  void Shutdown() noexcept override { running_ = false; }
+
+  inline static test::msg::Command last{};
+  inline static std::uint32_t received{};
+
+ private:
+  static void Receive(
+      void*, const test::msg::Command& command,
+      const aster::runtime::MessageInfo&,
+      const aster::runtime::ExecutionContext&) noexcept {
+    last = command;
+    ++received;
+  }
+
+  static void Run(void*,
+                  const aster::runtime::ExecutionContext&) noexcept {}
+
+  std::string_view name_;
+  bool running_{};
+};
+
+}  // namespace test
+""",
+    )
+    for package, kind in (("source", "publisher"), ("sink", "subscriber")):
+        parameters = (
+            """\
+  parameters:
+    - {name: enabled, type: bool, default: true, mutability: runtime, persistence: volatile}
+    - {name: offset, type: int32, default: -2, minimum: -10, maximum: 10, mutability: build, persistence: compiled}
+    - {name: input_source, type: uint32, default: 1, minimum: 0, maximum: 1, mutability: startup, persistence: compiled}
+    - {name: gain, type: float32, default: 0.5, minimum: 0.0, maximum: 1.0, mutability: runtime, persistence: persistent}
+    - {name: timeout_scale, type: float64, default: 1.0, minimum: 0.5, maximum: 2.0, mutability: startup, persistence: compiled}
+"""
+            if package == "source"
+            else "  parameters: []\n"
+        )
+        header = f"test/{package}.hpp"
+        hardware = (
+            "  hardware: [device]" if package == "source" else "  hardware: []"
+        )
+        write(
+            tmp_path,
+            f"{package}/package.yaml",
+            f"""\
+api_version: aster.dev/v1alpha1
+kind: Package
+metadata: {{name: {package}, version: 0.1.0, license: Apache-2.0}}
+spec:
+  build: {{system: cmake}}
+  exports:
+    modules:
+      - {{name: {package}, manifest: module.yaml}}
+  dependencies: [control-interfaces]
+""",
+        )
+        write(
+            tmp_path,
+            f"{package}/module.yaml",
+            f"""\
+api_version: aster.dev/v1alpha1
+kind: Module
+metadata: {{name: {package}, version: 0.1.0}}
+spec:
+  implementation: {{target: {package}, class: test::{package.title()}, header: {header}}}
+  dependencies: []
+  ports:
+    - {{name: command, kind: {kind}, type: test.msg.Command, required: true}}
+  executors:
+    - {{name: control, priority: 4, stack_bytes: 1024, queue_depth: 4, period_us: 1000}}
+{parameters.rstrip()}
+{hardware}
+""",
+        )
+
+    write(
+        tmp_path,
+        "workspace.yaml",
+        """\
+api_version: aster.dev/v1alpha1
+kind: Workspace
+metadata: {name: test-workspace}
+interfaces: {package: control-interfaces, path: schemas}
+packages:
+  - {name: control-interfaces, source: {type: path, path: control-interfaces}}
+  - {name: source, source: {type: path, path: source}}
+  - {name: sink, source: {type: path, path: sink}}
+""",
+    )
+    write(
+        tmp_path,
+        "package.lock.yaml",
+        """\
+api_version: aster.dev/v1alpha1
+kind: PackageLock
+metadata: {workspace: test-workspace}
+packages:
+  control-interfaces: {source: control-interfaces, commit: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}
+  source: {source: source, commit: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb}
+  sink: {source: sink, commit: cccccccccccccccccccccccccccccccccccccccc}
+""",
+    )
+    write(
+        tmp_path,
+        "application.yaml",
+        """\
+api_version: aster.dev/v1alpha1
+kind: Application
+metadata: {name: test-application}
+instances:
+  command_source:
+    package: source
+    module: source
+    parameters: {input_source: 0, gain: 0.25}
+    ports: {command: /control/command}
+    hardware: {device: source_device}
+  command_sink:
+    package: sink
+    module: sink
+    ports: {command: /control/command}
+""",
+    )
+    for node in ("node_a", "node_b"):
+        write(
+            tmp_path,
+            f"hardware/{node}.yaml",
+            f"""\
+api_version: aster.dev/v1alpha1
+kind: HardwareProfile
+metadata: {{name: {node}, board: test/{node}}}
+spec:
+  resources:
+    control_bus: {{kind: can, backend: libxr, resource: can1, options: {{}}}}
+    source_device: {{kind: test, backend: fake, resource: source0, options: {{}}}}
+  devices: {{}}
+""",
+        )
+    write(
+        tmp_path,
+        "deployment.yaml",
+        f"""\
+api_version: aster.dev/v1alpha1
+kind: Deployment
+metadata: {{name: dual-node}}
+application: application.yaml
+time_authority: node_a
+nodes:
+  node_a:
+    runtime: aster-mcu
+    target: {{bsp: test/a, hardware: hardware/node_a.yaml, profile: debug}}
+    instances: [command_source]
+  node_b:
+    runtime: aster-mcu
+    target: {{bsp: test/b, hardware: hardware/node_b.yaml, profile: debug}}
+    instances: [command_sink]
+links:
+  control_can:
+    transport: aster-can
+    endpoints:
+      - {{node: node_a, resource: control_bus}}
+      - {{node: node_b, resource: control_bus}}
+    options: {{frame: classic, bitrate_bps: 1000000, mtu_bytes: 8}}
+    budget: {{utilization_limit: 0.65}}
+qos_profiles:
+  control:
+    class: control
+    delivery: latest
+    reliability: best_effort
+    history_depth: 1
+    max_rate_hz: {max_rate_hz}
+    deadline_ms: 10
+    lifespan_ms: 30
+    max_age_ms: 20
+    on_stale: zero
+    rearm: fresh_sample
+    adaptive: false
+route_rules:
+  - match: {{topic: /control/**}}
+    qos: control
+reserved_bandwidth: {{control_can: 0.20}}
+""",
+    )
+    return tmp_path / "workspace.yaml", tmp_path / "deployment.yaml"
+
+
+def test_compiles_a_deterministic_cross_node_deployment(tmp_path: Path) -> None:
+    workspace, deployment = create_workspace(tmp_path)
+    output = tmp_path / "generated"
+    authoritative_lock = tmp_path / "deployment.lock.yaml"
+
+    first = compile_deployment(workspace, deployment, output, authoritative_lock)
+    first_lock = (output / "deployment.lock.yaml").read_bytes()
+    first_routes = (output / "reports/routes.json").read_bytes()
+    first_composition_report = (output / "reports/composition.yaml").read_bytes()
+    first_node_composition = (
+        output / "nodes/node_a/node_composition.hpp"
+    ).read_bytes()
+    first_node_ports = (output / "nodes/node_a/node_ports.hpp").read_bytes()
+    second = compile_deployment(workspace, deployment, output, authoritative_lock)
+
+    assert first == second
+    assert (output / "deployment.lock.yaml").read_bytes() == first_lock
+    assert authoritative_lock.read_bytes() == first_lock
+    assert (output / "reports/routes.json").read_bytes() == first_routes
+    assert (
+        output / "reports/composition.yaml"
+    ).read_bytes() == first_composition_report
+    assert (
+        output / "nodes/node_a/node_composition.hpp"
+    ).read_bytes() == first_node_composition
+    assert (output / "nodes/node_a/node_ports.hpp").read_bytes() == first_node_ports
+    lock = yaml.safe_load(first_lock)
+    assert lock["nodes"] == {"node_a": 1, "node_b": 2}
+    assert lock["routes"] == {"/control/command": 8}
+    assert first.cross_node_route_count == 1
+    assert first.node_count == 2
+    assert (output / "nodes/node_a/node_descriptor.cpp").is_file()
+    assert (output / "nodes/node_b/node_descriptor.cpp").is_file()
+    assert not (output / "nodes/node_a/generated_main.cpp").exists()
+    assert (output / "nodes/node_a/node_composition.hpp").is_file()
+    assert (output / "nodes/node_b/node_composition.hpp").is_file()
+    node_a_header = (output / "nodes/node_a/node_config.hpp").read_text()
+    assert 'GeneratedModule{"command_source", "source", "source"' in node_a_header
+    assert (
+        'GeneratedExecutor{"command_source__control", "command_source", '
+        '"control", 4, 1024, 4, 1000000ULL, false}' in node_a_header
+    )
+    assert "inline constexpr bool kConfigurationValid" in node_a_header
+    assert "kBoolParameters" in node_a_header
+    assert '"input_source"' in node_a_header
+    assert "std::uint32_t{0U}" in node_a_header
+    assert "std::bit_cast<float>(std::uint32_t{0x3e800000U})" in node_a_header
+    for node in ("node_a", "node_b"):
+        node_dir = output / "nodes" / node
+        subprocess.run(
+            [
+                "/usr/bin/c++",
+                "-std=c++20",
+                "-Wall",
+                "-Wextra",
+                "-Wpedantic",
+                "-Wconversion",
+                "-Werror",
+                "-I",
+                str(node_dir),
+                "-c",
+                str(node_dir / "node_descriptor.cpp"),
+                "-o",
+                str(node_dir / "node_descriptor.o"),
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    composition = yaml.safe_load(
+        (output / "reports/composition.yaml").read_text()
+    )
+    assert composition["nodes"] == {
+        "node_a": {"ready": True, "blockers": []},
+        "node_b": {"ready": True, "blockers": []},
+    }
+
+    generated_messages = tmp_path / "generated-messages"
+    generate_interfaces(tmp_path / "control-interfaces/schemas", generated_messages)
+    write(
+        tmp_path,
+        "composition_test.cpp",
+        """\
+#include <cassert>
+#include <cstdint>
+
+#include "node_a/node_composition.hpp"
+#include "node_b/node_composition.hpp"
+#include "aster/runtime/cooperative_executor.hpp"
+#include "aster/runtime/hardware_registry.hpp"
+#include "aster/runtime/port_registry.hpp"
+#include "aster/runtime/topic.hpp"
+
+namespace {
+
+class Clock final : public aster::runtime::SteadyClock {
+ public:
+  std::uint64_t NowNs() const noexcept override { return now_ns; }
+  std::uint64_t now_ns{1'000'000};
+};
+
+}  // namespace
+
+int main() {
+  using namespace aster::runtime;
+  Clock clock;
+  CooperativeExecutor<2> delivery("delivery", 3);
+  StaticTopic<test::msg::Command, 1> topic("/control/command");
+  TopicSubscription<test::msg::Command, 1> subscription(
+      delivery, DeliveryPolicy::kLatest);
+  StaticPortRegistry<1> source_ports;
+  StaticPortRegistry<1> sink_ports;
+  StaticHardwareRegistry<1> source_hardware;
+  test::Device device;
+  device.bias = 7;
+
+  assert(delivery.Initialize() == Status::kOk);
+  assert(delivery.Start() == Status::kOk);
+  assert(topic.Connect(subscription) == Status::kOk);
+  assert(topic.Seal() == Status::kOk);
+  assert(source_ports.AddTopicPublisher("/control/command", topic) ==
+         Status::kOk);
+  assert(source_ports.Seal() == Status::kOk);
+  assert(sink_ports.AddTopicSubscriber("/control/command", subscription) ==
+         Status::kOk);
+  assert(sink_ports.Seal() == Status::kOk);
+  assert(source_hardware.Add("source_device", device) == Status::kOk);
+  assert(source_hardware.Seal() == Status::kOk);
+
+  aster::generated::node_a::NodeComposition source(clock);
+  aster::generated::node_b::NodeComposition sink(clock);
+  assert(source.Configure(source_ports, &source_hardware) == Status::kOk);
+  assert(sink.Configure(sink_ports) == Status::kOk);
+  assert(source.Initialize() == Status::kOk);
+  assert(sink.Initialize() == Status::kOk);
+  assert(source.Start() == Status::kOk);
+  assert(sink.Start() == Status::kOk);
+  assert(source.FindExecutor("command_source__control") != nullptr);
+  assert(source.FindExecutor("missing") == nullptr);
+
+  const ExecutionContext runtime_context(
+      "runtime", ExecutionKind::kThread, 9);
+  assert(source.Poll(clock.now_ns, runtime_context) == Status::kOk);
+  assert(source.RunExecutor(0) == Status::kOk);
+  assert(delivery.RunOne() == Status::kOk);
+  assert(test::Source::cycles == 1);
+  assert(test::Source::last_value == 7);
+  assert(test::Sink::received == 1);
+  assert(test::Sink::last.value == 7);
+  assert(test::Sink::last.auxiliary == 1);
+  assert(source.RunExecutor(99) == Status::kInvalidArgument);
+  source.Shutdown();
+  sink.Shutdown();
+}
+""",
+    )
+    repository_root = Path(__file__).parents[2]
+    runtime = repository_root / "aster-runtime"
+    transports = repository_root / "aster-transports"
+    composition_executable = tmp_path / "composition_test"
+    subprocess.run(
+        [
+            "/usr/bin/c++",
+            "-std=c++20",
+            "-Wall",
+            "-Wextra",
+            "-Wpedantic",
+            "-Wconversion",
+            "-Wsign-conversion",
+            "-Werror",
+            "-I",
+            str(output / "nodes"),
+            "-I",
+            str(generated_messages / "include"),
+            "-I",
+            str(runtime / "include"),
+            "-I",
+            str(transports / "include"),
+            "-I",
+            str(tmp_path / "source/include"),
+            "-I",
+            str(tmp_path / "sink/include"),
+            str(tmp_path / "composition_test.cpp"),
+            str(runtime / "src/runtime.cpp"),
+            "-o",
+            str(composition_executable),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    subprocess.run([str(composition_executable)], check=True)
+    budget = yaml.safe_load((output / "reports/link_budget.yaml").read_text())
+    assert budget["links"]["control_can"]["within_budget"] is True
+    assert budget["links"]["control_can"]["control_utilization"] > 0
+    executors = yaml.safe_load((output / "reports/executors.yaml").read_text())
+    assert executors["nodes"]["node_a"][0]["name"] == "command_source__control"
+    module_graph = yaml.safe_load(
+        (output / "reports/module_graph.json").read_text()
+    )
+    source_instance = next(
+        item
+        for item in module_graph["instances"]
+        if item["name"] == "command_source"
+    )
+    assert source_instance["parameters"] == {
+        "enabled": True,
+        "gain": 0.25,
+        "input_source": 0,
+        "offset": -2,
+        "timeout_scale": 1.0,
+    }
+    memory = yaml.safe_load((output / "reports/memory.yaml").read_text())
+    assert memory["nodes"]["node_a"]["parameter_count"] == 5
+    assert memory["nodes"]["node_a"]["parameter_value_bytes"] == 21
+    routes = yaml.safe_load((output / "deployment.resolved.yaml").read_text())["routes"]
+    assert routes[0]["max_serialized_size"] == 6
+    assert routes[0]["max_wire_payload_size"] == 8
+    assert routes[0]["frame_count"] == 2
+    assert routes[0]["bits_per_message"] == 230
+
+
+def test_generates_a_typed_direct_uart_hardware_adapter(tmp_path: Path) -> None:
+    workspace, deployment = create_workspace(tmp_path)
+    source_manifest = tmp_path / "source/module.yaml"
+    source_manifest.write_text(
+        source_manifest.read_text(encoding="utf-8").replace(
+            "  hardware: [device]",
+            "  hardware:\n"
+            "    - {name: device, type: aster.hardware.ByteReader/v1}",
+        ),
+        encoding="utf-8",
+    )
+    hardware = tmp_path / "hardware/node_a.yaml"
+    hardware.write_text(
+        hardware.read_text(encoding="utf-8").replace(
+            "source_device: {kind: test, backend: fake, resource: source0, options: {}}",
+            "source_device: {kind: uart, backend: libxr, resource: uart3, options: {}}",
+        ),
+        encoding="utf-8",
+    )
+
+    output = tmp_path / "generated"
+    compile_deployment(workspace, deployment, output)
+
+    generated = (output / "nodes/node_a/node_hardware.hpp").read_text()
+    assert "UartReaderAdapter" in generated
+    assert 'physical, "uart3", resource_source_device_' in generated
+    report = yaml.safe_load((output / "reports/firmware.yaml").read_text())
+    assert report["nodes"]["node_a"]["hardware_blockers"] == []
+
+
+def test_generates_board_driven_firmware_projects(tmp_path: Path) -> None:
+    workspace, deployment = create_workspace(tmp_path)
+    write(tmp_path, "source/CMakeLists.txt", "add_library(source INTERFACE)\n")
+    write(tmp_path, "sink/CMakeLists.txt", "add_library(sink INTERFACE)\n")
+    write(
+        tmp_path,
+        "aster-libxr-backend/CMakeLists.txt",
+        "add_library(aster_libxr_backend INTERFACE)\n",
+    )
+    write(
+        tmp_path,
+        "test-bsp/package.yaml",
+        """\
+api_version: aster.dev/v1alpha1
+kind: Package
+metadata: {name: test-bsp, version: 0.1.0, license: Apache-2.0}
+spec:
+  build: {system: cmake}
+  exports:
+    boards:
+      - name: test/node_a
+        profiles: [debug]
+        implementation: &board
+          target: test::board
+          platform_target: test::platform
+          header: test/board.hpp
+          class: test::Board
+          initialize: test::Initialize
+          entry: app_main
+          system: freertos
+          toolchain: cmake/toolchain.cmake
+          libxr_driver: fake
+          cmake_enable: test_enable
+          cmake_firmware: test_firmware
+      - name: test/node_b
+        profiles: [debug]
+        implementation: *board
+  dependencies: []
+""",
+    )
+    write(tmp_path, "test-bsp/CMakeLists.txt", "add_library(test_board INTERFACE)\n")
+    write(tmp_path, "test-bsp/cmake/toolchain.cmake", "set(CMAKE_SYSTEM_NAME Generic)\n")
+    workspace.write_text(
+        workspace.read_text(encoding="utf-8")
+        + "  - {name: test-bsp, source: {type: path, path: test-bsp}}\n"
+        + "  - {name: aster-libxr-backend, source: {type: path, path: aster-libxr-backend}}\n",
+        encoding="utf-8",
+    )
+    lock = tmp_path / "package.lock.yaml"
+    lock.write_text(
+        lock.read_text(encoding="utf-8")
+        + "  test-bsp: {source: test-bsp, commit: dddddddddddddddddddddddddddddddddddddddd}\n"
+        + "  aster-libxr-backend: {source: aster-libxr-backend, commit: eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee}\n",
+        encoding="utf-8",
+    )
+    deployment.write_text(
+        deployment.read_text(encoding="utf-8")
+        .replace("bsp: test/a", "bsp: test-bsp/test/node_a")
+        .replace("bsp: test/b", "bsp: test-bsp/test/node_b"),
+        encoding="utf-8",
+    )
+    hardware = tmp_path / "hardware/node_a.yaml"
+    hardware.write_text(
+        hardware.read_text(encoding="utf-8").replace(
+            "source_device: {kind: test, backend: fake, resource: source0, options: {}}",
+            "source_device: {kind: uart, backend: libxr, resource: uart3, options: {}}",
+        ),
+        encoding="utf-8",
+    )
+
+    output = tmp_path / "generated"
+    compile_deployment(workspace, deployment, output)
+    first_entry = (output / "nodes/node_a/firmware_entry.cpp").read_bytes()
+    compile_deployment(workspace, deployment, output)
+
+    report = yaml.safe_load((output / "reports/firmware.yaml").read_text())
+    assert report["nodes"]["node_a"]["ready"] is True
+    assert report["nodes"]["node_b"]["ready"] is True
+    assert (output / "nodes/node_a/firmware_entry.cpp").read_bytes() == first_entry
+    entry = first_entry.decode()
+    assert "CanFilterRange{0x001U, 0x007U}" in entry
+    assert "CanFilterRange{0x208U, 0x208U}" in entry
+    assert "CanAdapter<32U>" in entry
+    assert "composition.Start()" in entry
+    cmake = (output / "nodes/node_a/CMakeLists.txt").read_text()
+    assert "target_link_libraries(xr PUBLIC test::platform)" in cmake
+    assert "aster-libxr-backend" in cmake
+    assert "test_firmware(node_a_firmware)" in cmake
+    presets = yaml.safe_load((output / "nodes/node_a/CMakePresets.json").read_text())
+    assert presets["configurePresets"][0]["cacheVariables"][
+        "CMAKE_BUILD_TYPE"
+    ] == "Debug"
+
+
+def test_reports_a_typed_hardware_contract_mismatch(tmp_path: Path) -> None:
+    workspace, deployment = create_workspace(tmp_path)
+    source_manifest = tmp_path / "source/module.yaml"
+    source_manifest.write_text(
+        source_manifest.read_text(encoding="utf-8").replace(
+            "  hardware: [device]",
+            "  hardware:\n"
+            "    - {name: device, type: srm.hardware.MotorGroup/v1}",
+        ),
+        encoding="utf-8",
+    )
+    hardware = tmp_path / "hardware/node_a.yaml"
+    hardware.write_text(
+        hardware.read_text(encoding="utf-8").replace(
+            "source_device: {kind: test, backend: fake, resource: source0, options: {}}",
+            "source_device: {kind: uart, backend: libxr, resource: uart3, options: {}}",
+        ),
+        encoding="utf-8",
+    )
+
+    output = tmp_path / "generated"
+    compile_deployment(workspace, deployment, output)
+
+    report = yaml.safe_load((output / "reports/firmware.yaml").read_text())
+    assert report["nodes"]["node_a"]["hardware_blockers"] == [
+        "instance command_source: hardware device requires "
+        "srm.hardware.MotorGroup/v1, but source_device provides "
+        "aster.hardware.ByteReader/v1"
+    ]
+    assert not (output / "nodes/node_a/node_hardware.hpp").exists()
+
+
+def test_generated_compositions_route_a_topic_over_can(tmp_path: Path) -> None:
+    workspace, deployment = create_workspace(tmp_path)
+    application = tmp_path / "application.yaml"
+    application.write_text(
+        application.read_text(encoding="utf-8")
+        + """\
+  command_observer:
+    package: sink
+    module: sink
+    ports: {command: /control/command}
+""",
+        encoding="utf-8",
+    )
+    deployment.write_text(
+        deployment.read_text(encoding="utf-8").replace(
+            "instances: [command_source]",
+            "instances: [command_source, command_observer]",
+        ),
+        encoding="utf-8",
+    )
+    source_manifest = tmp_path / "source/module.yaml"
+    source_manifest.write_text(
+        source_manifest.read_text(encoding="utf-8").replace(
+            "priority: 4, stack_bytes", "priority: 7, stack_bytes"
+        ),
+        encoding="utf-8",
+    )
+    output = tmp_path / "generated"
+    compile_deployment(workspace, deployment, output)
+
+    assert (output / "nodes/node_a/node_ports.hpp").is_file()
+    assert (output / "nodes/node_b/node_ports.hpp").is_file()
+
+    generated_messages = tmp_path / "generated-messages"
+    generate_interfaces(tmp_path / "control-interfaces/schemas", generated_messages)
+    write(
+        tmp_path,
+        "generated_transport_test.cpp",
+        """\
+#include <array>
+#include <cassert>
+#include <cstddef>
+#include <cstdint>
+
+#include "node_a/node_composition.hpp"
+#include "node_b/node_composition.hpp"
+#include "aster/runtime/hardware_registry.hpp"
+#include "aster/transport/can/link.hpp"
+
+namespace {
+
+class Clock final : public aster::runtime::SteadyClock {
+ public:
+  std::uint64_t NowNs() const noexcept override { return now_ns; }
+  std::uint64_t now_ns{1'000'000};
+};
+
+using aster::runtime::ExecutionContext;
+using aster::runtime::Status;
+using aster::transport::can::CanFrame;
+using aster::transport::can::CanFrameReceiver;
+
+struct Wire {
+  CanFrameReceiver receiver;
+  const ExecutionContext* receive_context{};
+  std::uint64_t receive_time_ns{};
+};
+
+struct ExecutionOrder {
+  std::array<std::uint8_t, 2> priorities{};
+  std::size_t size{};
+};
+
+void RecordPriority(void* state,
+                    const ExecutionContext& context) noexcept {
+  auto& order = *static_cast<ExecutionOrder*>(state);
+  order.priorities[order.size++] = context.priority();
+}
+
+Status SendFrame(void* state, const CanFrame& frame,
+                 const ExecutionContext&) noexcept {
+  auto& wire = *static_cast<Wire*>(state);
+  const auto status = wire.receiver.Accept(
+      frame, wire.receive_time_ns, *wire.receive_context);
+  return status == Status::kUnavailable ? Status::kOk : status;
+}
+
+}  // namespace
+
+int main() {
+  using namespace aster::runtime;
+  using aster::generated::CanLinkWriter;
+  Clock clock;
+  const ExecutionContext receive_context(
+      "can-rx", ExecutionKind::kThread, 6);
+
+  Wire source_to_sink{{}, &receive_context, clock.now_ns};
+  Wire sink_to_source{{}, &receive_context, clock.now_ns};
+  std::array<CanLinkWriter, 1> sink_links{{
+      {"control_can", {SendFrame, &sink_to_source}},
+  }};
+  std::array<CanLinkWriter, 1> source_links{{
+      {"control_can", {SendFrame, &source_to_sink}},
+  }};
+  aster::generated::node_b::NodeComposition sink(clock, sink_links);
+  aster::generated::node_a::NodeComposition source(clock, source_links);
+  source_to_sink.receiver = sink.CanReceiver("control_can");
+  sink_to_source.receiver = source.CanReceiver("control_can");
+
+  StaticHardwareRegistry<1> source_hardware;
+  test::Device device;
+  device.bias = 7;
+  assert(source_hardware.Add("source_device", device) == Status::kOk);
+  assert(source_hardware.Seal() == Status::kOk);
+
+  aster::generated::node_a::NodeComposition missing_link(clock);
+  assert(missing_link.Configure(&source_hardware) == Status::kInvalidArgument);
+  assert(source.Configure(&source_hardware) == Status::kOk);
+  assert(sink.Configure() == Status::kOk);
+  assert(source.Initialize() == Status::kOk);
+  assert(sink.Initialize() == Status::kOk);
+  assert(source.Start() == Status::kUnavailable);
+  assert(sink.Start() == Status::kUnavailable);
+
+  const ExecutionContext runtime_context(
+      "runtime", ExecutionKind::kThread, 9);
+  for (std::size_t sample = 0; sample < 3; ++sample) {
+    source_to_sink.receive_time_ns = clock.now_ns;
+    sink_to_source.receive_time_ns = clock.now_ns;
+    assert(source.Poll(clock.now_ns, runtime_context) == Status::kOk);
+    assert(sink.Poll(clock.now_ns, runtime_context) == Status::kOk);
+    clock.now_ns += 100'000'000;
+  }
+  assert(source.Start() == Status::kOk);
+  assert(sink.Start() == Status::kOk);
+
+  auto* const high = source.FindExecutor("command_source__control");
+  auto* const low = source.FindExecutor("command_observer__control");
+  assert(high != nullptr);
+  assert(low != nullptr);
+  ExecutionOrder order;
+  assert(low->TryPost({RecordPriority, &order}, runtime_context) == Status::kOk);
+  assert(high->TryPost({RecordPriority, &order}, runtime_context) == Status::kOk);
+  std::size_t drained{};
+  assert(source.DrainExecutors(2, drained) == Status::kOk);
+  assert(drained == 2);
+  assert(order.priorities[0] == 7);
+  assert(order.priorities[1] == 4);
+  assert(source.DrainExecutors(0, drained) == Status::kInvalidArgument);
+  assert(drained == 0);
+  assert(source.DrainExecutors(1, drained) == Status::kUnavailable);
+  assert(drained == 0);
+
+  assert(source.Poll(clock.now_ns, runtime_context) == Status::kOk);
+  assert(source.RunExecutor(1) == Status::kOk);
+  assert(source.RunExecutor(0) == Status::kOk);
+  assert(source.RunExecutor(0) == Status::kOk);
+  assert(sink.RunExecutor(0) == Status::kOk);
+  assert(test::Sink::received == 2);
+  assert(test::Sink::last.value == 7);
+  assert(test::Sink::last.auxiliary == 1);
+
+  source.Shutdown();
+  sink.Shutdown();
+}
+""",
+    )
+
+    repository_root = Path(__file__).parents[2]
+    runtime = repository_root / "aster-runtime"
+    transports = repository_root / "aster-transports"
+    executable = tmp_path / "generated_transport_test"
+    subprocess.run(
+        [
+            "/usr/bin/c++",
+            "-std=c++20",
+            "-Wall",
+            "-Wextra",
+            "-Wpedantic",
+            "-Wconversion",
+            "-Wsign-conversion",
+            "-Werror",
+            "-I",
+            str(output / "nodes"),
+            "-I",
+            str(generated_messages / "include"),
+            "-I",
+            str(runtime / "include"),
+            "-I",
+            str(transports / "include"),
+            "-I",
+            str(tmp_path / "source/include"),
+            "-I",
+            str(tmp_path / "sink/include"),
+            str(tmp_path / "generated_transport_test.cpp"),
+            str(runtime / "src/runtime.cpp"),
+            "-o",
+            str(executable),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    subprocess.run([str(executable)], check=True)
+
+def test_generated_composition_runs_local_service_and_action(tmp_path: Path) -> None:
+    workspace, deployment = create_workspace(tmp_path)
+    write(
+        tmp_path,
+        "control-interfaces/schemas/srv/SetEnabled.srv.yaml",
+        """\
+api_version: aster.dev/schema/v1alpha1
+kind: Service
+metadata: {name: SetEnabled, namespace: test.srv}
+spec:
+  request:
+    fields: [{name: enabled, type: bool}]
+  response:
+    fields: [{name: accepted, type: bool}]
+""",
+    )
+    write(
+        tmp_path,
+        "control-interfaces/schemas/action/Move.action.yaml",
+        """\
+api_version: aster.dev/schema/v1alpha1
+kind: Action
+metadata: {name: Move, namespace: test.action}
+spec:
+  goal:
+    fields: [{name: distance, type: float32}]
+  feedback:
+    fields: [{name: progress, type: uint8}]
+  result:
+    fields: [{name: travelled, type: float32}]
+""",
+    )
+    write(
+        tmp_path,
+        "rpc/package.yaml",
+        """\
+api_version: aster.dev/v1alpha1
+kind: Package
+metadata: {name: rpc, version: 0.1.0, license: Apache-2.0}
+spec:
+  build: {system: cmake}
+  exports:
+    modules:
+      - {name: service-server, manifest: service-server.module.yaml}
+      - {name: service-client, manifest: service-client.module.yaml}
+      - {name: action-server, manifest: action-server.module.yaml}
+      - {name: action-client, manifest: action-client.module.yaml}
+  dependencies: [control-interfaces]
+""",
+    )
+    write(
+        tmp_path,
+        "rpc/include/test/rpc.hpp",
+        """\
+#pragma once
+
+#include <cstdint>
+#include <string_view>
+
+#include "aster/interfaces.hpp"
+#include "aster/runtime/module.hpp"
+
+namespace test {
+
+class ServiceServerModule final : public aster::runtime::Module {
+ public:
+  explicit ServiceServerModule(std::string_view name) noexcept : name_(name) {}
+  std::string_view Name() const noexcept override { return name_; }
+
+  aster::runtime::Status Initialize(
+      aster::runtime::ModuleContext& context) noexcept override {
+    if (const auto status = context.ResolveServiceServer("service", server_);
+        status != aster::runtime::Status::kOk) return status;
+    return server_.BindHandler(Handle, this);
+  }
+  aster::runtime::Status Start() noexcept override {
+    return aster::runtime::Status::kOk;
+  }
+  void Shutdown() noexcept override {}
+
+  inline static std::uint32_t calls{};
+
+ private:
+  static aster::runtime::Status Handle(
+      void*, const test::srv::SetEnabledRequest& request,
+      test::srv::SetEnabledResponse& response,
+      const aster::runtime::ServiceCallInfo&,
+      const aster::runtime::ExecutionContext&) noexcept {
+    ++calls;
+    response.accepted = request.enabled;
+    return aster::runtime::Status::kOk;
+  }
+
+  std::string_view name_;
+  aster::runtime::ServiceServer<test::srv::SetEnabled> server_;
+};
+
+class ServiceClientModule final : public aster::runtime::Module {
+ public:
+  explicit ServiceClientModule(std::string_view name) noexcept : name_(name) {}
+  std::string_view Name() const noexcept override { return name_; }
+
+  aster::runtime::Status Initialize(
+      aster::runtime::ModuleContext& context) noexcept override {
+    context_ = &context;
+    return context.ResolveServiceClient("service", client_);
+  }
+  aster::runtime::Status Start() noexcept override {
+    return client_.CallAsync({true}, Complete, this,
+                             context_->executor()->context());
+  }
+  void Shutdown() noexcept override {}
+
+  inline static std::uint32_t completions{};
+  inline static bool accepted{};
+
+ private:
+  static void Complete(
+      void*, aster::runtime::Status status,
+      const test::srv::SetEnabledResponse& response,
+      const aster::runtime::ServiceCallInfo&,
+      const aster::runtime::ExecutionContext&) noexcept {
+    if (status == aster::runtime::Status::kOk) {
+      ++completions;
+      accepted = response.accepted;
+    }
+  }
+
+  std::string_view name_;
+  aster::runtime::ModuleContext* context_{};
+  aster::runtime::ServiceClient<test::srv::SetEnabled> client_;
+};
+
+class ActionServerModule final : public aster::runtime::Module {
+ public:
+  explicit ActionServerModule(std::string_view name) noexcept : name_(name) {}
+  std::string_view Name() const noexcept override { return name_; }
+
+  aster::runtime::Status Initialize(
+      aster::runtime::ModuleContext& context) noexcept override {
+    if (const auto status = context.ResolveActionServer("action", server_);
+        status != aster::runtime::Status::kOk) return status;
+    return server_.BindHandlers(Accept, Cancel, this);
+  }
+  aster::runtime::Status Start() noexcept override {
+    return aster::runtime::Status::kOk;
+  }
+  void Shutdown() noexcept override {}
+
+  inline static std::uint32_t goals{};
+
+ private:
+  static aster::runtime::Status Accept(
+      void*, const test::action::MoveGoal&,
+      aster::runtime::ActionGoalHandle,
+      const aster::runtime::ExecutionContext&) noexcept {
+    ++goals;
+    return aster::runtime::Status::kOk;
+  }
+  static aster::runtime::Status Cancel(
+      void*, aster::runtime::ActionGoalHandle,
+      const aster::runtime::ExecutionContext&) noexcept {
+    return aster::runtime::Status::kOk;
+  }
+
+  std::string_view name_;
+  aster::runtime::ActionServer<test::action::Move> server_;
+};
+
+class ActionClientModule final : public aster::runtime::Module {
+ public:
+  explicit ActionClientModule(std::string_view name) noexcept : name_(name) {}
+  std::string_view Name() const noexcept override { return name_; }
+
+  aster::runtime::Status Initialize(
+      aster::runtime::ModuleContext& context) noexcept override {
+    context_ = &context;
+    return context.ResolveActionClient("action", client_);
+  }
+  aster::runtime::Status Start() noexcept override {
+    aster::runtime::ActionCallbacks<test::action::Move> callbacks{
+        GoalResponse, nullptr, Result, nullptr, this};
+    return client_.SendGoal({1.5F}, callbacks, 0,
+                            context_->executor()->context(), handle_);
+  }
+  void Shutdown() noexcept override {}
+
+  inline static std::uint32_t accepted{};
+
+ private:
+  static void GoalResponse(
+      void*, aster::runtime::ActionGoalHandle,
+      aster::runtime::Status status,
+      const aster::runtime::ExecutionContext&) noexcept {
+    if (status == aster::runtime::Status::kOk) ++accepted;
+  }
+  static void Result(
+      void*, aster::runtime::ActionGoalHandle,
+      aster::runtime::Status, const test::action::MoveResult&,
+      const aster::runtime::ExecutionContext&) noexcept {}
+
+  std::string_view name_;
+  aster::runtime::ModuleContext* context_{};
+  aster::runtime::ActionClient<test::action::Move> client_;
+  aster::runtime::ActionGoalHandle handle_{};
+};
+
+}  // namespace test
+""",
+    )
+    modules = {
+        "service-server": ("ServiceServerModule", "service_server", "test.srv.SetEnabled"),
+        "service-client": ("ServiceClientModule", "service_client", "test.srv.SetEnabled"),
+        "action-server": ("ActionServerModule", "action_server", "test.action.Move"),
+        "action-client": ("ActionClientModule", "action_client", "test.action.Move"),
+    }
+    for name, (class_name, kind, type_name) in modules.items():
+        write(
+            tmp_path,
+            f"rpc/{name}.module.yaml",
+            f"""\
+api_version: aster.dev/v1alpha1
+kind: Module
+metadata: {{name: {name}, version: 0.1.0}}
+spec:
+  implementation: {{target: rpc, class: test::{class_name}, header: test/rpc.hpp}}
+  dependencies: []
+  ports:
+    - {{name: {'service' if kind.startswith('service') else 'action'}, kind: {kind}, type: {type_name}, required: true}}
+  executors:
+    - {{name: rpc, priority: 5, stack_bytes: 1024, queue_depth: 4}}
+  parameters: []
+  hardware: []
+""",
+        )
+
+    workspace_document = yaml.safe_load(workspace.read_text(encoding="utf-8"))
+    workspace_document["packages"].append(
+        {"name": "rpc", "source": {"type": "path", "path": "rpc"}}
+    )
+    workspace.write_text(yaml.safe_dump(workspace_document, sort_keys=False))
+    lock_path = tmp_path / "package.lock.yaml"
+    lock = yaml.safe_load(lock_path.read_text(encoding="utf-8"))
+    lock["packages"]["rpc"] = {
+        "source": "rpc",
+        "commit": "dddddddddddddddddddddddddddddddddddddddd",
+    }
+    lock_path.write_text(yaml.safe_dump(lock, sort_keys=False))
+    application_path = tmp_path / "application.yaml"
+    application = yaml.safe_load(application_path.read_text(encoding="utf-8"))
+    application["instances"].update(
+        {
+            "local_service_server": {
+                "package": "rpc",
+                "module": "service-server",
+                "ports": {"service": "/service/enabled"},
+            },
+            "local_service_client": {
+                "package": "rpc",
+                "module": "service-client",
+                "ports": {"service": "/service/enabled"},
+            },
+            "local_action_server": {
+                "package": "rpc",
+                "module": "action-server",
+                "ports": {"action": "/action/move"},
+            },
+            "local_action_client": {
+                "package": "rpc",
+                "module": "action-client",
+                "ports": {"action": "/action/move"},
+            },
+        }
+    )
+    application_path.write_text(yaml.safe_dump(application, sort_keys=False))
+    deployment_document = yaml.safe_load(deployment.read_text(encoding="utf-8"))
+    deployment_document["nodes"]["node_b"]["instances"].extend(
+        [
+            "local_service_server",
+            "local_service_client",
+            "local_action_server",
+            "local_action_client",
+        ]
+    )
+    deployment.write_text(yaml.safe_dump(deployment_document, sort_keys=False))
+
+    output = tmp_path / "generated"
+    compile_deployment(workspace, deployment, output)
+    generated_messages = tmp_path / "generated-messages"
+    generate_interfaces(tmp_path / "control-interfaces/schemas", generated_messages)
+    write(
+        tmp_path,
+        "local_rpc_test.cpp",
+        """\
+#include <array>
+#include <cassert>
+#include <cstddef>
+
+#include "node_a/node_composition.hpp"
+#include "node_b/node_composition.hpp"
+#include "aster/runtime/hardware_registry.hpp"
+
+namespace {
+
+class Clock final : public aster::runtime::SteadyClock {
+ public:
+  std::uint64_t NowNs() const noexcept override { return now_ns; }
+  std::uint64_t now_ns{1'000'000};
+};
+
+struct Wire {
+  aster::transport::can::CanFrameReceiver receiver;
+  const aster::runtime::ExecutionContext* context{};
+  std::uint64_t receive_time_ns{};
+};
+
+aster::runtime::Status SendFrame(
+    void* state, const aster::transport::can::CanFrame& frame,
+    const aster::runtime::ExecutionContext&) noexcept {
+  auto& wire = *static_cast<Wire*>(state);
+  const auto status = wire.receiver.Accept(
+      frame, wire.receive_time_ns, *wire.context);
+  return status == aster::runtime::Status::kUnavailable
+             ? aster::runtime::Status::kOk
+             : status;
+}
+
+}  // namespace
+
+int main() {
+  using namespace aster::runtime;
+  Clock clock;
+  const ExecutionContext can_context("can-rx", ExecutionKind::kThread, 6);
+  const ExecutionContext runtime_context(
+      "runtime", ExecutionKind::kThread, 9);
+  Wire a_to_b{{}, &can_context, clock.now_ns};
+  Wire b_to_a{{}, &can_context, clock.now_ns};
+  std::array<aster::generated::CanLinkWriter, 1> a_links{{
+      {"control_can", {SendFrame, &a_to_b}},
+  }};
+  std::array<aster::generated::CanLinkWriter, 1> b_links{{
+      {"control_can", {SendFrame, &b_to_a}},
+  }};
+  aster::generated::node_a::NodeComposition node_a(clock, a_links);
+  aster::generated::node_b::NodeComposition node_b(clock, b_links);
+  a_to_b.receiver = node_b.CanReceiver("control_can");
+  b_to_a.receiver = node_a.CanReceiver("control_can");
+
+  StaticHardwareRegistry<1> source_hardware;
+  test::Device device;
+  device.bias = 7;
+  assert(source_hardware.Add("source_device", device) == Status::kOk);
+  assert(source_hardware.Seal() == Status::kOk);
+  assert(node_a.Configure(&source_hardware) == Status::kOk);
+  assert(node_b.Configure() == Status::kOk);
+  assert(node_a.Initialize() == Status::kOk);
+  assert(node_b.Initialize() == Status::kOk);
+  for (std::size_t sample = 0; sample < 3; ++sample) {
+    a_to_b.receive_time_ns = clock.now_ns;
+    b_to_a.receive_time_ns = clock.now_ns;
+    assert(node_a.Poll(clock.now_ns, runtime_context) == Status::kOk);
+    assert(node_b.Poll(clock.now_ns, runtime_context) == Status::kOk);
+    clock.now_ns += 100'000'000;
+  }
+  assert(node_b.Start() == Status::kOk);
+  assert(node_a.Start() == Status::kOk);
+
+  std::size_t executed{};
+  assert(node_b.DrainExecutors(4, executed) == Status::kOk);
+  assert(executed == 2);
+  assert(test::ServiceServerModule::calls == 1);
+  assert(test::ServiceClientModule::completions == 1);
+  assert(test::ServiceClientModule::accepted);
+  assert(test::ActionServerModule::goals == 1);
+  assert(test::ActionClientModule::accepted == 1);
+  node_a.Shutdown();
+  node_b.Shutdown();
+}
+""",
+    )
+
+    repository_root = Path(__file__).parents[2]
+    runtime = repository_root / "aster-runtime"
+    transports = repository_root / "aster-transports"
+    executable = tmp_path / "local_rpc_test"
+    subprocess.run(
+        [
+            "/usr/bin/c++",
+            "-std=c++20",
+            "-Wall",
+            "-Wextra",
+            "-Wpedantic",
+            "-Wconversion",
+            "-Wsign-conversion",
+            "-Werror",
+            "-I",
+            str(output / "nodes"),
+            "-I",
+            str(generated_messages / "include"),
+            "-I",
+            str(runtime / "include"),
+            "-I",
+            str(transports / "include"),
+            "-I",
+            str(tmp_path / "source/include"),
+            "-I",
+            str(tmp_path / "sink/include"),
+            "-I",
+            str(tmp_path / "rpc/include"),
+            str(tmp_path / "local_rpc_test.cpp"),
+            str(runtime / "src/runtime.cpp"),
+            "-o",
+            str(executable),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    subprocess.run([str(executable)], check=True)
+
+    deployment_document = yaml.safe_load(deployment.read_text(encoding="utf-8"))
+    for instance in ("local_service_client", "local_action_client"):
+        deployment_document["nodes"]["node_b"]["instances"].remove(instance)
+        deployment_document["nodes"]["node_a"]["instances"].append(instance)
+    deployment_document["qos_profiles"]["rpc"] = {
+        "class": "event",
+        "delivery": "queue",
+        "reliability": "reliable",
+        "history_depth": 1,
+        "max_rate_hz": 10,
+    }
+    deployment_document["route_rules"].extend(
+        [
+            {"match": {"topic": "/service/**"}, "qos": "rpc"},
+            {"match": {"topic": "/action/**"}, "qos": "rpc"},
+        ]
+    )
+    deployment.write_text(yaml.safe_dump(deployment_document, sort_keys=False))
+    cross_output = tmp_path / "generated-cross-rpc"
+    compile_deployment(workspace, deployment, cross_output)
+    first_node_a_ports = (cross_output / "nodes/node_a/node_ports.hpp").read_bytes()
+    first_node_b_ports = (cross_output / "nodes/node_b/node_ports.hpp").read_bytes()
+    compile_deployment(workspace, deployment, cross_output)
+    assert (cross_output / "nodes/node_a/node_ports.hpp").read_bytes() == first_node_a_ports
+    assert (cross_output / "nodes/node_b/node_ports.hpp").read_bytes() == first_node_b_ports
+    write(
+        tmp_path,
+        "cross_rpc_test.cpp",
+        """\
+#include <array>
+#include <cassert>
+#include <cstddef>
+#include <cstdint>
+
+#include "node_a/node_composition.hpp"
+#include "node_b/node_composition.hpp"
+#include "aster/runtime/hardware_registry.hpp"
+
+namespace {
+
+class Clock final : public aster::runtime::SteadyClock {
+ public:
+  std::uint64_t NowNs() const noexcept override { return now_ns; }
+  std::uint64_t now_ns{1'000'000};
+};
+
+struct Wire {
+  aster::transport::can::CanFrameReceiver receiver;
+  const aster::runtime::ExecutionContext* context{};
+  std::uint64_t receive_time_ns{};
+  std::size_t drop_index{static_cast<std::size_t>(-1)};
+  std::size_t frame_index{};
+};
+
+aster::runtime::Status SendFrame(
+    void* state, const aster::transport::can::CanFrame& frame,
+    const aster::runtime::ExecutionContext&) noexcept {
+  auto& wire = *static_cast<Wire*>(state);
+  const auto frame_index = wire.frame_index++;
+  if (frame_index == wire.drop_index) return aster::runtime::Status::kOk;
+  const auto status = wire.receiver.Accept(
+      frame, wire.receive_time_ns, *wire.context);
+  return status == aster::runtime::Status::kUnavailable
+             ? aster::runtime::Status::kOk
+             : status;
+}
+
+}  // namespace
+
+int main() {
+  using namespace aster::runtime;
+  Clock clock;
+  const ExecutionContext can_context("can-rx", ExecutionKind::kThread, 6);
+  const ExecutionContext runtime_context(
+      "runtime", ExecutionKind::kThread, 9);
+  Wire a_to_b{{}, &can_context, clock.now_ns};
+  Wire b_to_a{{}, &can_context, clock.now_ns};
+  std::array<aster::generated::CanLinkWriter, 1> a_links{{
+      {"control_can", {SendFrame, &a_to_b}},
+  }};
+  std::array<aster::generated::CanLinkWriter, 1> b_links{{
+      {"control_can", {SendFrame, &b_to_a}},
+  }};
+  aster::generated::node_a::NodeComposition node_a(clock, a_links);
+  aster::generated::node_b::NodeComposition node_b(clock, b_links);
+  a_to_b.receiver = node_b.CanReceiver("control_can");
+  b_to_a.receiver = node_a.CanReceiver("control_can");
+
+  StaticHardwareRegistry<1> source_hardware;
+  test::Device device;
+  device.bias = 7;
+  assert(source_hardware.Add("source_device", device) == Status::kOk);
+  assert(source_hardware.Seal() == Status::kOk);
+  assert(node_a.Configure(&source_hardware) == Status::kOk);
+  assert(node_b.Configure() == Status::kOk);
+  assert(node_a.Initialize() == Status::kOk);
+  assert(node_b.Initialize() == Status::kOk);
+  assert(node_a.Start() == Status::kUnavailable);
+  assert(node_b.Start() == Status::kUnavailable);
+  for (std::size_t sample = 0; sample < 3; ++sample) {
+    a_to_b.receive_time_ns = clock.now_ns;
+    b_to_a.receive_time_ns = clock.now_ns;
+    assert(node_a.Poll(clock.now_ns, runtime_context) == Status::kOk);
+    assert(node_b.Poll(clock.now_ns, runtime_context) == Status::kOk);
+    clock.now_ns += 100'000'000;
+  }
+  a_to_b.drop_index = a_to_b.frame_index + 1;
+  assert(node_b.Start() == Status::kOk);
+  assert(node_a.Start() == Status::kOk);
+
+  std::size_t executed{};
+  assert(node_b.DrainExecutors(4, executed) == Status::kOk);
+  assert(executed == 1);
+  assert(test::ServiceServerModule::calls == 1);
+  assert(test::ServiceClientModule::completions == 1);
+  assert(test::ServiceClientModule::accepted);
+  assert(test::ActionServerModule::goals == 0);
+  assert(test::ActionClientModule::accepted == 0);
+
+  clock.now_ns += 6'000'000;
+  a_to_b.receive_time_ns = clock.now_ns;
+  b_to_a.receive_time_ns = clock.now_ns;
+  assert(node_a.Poll(clock.now_ns, runtime_context) == Status::kOk);
+  assert(node_b.DrainExecutors(4, executed) == Status::kOk);
+  assert(executed == 1);
+  assert(test::ActionServerModule::goals == 1);
+  assert(test::ActionClientModule::accepted == 1);
+  node_a.Shutdown();
+  node_b.Shutdown();
+}
+""",
+    )
+    cross_executable = tmp_path / "cross_rpc_test"
+    subprocess.run(
+        [
+            "/usr/bin/c++",
+            "-std=c++20",
+            "-Wall",
+            "-Wextra",
+            "-Wpedantic",
+            "-Wconversion",
+            "-Wsign-conversion",
+            "-Werror",
+            "-I",
+            str(cross_output / "nodes"),
+            "-I",
+            str(generated_messages / "include"),
+            "-I",
+            str(runtime / "include"),
+            "-I",
+            str(transports / "include"),
+            "-I",
+            str(tmp_path / "source/include"),
+            "-I",
+            str(tmp_path / "sink/include"),
+            "-I",
+            str(tmp_path / "rpc/include"),
+            str(tmp_path / "cross_rpc_test.cpp"),
+            str(runtime / "src/runtime.cpp"),
+            "-o",
+            str(cross_executable),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    subprocess.run([str(cross_executable)], check=True)
+
+
+def test_rejects_an_instance_placed_more_than_once(tmp_path: Path) -> None:
+    workspace, deployment = create_workspace(tmp_path)
+    text = deployment.read_text(encoding="utf-8")
+    deployment.write_text(
+        text.replace("instances: [command_sink]", "instances: [command_source, command_sink]"),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(DeploymentError, match="command_source.*more than once"):
+        compile_deployment(workspace, deployment, tmp_path / "generated")
+
+
+def test_reports_composition_blockers_without_emitting_a_fake_entry(
+    tmp_path: Path,
+) -> None:
+    workspace, deployment = create_workspace(tmp_path)
+    source_manifest = tmp_path / "source/module.yaml"
+    source_manifest.write_text(
+        source_manifest.read_text(encoding="utf-8").replace(
+            ", header: test/source.hpp", ""
+        ),
+        encoding="utf-8",
+    )
+
+    output = tmp_path / "generated"
+    compile_deployment(workspace, deployment, output)
+    report = yaml.safe_load((output / "reports/composition.yaml").read_text())
+
+    assert report["nodes"]["node_a"]["ready"] is False
+    assert report["nodes"]["node_a"]["blockers"] == [
+        "instance command_source: implementation.header is not declared"
+    ]
+    assert not (output / "nodes/node_a/node_composition.hpp").exists()
+    assert not (output / "nodes/node_a/generated_main.cpp").exists()
+    assert (output / "nodes/node_a/node_descriptor.cpp").is_file()
+    assert report["nodes"]["node_b"] == {"ready": True, "blockers": []}
+
+
+def test_multiple_executors_require_one_explicit_default_for_composition(
+    tmp_path: Path,
+) -> None:
+    workspace, deployment = create_workspace(tmp_path)
+    source_manifest = tmp_path / "source/module.yaml"
+    source_manifest.write_text(
+        source_manifest.read_text(encoding="utf-8").replace(
+            "    - {name: control, priority: 4, stack_bytes: 1024, queue_depth: 4, period_us: 1000}",
+            "    - {name: control, priority: 4, stack_bytes: 1024, queue_depth: 4, period_us: 1000}\n"
+            "    - {name: events, priority: 3, stack_bytes: 512, queue_depth: 2}",
+        ),
+        encoding="utf-8",
+    )
+
+    output = tmp_path / "generated"
+    compile_deployment(workspace, deployment, output)
+    report = yaml.safe_load((output / "reports/composition.yaml").read_text())
+
+    assert report["nodes"]["node_a"]["blockers"] == [
+        "instance command_source: multiple executors require exactly one default"
+    ]
+    assert not (output / "nodes/node_a/node_composition.hpp").exists()
+
+
+def test_rejects_a_classic_can_budget_overflow(tmp_path: Path) -> None:
+    workspace, deployment = create_workspace(tmp_path, max_rate_hz=10000)
+
+    with pytest.raises(DeploymentError, match="control_can.*utilization"):
+        compile_deployment(workspace, deployment, tmp_path / "generated")
+
+
+def test_route_ids_avoid_reserved_standard_can_ids(tmp_path: Path) -> None:
+    workspace, deployment = create_workspace(tmp_path)
+    hardware = tmp_path / "hardware/node_a.yaml"
+    hardware.write_text(
+        hardware.read_text(encoding="utf-8").replace(
+            "control_bus: {kind: can, backend: libxr, resource: can1, options: {}}",
+            "control_bus: {kind: can, backend: libxr, resource: can1, "
+            "options: {}, reserved_standard_ids: [{id: 0x208, owner: legacy}]}"
+        ),
+        encoding="utf-8",
+    )
+
+    output = tmp_path / "generated"
+    compile_deployment(workspace, deployment, output)
+
+    lock = yaml.safe_load((output / "deployment.lock.yaml").read_text())
+    assert lock["routes"] == {"/control/command": 9}
+
+
+def test_rejects_reserved_aster_can_control_plane_id(tmp_path: Path) -> None:
+    workspace, deployment = create_workspace(tmp_path)
+    hardware = tmp_path / "hardware/node_a.yaml"
+    hardware.write_text(
+        hardware.read_text(encoding="utf-8").replace(
+            "control_bus: {kind: can, backend: libxr, resource: can1, options: {}}",
+            "control_bus: {kind: can, backend: libxr, resource: can1, "
+            "options: {}, reserved_standard_ids: [{id: 1, owner: legacy}]}"
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(DeploymentError, match="0x001.*legacy.*control plane"):
+        compile_deployment(workspace, deployment, tmp_path / "generated")
+
+
+def test_rejects_a_locked_route_that_conflicts_with_reserved_can_id(
+    tmp_path: Path,
+) -> None:
+    workspace, deployment = create_workspace(tmp_path)
+    output = tmp_path / "generated"
+    lock = tmp_path / "deployment.lock.yaml"
+    compile_deployment(workspace, deployment, output, lock)
+    hardware = tmp_path / "hardware/node_a.yaml"
+    hardware.write_text(
+        hardware.read_text(encoding="utf-8").replace(
+            "control_bus: {kind: can, backend: libxr, resource: can1, options: {}}",
+            "control_bus: {kind: can, backend: libxr, resource: can1, "
+            "options: {}, reserved_standard_ids: [{id: 0x208, owner: legacy}]}"
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        DeploymentError,
+        match="locked route '/control/command'.*0x208.*legacy",
+    ):
+        compile_deployment(workspace, deployment, output, lock)
+
+
+def test_classic_can_cost_includes_reliable_ack_and_operation_envelopes() -> None:
+    assert _can_route_cost("service", [2, 4], 8) == (9, 5, 505)
+    assert _can_route_cost("action", [2, 1, 2], 8) == (15, 15, 1525)
+
+    with pytest.raises(DeploymentError, match="16 classic CAN fragments"):
+        _can_route_cost("topic", [95], 8)
+
+
+def test_resolved_package_lock_changes_the_deployment_hash(tmp_path: Path) -> None:
+    workspace, deployment = create_workspace(tmp_path)
+    output = tmp_path / "generated"
+    first = compile_deployment(workspace, deployment, output)
+    package_lock = tmp_path / "package.lock.yaml"
+    package_lock.write_text(
+        package_lock.read_text(encoding="utf-8").replace(
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "dddddddddddddddddddddddddddddddddddddddd",
+        ),
+        encoding="utf-8",
+    )
+
+    second = compile_deployment(workspace, deployment, output)
+
+    assert first.deployment_hash != second.deployment_hash
+
+
+def test_unrelated_package_lock_does_not_change_deployment_hash(
+    tmp_path: Path,
+) -> None:
+    workspace, deployment = create_workspace(tmp_path)
+    workspace.write_text(
+        workspace.read_text(encoding="utf-8")
+        + "  - {name: docs, source: {type: path, path: docs}}\n",
+        encoding="utf-8",
+    )
+    package_lock = tmp_path / "package.lock.yaml"
+    package_lock.write_text(
+        package_lock.read_text(encoding="utf-8")
+        + "  docs: {source: docs, commit: "
+        + "dddddddddddddddddddddddddddddddddddddddd}\n",
+        encoding="utf-8",
+    )
+    output = tmp_path / "generated"
+    first = compile_deployment(workspace, deployment, output)
+    package_lock.write_text(
+        package_lock.read_text(encoding="utf-8").replace(
+            "dddddddddddddddddddddddddddddddddddddddd",
+            "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        ),
+        encoding="utf-8",
+    )
+
+    second = compile_deployment(workspace, deployment, output)
+
+    assert first.deployment_hash == second.deployment_hash
+
+
+def test_deployment_compiler_lock_changes_deployment_hash(tmp_path: Path) -> None:
+    workspace, deployment = create_workspace(tmp_path)
+    write(
+        tmp_path,
+        "aster-tools/package.yaml",
+        """\
+api_version: aster.dev/v1alpha1
+kind: Package
+metadata: {name: aster-tools, version: 0.1.0, license: Apache-2.0}
+spec:
+  build: {system: python}
+  exports: {tools: [aster]}
+  dependencies: []
+""",
+    )
+    workspace.write_text(
+        workspace.read_text(encoding="utf-8")
+        + "  - {name: aster-tools, source: {type: path, path: aster-tools}}\n",
+        encoding="utf-8",
+    )
+    package_lock = tmp_path / "package.lock.yaml"
+    package_lock.write_text(
+        package_lock.read_text(encoding="utf-8")
+        + "  aster-tools: {source: aster-tools, commit: "
+        + "dddddddddddddddddddddddddddddddddddddddd}\n",
+        encoding="utf-8",
+    )
+    output = tmp_path / "generated"
+    first = compile_deployment(workspace, deployment, output)
+    package_lock.write_text(
+        package_lock.read_text(encoding="utf-8").replace(
+            "dddddddddddddddddddddddddddddddddddddddd",
+            "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        ),
+        encoding="utf-8",
+    )
+
+    second = compile_deployment(workspace, deployment, output)
+
+    assert first.deployment_hash != second.deployment_hash
+
+
+def test_rejects_unknown_instance_parameters(tmp_path: Path) -> None:
+    workspace, deployment = create_workspace(tmp_path)
+    application = tmp_path / "application.yaml"
+    application.write_text(
+        application.read_text(encoding="utf-8").replace(
+            "parameters: {input_source: 0, gain: 0.25}",
+            "parameters: {input_source: 0, gain: 0.25, typo: 1}",
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(DeploymentError, match="unknown parameters: typo"):
+        compile_deployment(workspace, deployment, tmp_path / "generated")
+
+
+@pytest.mark.parametrize(
+    ("parameter_config", "message"),
+    [
+        ("{input_source: 2, gain: 0.25}", "input_source.*outside"),
+        ("{input_source: true, gain: 0.25}", "input_source.*must be uint32"),
+        ("{input_source: 0, gain: .nan}", "gain.*finite"),
+    ],
+)
+def test_rejects_invalid_instance_parameter_values(
+    tmp_path: Path, parameter_config: str, message: str
+) -> None:
+    workspace, deployment = create_workspace(tmp_path)
+    application = tmp_path / "application.yaml"
+    application.write_text(
+        application.read_text(encoding="utf-8").replace(
+            "{input_source: 0, gain: 0.25}", parameter_config
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(DeploymentError, match=message):
+        compile_deployment(workspace, deployment, tmp_path / "generated")

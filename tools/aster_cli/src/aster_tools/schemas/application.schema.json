@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["api_version", "kind", "metadata", "instances"],
+  "properties": {
+    "api_version": {"const": "aster.dev/v1alpha1"},
+    "kind": {"const": "Application"},
+    "metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": {"name": {"type": "string", "minLength": 1}}
+    },
+    "instances": {
+      "type": "object",
+      "additionalProperties": {"$ref": "#/$defs/instance"}
+    }
+  },
+  "$defs": {
+    "instance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["package", "module"],
+      "properties": {
+        "package": {"type": "string", "minLength": 1},
+        "module": {"type": "string", "minLength": 1},
+        "parameters": {"type": "object", "additionalProperties": true},
+        "ports": {
+          "type": "object",
+          "additionalProperties": {"type": "string", "minLength": 1}
+        },
+        "hardware": {
+          "type": "object",
+          "additionalProperties": {"type": "string", "minLength": 1}
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,864 @@
+"""Static deployment graph compiler and resource validation."""
+
+from __future__ import annotations
+
+import fnmatch
+import math
+import struct
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+from aster_tools.cpp_codegen import record_wire_sizes
+from aster_tools.interface_model import (
+    InterfaceError,
+    InterfaceModel,
+    hash16,
+)
+from aster_tools.validation import ValidationError, validate_document
+from aster_tools.workspace_model import (
+    BoardExport,
+    ModuleManifest,
+    Workspace,
+    WorkspaceError,
+)
+
+
+class DeploymentError(ValueError):
+    """Raised when a deployment cannot be compiled safely."""
+
+
+@dataclass(frozen=True)
+class ResolvedParameter:
+    name: str
+    type_name: str
+    unit: str
+    value: bool | int | float
+    minimum: bool | int | float
+    maximum: bool | int | float
+    mutability: str
+    persistence: str
+
+
+@dataclass(frozen=True)
+class Instance:
+    name: str
+    package: str
+    module: str
+    config: dict[str, Any]
+    manifest: ModuleManifest
+    node: str
+    parameters: tuple[ResolvedParameter, ...]
+
+
+@dataclass(frozen=True)
+class PortEndpoint:
+    binding: str
+    instance: str
+    node: str
+    port: str
+    kind: str
+    type_name: str
+
+
+@dataclass(frozen=True)
+class Route:
+    name: str
+    kind: str
+    type_name: str
+    type_hash: str
+    source_node: str
+    destination_nodes: tuple[str, ...]
+    link: str
+    qos: str
+    max_rate_hz: float
+    max_serialized_size: int
+    max_wire_payload_size: int
+    frame_count: int
+    bits_per_message: int
+
+
+@dataclass(frozen=True)
+class LinkBudget:
+    name: str
+    bitrate_bps: int
+    reserved_utilization: float
+    control_utilization: float
+    route_utilization: float
+    total_utilization: float
+    utilization_limit: float
+
+    @property
+    def within_budget(self) -> bool:
+        return self.total_utilization <= self.utilization_limit
+
+
+@dataclass(frozen=True)
+class DeploymentPlan:
+    name: str
+    workspace_root: Path
+    package_paths: dict[str, Path]
+    deployment_hash: str
+    schema_hash: str
+    deployment: dict[str, Any]
+    application: dict[str, Any]
+    instances: tuple[Instance, ...]
+    hardware: dict[str, dict[str, Any]]
+    boards: dict[str, BoardExport | None]
+    bindings: dict[str, tuple[PortEndpoint, ...]]
+    routes: tuple[Route, ...]
+    link_budgets: tuple[LinkBudget, ...]
+    type_hashes: dict[str, str]
+
+
+@dataclass(frozen=True)
+class DeploymentResult:
+    node_count: int
+    instance_count: int
+    cross_node_route_count: int
+    deployment_hash: str
+    output_dir: Path
+
+
+def _resolve_path(base: Path, value: str) -> Path:
+    path = Path(value)
+    return path.resolve() if path.is_absolute() else (base / path).resolve()
+
+
+def _place_instances(
+    application: dict[str, Any], deployment: dict[str, Any]
+) -> dict[str, str]:
+    declared = set(application["instances"])
+    placed: dict[str, str] = {}
+    for node_name, node in deployment["nodes"].items():
+        for instance in node["instances"]:
+            if instance not in declared:
+                raise DeploymentError(
+                    f"node {node_name!r} places unknown instance {instance!r}"
+                )
+            if instance in placed:
+                raise DeploymentError(
+                    f"instance {instance!r} is placed more than once "
+                    f"({placed[instance]!r} and {node_name!r})"
+                )
+            placed[instance] = node_name
+    missing = sorted(declared - set(placed))
+    if missing:
+        raise DeploymentError(f"instances are not placed: {', '.join(missing)}")
+    authority = deployment.get("time_authority")
+    if authority is not None and authority not in deployment["nodes"]:
+        raise DeploymentError(f"time authority node {authority!r} does not exist")
+    return placed
+
+
+def _load_hardware(
+    deployment_path: Path, deployment: dict[str, Any]
+) -> dict[str, dict[str, Any]]:
+    profiles: dict[str, dict[str, Any]] = {}
+    for node_name, node in deployment["nodes"].items():
+        hardware_path = _resolve_path(
+            deployment_path.parent, node["target"]["hardware"]
+        )
+        profiles[node_name] = validate_document(hardware_path)
+        for resource_name, resource in profiles[node_name]["spec"][
+            "resources"
+        ].items():
+            reservations = resource.get("reserved_standard_ids", [])
+            if reservations and resource["kind"] != "can":
+                raise DeploymentError(
+                    f"hardware {node_name!r} resource {resource_name!r}: "
+                    "reserved_standard_ids requires a CAN resource"
+                )
+            owners_by_id: dict[int, str] = {}
+            for reservation in reservations:
+                arbitration_id = int(reservation["id"])
+                if arbitration_id in owners_by_id:
+                    raise DeploymentError(
+                        f"hardware {node_name!r} resource {resource_name!r}: "
+                        f"standard CAN ID 0x{arbitration_id:03x} is reserved by "
+                        f"both {owners_by_id[arbitration_id]!r} and "
+                        f"{reservation['owner']!r}"
+                    )
+                owners_by_id[arbitration_id] = reservation["owner"]
+    for link_name, link in deployment["links"].items():
+        if link["transport"] == "aster-can" and len(link["endpoints"]) != 2:
+            raise DeploymentError(
+                f"aster-can link {link_name!r} requires exactly two endpoints in v1"
+            )
+        endpoint_nodes: set[str] = set()
+        for endpoint in link["endpoints"]:
+            node_name = endpoint["node"]
+            if node_name not in profiles:
+                raise DeploymentError(
+                    f"link {link_name!r} references unknown node {node_name!r}"
+                )
+            if node_name in endpoint_nodes:
+                raise DeploymentError(
+                    f"link {link_name!r} repeats endpoint node {node_name!r}"
+                )
+            endpoint_nodes.add(node_name)
+            resources = profiles[node_name]["spec"]["resources"]
+            resource_name = endpoint["resource"]
+            if resource_name not in resources:
+                raise DeploymentError(
+                    f"link {link_name!r}: node {node_name!r} has no resource "
+                    f"{resource_name!r}"
+                )
+            if link["transport"] == "aster-can" and resources[resource_name]["kind"] != "can":
+                raise DeploymentError(
+                    f"link {link_name!r}: resource {resource_name!r} is not CAN"
+                )
+        if link["transport"] == "aster-can":
+            authority = deployment.get("time_authority")
+            if authority is None:
+                raise DeploymentError(
+                    f"aster-can link {link_name!r} requires time_authority"
+                )
+            if authority not in endpoint_nodes:
+                raise DeploymentError(
+                    f"aster-can link {link_name!r} does not include time authority "
+                    f"node {authority!r}"
+                )
+    return profiles
+
+
+def _load_boards(
+    workspace: Workspace,
+    deployment: dict[str, Any],
+    hardware: dict[str, dict[str, Any]],
+) -> dict[str, BoardExport | None]:
+    boards: dict[str, BoardExport | None] = {}
+    for node_name, node in deployment["nodes"].items():
+        reference = node["target"]["bsp"]
+        package_name = reference.partition("/")[0]
+        if not workspace.has_package(package_name):
+            boards[node_name] = None
+            continue
+        board = workspace.board(reference)
+        if hardware[node_name]["metadata"]["board"] != board.name:
+            raise DeploymentError(
+                f"node {node_name!r} hardware board "
+                f"{hardware[node_name]['metadata']['board']!r} does not match "
+                f"deployment board {board.name!r}"
+            )
+        profile = node["target"]["profile"]
+        if profile not in board.document.get("profiles", []):
+            raise DeploymentError(
+                f"node {node_name!r} board {board.name!r} does not support "
+                f"profile {profile!r}"
+            )
+        boards[node_name] = board
+    return boards
+
+
+def _load_instances(
+    workspace: Workspace,
+    application: dict[str, Any],
+    placements: dict[str, str],
+    hardware: dict[str, dict[str, Any]],
+) -> tuple[Instance, ...]:
+    instances: list[Instance] = []
+    for name in sorted(application["instances"]):
+        config = application["instances"][name]
+        manifest = workspace.module(config["package"], config["module"])
+        node = placements[name]
+        hardware_descriptors = manifest.document["spec"].get("hardware", [])
+        required_hardware = [
+            item if isinstance(item, str) else item["name"]
+            for item in hardware_descriptors
+        ]
+        if len(required_hardware) != len(set(required_hardware)):
+            raise DeploymentError(
+                f"instance {name!r} module declares duplicate hardware requirements"
+            )
+        bindings = config.get("hardware", {})
+        profile = hardware[node]["spec"]
+        available = set(profile["resources"]) | set(profile.get("devices", {}))
+        for requirement in required_hardware:
+            if requirement not in bindings:
+                raise DeploymentError(
+                    f"instance {name!r} does not bind hardware requirement "
+                    f"{requirement!r}"
+                )
+            if bindings[requirement] not in available:
+                raise DeploymentError(
+                    f"instance {name!r} binds {requirement!r} to unknown hardware "
+                    f"{bindings[requirement]!r} on node {node!r}"
+                )
+        unknown_hardware = sorted(set(bindings) - set(required_hardware))
+        if unknown_hardware:
+            raise DeploymentError(
+                f"instance {name!r} binds unknown hardware requirements: "
+                f"{', '.join(unknown_hardware)}"
+            )
+        parameters = _resolve_parameters(
+            name,
+            manifest.document["spec"].get("parameters", []),
+            config.get("parameters", {}),
+        )
+        resolved_config = dict(config)
+        resolved_config["parameters"] = {
+            parameter.name: parameter.value for parameter in parameters
+        }
+        instances.append(
+            Instance(
+                name=name,
+                package=config["package"],
+                module=config["module"],
+                config=resolved_config,
+                manifest=manifest,
+                node=node,
+                parameters=parameters,
+            )
+        )
+    return tuple(instances)
+
+
+_PARAMETER_LIMITS: dict[str, tuple[Any, Any]] = {
+    "bool": (False, True),
+    "int32": (-(2**31), 2**31 - 1),
+    "uint32": (0, 2**32 - 1),
+    "float32": (-3.4028234663852886e38, 3.4028234663852886e38),
+    "float64": (-1.7976931348623157e308, 1.7976931348623157e308),
+}
+
+
+def _normalize_parameter_value(
+    instance: str, name: str, type_name: str, value: Any
+) -> bool | int | float:
+    location = f"instance {instance!r} parameter {name!r}"
+    if type_name == "bool":
+        if type(value) is not bool:
+            raise DeploymentError(f"{location} must be bool")
+        return value
+    if type_name in ("int32", "uint32"):
+        if type(value) is not int:
+            raise DeploymentError(f"{location} must be {type_name}")
+        minimum, maximum = _PARAMETER_LIMITS[type_name]
+        if value < minimum or value > maximum:
+            raise DeploymentError(
+                f"{location} value {value} exceeds {type_name} storage"
+            )
+        return value
+    if type(value) not in (int, float):
+        raise DeploymentError(f"{location} must be {type_name}")
+    candidate = float(value)
+    if not math.isfinite(candidate):
+        raise DeploymentError(f"{location} must be finite")
+    if type_name == "float32":
+        try:
+            candidate = struct.unpack("<f", struct.pack("<f", candidate))[0]
+        except OverflowError as error:
+            raise DeploymentError(
+                f"{location} value {value} exceeds float32 storage"
+            ) from error
+        if not math.isfinite(candidate):
+            raise DeploymentError(
+                f"{location} value {value} exceeds float32 storage"
+            )
+    return candidate
+
+
+def _resolve_parameters(
+    instance: str,
+    descriptors: list[dict[str, Any]],
+    configured: dict[str, Any],
+) -> tuple[ResolvedParameter, ...]:
+    by_name: dict[str, dict[str, Any]] = {}
+    for descriptor in descriptors:
+        name = descriptor["name"]
+        if name in by_name:
+            raise DeploymentError(
+                f"module for instance {instance!r} declares parameter {name!r} twice"
+            )
+        by_name[name] = descriptor
+    unknown = sorted(set(configured) - set(by_name))
+    if unknown:
+        raise DeploymentError(
+            f"instance {instance!r} configures unknown parameters: "
+            f"{', '.join(unknown)}"
+        )
+
+    resolved: list[ResolvedParameter] = []
+    for name in sorted(by_name):
+        descriptor = by_name[name]
+        type_name = descriptor["type"]
+        storage_minimum, storage_maximum = _PARAMETER_LIMITS[type_name]
+        minimum = _normalize_parameter_value(
+            instance, name, type_name, descriptor.get("minimum", storage_minimum)
+        )
+        maximum = _normalize_parameter_value(
+            instance, name, type_name, descriptor.get("maximum", storage_maximum)
+        )
+        if minimum > maximum:
+            raise DeploymentError(
+                f"instance {instance!r} parameter {name!r} has minimum above maximum"
+            )
+        value = _normalize_parameter_value(
+            instance, name, type_name, configured.get(name, descriptor["default"])
+        )
+        if value < minimum or value > maximum:
+            raise DeploymentError(
+                f"instance {instance!r} parameter {name!r} value {value} is outside "
+                f"[{minimum}, {maximum}]"
+            )
+        resolved.append(
+            ResolvedParameter(
+                name=name,
+                type_name=type_name,
+                unit=descriptor.get("unit", ""),
+                value=value,
+                minimum=minimum,
+                maximum=maximum,
+                mutability=descriptor["mutability"],
+                persistence=descriptor.get("persistence", "compiled"),
+            )
+        )
+    return tuple(resolved)
+
+
+def _collect_ports(instances: tuple[Instance, ...]) -> dict[str, list[PortEndpoint]]:
+    bindings: dict[str, list[PortEndpoint]] = {}
+    for instance in instances:
+        configured = instance.config.get("ports", {})
+        manifest_ports = {
+            port["name"]: port for port in instance.manifest.document["spec"]["ports"]
+        }
+        unknown = sorted(set(configured) - set(manifest_ports))
+        if unknown:
+            raise DeploymentError(
+                f"instance {instance.name!r} configures unknown ports: {', '.join(unknown)}"
+            )
+        for port_name, port in manifest_ports.items():
+            if port_name not in configured:
+                if port.get("required", True):
+                    raise DeploymentError(
+                        f"instance {instance.name!r} does not bind required port {port_name!r}"
+                    )
+                continue
+            binding = configured[port_name]
+            bindings.setdefault(binding, []).append(
+                PortEndpoint(
+                    binding=binding,
+                    instance=instance.name,
+                    node=instance.node,
+                    port=port_name,
+                    kind=port["kind"],
+                    type_name=port["type"],
+                )
+            )
+    return bindings
+
+
+def _route_role(
+    name: str, endpoints: list[PortEndpoint]
+) -> tuple[str, PortEndpoint, tuple[PortEndpoint, ...]]:
+    types = {endpoint.type_name for endpoint in endpoints}
+    if len(types) != 1:
+        raise DeploymentError(
+            f"binding {name!r} has incompatible types: {', '.join(sorted(types))}"
+        )
+    kinds = {endpoint.kind for endpoint in endpoints}
+    if kinds <= {"publisher", "subscriber"}:
+        sources = [item for item in endpoints if item.kind == "publisher"]
+        destinations = tuple(item for item in endpoints if item.kind == "subscriber")
+        kind = "topic"
+    elif kinds <= {"service_client", "service_server"}:
+        sources = [item for item in endpoints if item.kind == "service_server"]
+        destinations = tuple(item for item in endpoints if item.kind == "service_client")
+        kind = "service"
+    elif kinds <= {"action_client", "action_server"}:
+        sources = [item for item in endpoints if item.kind == "action_server"]
+        destinations = tuple(item for item in endpoints if item.kind == "action_client")
+        kind = "action"
+    else:
+        raise DeploymentError(f"binding {name!r} mixes incompatible port roles")
+    if len(sources) != 1:
+        raise DeploymentError(
+            f"binding {name!r} requires exactly one {kind} source/server"
+        )
+    if not destinations:
+        return kind, sources[0], ()
+    return kind, sources[0], destinations
+
+
+def _type_contract(
+    kind: str, type_name: str, model: InterfaceModel, sizes: dict[str, int]
+) -> tuple[str, list[int]]:
+    if kind == "topic":
+        if type_name not in model.records:
+            raise DeploymentError(f"Topic type {type_name!r} is not a generated Message")
+        record = model.records[type_name]
+        return record.schema_hash, [sizes[type_name]]
+    interface = next(
+        (
+            item
+            for item in model.interfaces
+            if item.full_name == type_name and item.kind.lower() == kind
+        ),
+        None,
+    )
+    if interface is None:
+        raise DeploymentError(f"{kind.title()} type {type_name!r} is not generated")
+    return interface.schema_hash, [sizes[item.full_name] for item in interface.records]
+
+
+def _select_qos(
+    route_name: str, deployment: dict[str, Any]
+) -> tuple[str, dict[str, Any], str | None]:
+    for rule in deployment["route_rules"]:
+        if fnmatch.fnmatchcase(route_name, rule["match"]["topic"]):
+            qos_name = rule["qos"]
+            if qos_name not in deployment["qos_profiles"]:
+                raise DeploymentError(
+                    f"route {route_name!r} selects unknown QoS {qos_name!r}"
+                )
+            qos = deployment["qos_profiles"][qos_name]
+            if "max_rate_hz" not in qos:
+                raise DeploymentError(
+                    f"cross-node route {route_name!r} must declare max_rate_hz"
+                )
+            if qos["class"] == "control":
+                required = ("deadline_ms", "max_age_ms", "on_stale", "rearm")
+                missing = [key for key in required if key not in qos]
+                if missing:
+                    raise DeploymentError(
+                        f"control route {route_name!r} is missing {', '.join(missing)}"
+                    )
+                if qos.get("adaptive", False):
+                    raise DeploymentError(
+                        f"control route {route_name!r} cannot use adaptive throttling"
+                    )
+            return qos_name, qos, rule.get("via")
+    raise DeploymentError(f"cross-node route {route_name!r} has no QoS rule")
+
+
+def _select_link(
+    route_name: str,
+    nodes: set[str],
+    deployment: dict[str, Any],
+    via: str | None,
+) -> tuple[str, dict[str, Any]]:
+    candidates = []
+    for name, link in deployment["links"].items():
+        link_nodes = {endpoint["node"] for endpoint in link["endpoints"]}
+        if nodes <= link_nodes:
+            candidates.append((name, link))
+    if via is not None:
+        candidates = [candidate for candidate in candidates if candidate[0] == via]
+    if len(candidates) != 1:
+        names = ", ".join(name for name, _ in candidates) or "none"
+        raise DeploymentError(
+            f"route {route_name!r} requires one physical link, candidates: {names}"
+        )
+    return candidates[0]
+
+
+def _classic_frame_bits(payload_bytes: int) -> int:
+    stuffed_region = 34 + payload_bytes * 8
+    worst_stuff_bits = (stuffed_region - 1) // 4
+    return stuffed_region + worst_stuff_bits + 13
+
+
+def _fast_can_cost(payload_sizes: list[int], mtu: int) -> tuple[int, int]:
+    frame_count = 0
+    total_bits = 0
+    for size in payload_sizes:
+        if size <= mtu - 1:
+            payloads = [size + 1]
+        else:
+            fragment_payload = mtu - 2
+            if fragment_payload <= 0:
+                raise DeploymentError("CAN MTU is too small for fragmentation headers")
+            payloads = []
+            remaining = size
+            while remaining > 0:
+                chunk = min(fragment_payload, remaining)
+                payloads.append(chunk + 2)
+                remaining -= chunk
+            if len(payloads) > 16:
+                raise DeploymentError(
+                    "aster-can Fast Path payload exceeds 16 classic CAN fragments"
+                )
+        frame_count += len(payloads)
+        total_bits += sum(_classic_frame_bits(payload) for payload in payloads)
+    return frame_count, total_bits
+
+
+def _reliable_can_cost(payload_sizes: list[int], mtu: int) -> tuple[int, int]:
+    frame_count = 0
+    total_bits = 0
+    fragment_payload = mtu - 2
+    if fragment_payload <= 0:
+        raise DeploymentError("CAN MTU is too small for reliable headers")
+    for size in payload_sizes:
+        fragments = (size + fragment_payload - 1) // fragment_payload
+        if fragments > 16:
+            raise DeploymentError(
+                "aster-can Reliable Path payload exceeds 16 classic CAN fragments"
+            )
+        remaining = size
+        for _ in range(fragments):
+            chunk = min(fragment_payload, remaining)
+            total_bits += _classic_frame_bits(chunk + 2)
+            remaining -= chunk
+        total_bits += _classic_frame_bits(1)  # Reliable ACK.
+        frame_count += fragments + 1
+    return frame_count, total_bits
+
+
+def _wire_payload_sizes(kind: str, record_sizes: list[int]) -> list[int]:
+    if kind == "topic":
+        return [record_sizes[0] + 2]  # Source timestamp tick.
+    if kind == "service":
+        request_size, response_size = record_sizes
+        return [request_size + 4, response_size + 5]  # Request ID and status.
+    if kind == "action":
+        goal_size, feedback_size, result_size = record_sizes
+        return [
+            goal_size + 13,
+            5,  # Cancel.
+            6,  # Goal response.
+            feedback_size + 5,
+            result_size + 6,
+            6,  # Cancel response.
+        ]
+    raise DeploymentError(f"unsupported aster-can route kind {kind!r}")
+
+
+def _can_route_cost(
+    kind: str, record_sizes: list[int], mtu: int
+) -> tuple[int, int, int]:
+    if mtu != 8:
+        raise DeploymentError("aster-can v1 classic CAN requires mtu_bytes: 8")
+    payload_sizes = _wire_payload_sizes(kind, record_sizes)
+    if kind == "topic":
+        frame_count, bits = _fast_can_cost(payload_sizes, mtu)
+    else:
+        frame_count, bits = _reliable_can_cost(payload_sizes, mtu)
+    return max(payload_sizes), frame_count, bits
+
+
+def _compile_routes(
+    bindings: dict[str, list[PortEndpoint]],
+    deployment: dict[str, Any],
+    model: InterfaceModel,
+) -> tuple[Route, ...]:
+    sizes = record_wire_sizes(model)
+    routes: list[Route] = []
+    for name in sorted(bindings):
+        kind, source, destinations = _route_role(name, bindings[name])
+        remote = tuple(
+            item for item in destinations if item.node != source.node
+        )
+        if not remote:
+            continue
+        destination_nodes = tuple(sorted({item.node for item in remote}))
+        type_hash, record_sizes = _type_contract(
+            kind, source.type_name, model, sizes
+        )
+        qos_name, qos, via = _select_qos(name, deployment)
+        if kind == "topic" and qos["reliability"] != "best_effort":
+            raise DeploymentError(
+                f"aster-can Fast Topic route {name!r} requires best_effort reliability"
+            )
+        if kind in {"service", "action"}:
+            if qos["reliability"] != "reliable":
+                raise DeploymentError(
+                    f"aster-can {kind} route {name!r} requires reliable reliability"
+                )
+            if len(destination_nodes) != 1:
+                raise DeploymentError(
+                    f"aster-can {kind} route {name!r} requires exactly one "
+                    "remote client node in v1"
+                )
+        link_name, link = _select_link(
+            name, {source.node, *destination_nodes}, deployment, via
+        )
+        if link["transport"] != "aster-can":
+            raise DeploymentError(
+                f"transport {link['transport']!r} is not implemented for route {name!r}"
+            )
+        options = link["options"]
+        if options.get("frame") != "classic":
+            raise DeploymentError("only classic CAN is implemented in v1alpha1")
+        mtu = int(options.get("mtu_bytes", 8))
+        max_wire_payload_size, frame_count, bits = _can_route_cost(
+            kind, record_sizes, mtu
+        )
+        routes.append(
+            Route(
+                name=name,
+                kind=kind,
+                type_name=source.type_name,
+                type_hash=type_hash,
+                source_node=source.node,
+                destination_nodes=destination_nodes,
+                link=link_name,
+                qos=qos_name,
+                max_rate_hz=float(qos["max_rate_hz"]),
+                max_serialized_size=max(record_sizes),
+                max_wire_payload_size=max_wire_payload_size,
+                frame_count=frame_count,
+                bits_per_message=bits,
+            )
+        )
+    return tuple(routes)
+
+
+def _compile_budgets(
+    deployment: dict[str, Any], routes: tuple[Route, ...]
+) -> tuple[LinkBudget, ...]:
+    reserved = deployment.get("reserved_bandwidth", {})
+    budgets: list[LinkBudget] = []
+    for name in sorted(deployment["links"]):
+        link = deployment["links"][name]
+        if link["transport"] != "aster-can":
+            continue
+        bitrate = int(link["options"].get("bitrate_bps", 0))
+        if bitrate <= 0:
+            raise DeploymentError(f"link {name!r} must declare bitrate_bps")
+        route_bits_per_second = sum(
+            route.bits_per_message * route.max_rate_hz
+            for route in routes
+            if route.link == name
+        )
+        options = link["options"]
+        handshake_period_ms = float(options.get("handshake_period_ms", 1000))
+        heartbeat_period_ms = float(options.get("heartbeat_period_ms", 100))
+        heartbeat_timeout_ms = float(options.get("heartbeat_timeout_ms", 300))
+        time_sync_period_ms = float(options.get("time_sync_period_ms", 10))
+        retry_timeout_ms = float(options.get("control_retry_timeout_ms", 20))
+        recovery_samples = int(options.get("recovery_samples", 3))
+        maximum_retries = int(options.get("control_maximum_retries", 2))
+        if (
+            handshake_period_ms <= 0
+            or heartbeat_period_ms <= 0
+            or heartbeat_timeout_ms <= heartbeat_period_ms
+            or time_sync_period_ms <= 0
+            or retry_timeout_ms <= 0
+            or recovery_samples <= 0
+            or recovery_samples > 255
+            or maximum_retries < 0
+            or maximum_retries > 255
+        ):
+            raise DeploymentError(f"link {name!r} has invalid control-plane timing")
+        _, handshake_bits = _reliable_can_cost([34], 8)
+        endpoint_count = len(link["endpoints"])
+        control_bits_per_second = (
+            handshake_bits
+            * endpoint_count
+            * (maximum_retries + 1)
+            * 1000.0
+            / handshake_period_ms
+            + _classic_frame_bits(8)
+            * endpoint_count
+            * 1000.0
+            / heartbeat_period_ms
+            + _classic_frame_bits(8) * 1000.0 / time_sync_period_ms
+        )
+        route_utilization = route_bits_per_second / bitrate
+        control_utilization = control_bits_per_second / bitrate
+        reserved_utilization = float(reserved.get(name, 0.0))
+        limit = float(link["budget"]["utilization_limit"])
+        budget = LinkBudget(
+            name=name,
+            bitrate_bps=bitrate,
+            reserved_utilization=reserved_utilization,
+            control_utilization=control_utilization,
+            route_utilization=route_utilization,
+            total_utilization=(
+                reserved_utilization + control_utilization + route_utilization
+            ),
+            utilization_limit=limit,
+        )
+        if not budget.within_budget:
+            raise DeploymentError(
+                f"link {name!r} utilization {budget.total_utilization:.6f} "
+                f"exceeds limit {limit:.6f}"
+            )
+        budgets.append(budget)
+    return tuple(budgets)
+
+
+def _build_plan(
+    workspace_path: Path, deployment_path: Path
+) -> DeploymentPlan:
+    workspace = Workspace(workspace_path)
+    deployment = validate_document(deployment_path)
+    application_path = _resolve_path(
+        deployment_path.parent, deployment["application"]
+    )
+    application = validate_document(application_path)
+    placements = _place_instances(application, deployment)
+    hardware = _load_hardware(deployment_path, deployment)
+    boards = _load_boards(workspace, deployment, hardware)
+    instances = _load_instances(workspace, application, placements, hardware)
+    bindings = {
+        name: tuple(
+            sorted(endpoints, key=lambda item: (item.node, item.instance, item.port))
+        )
+        for name, endpoints in sorted(_collect_ports(instances).items())
+    }
+    model = workspace.interface_model()
+    if workspace.has_package("aster-tools"):
+        workspace.package("aster-tools")
+    routes = _compile_routes(bindings, deployment, model)
+    budgets = _compile_budgets(deployment, routes)
+    type_hashes = {route.type_name: route.type_hash for route in routes}
+    deployment_hash = hash16(
+        {
+            "deployment": deployment,
+            "application": application,
+            "package_lock": workspace.resolved_package_lock,
+            "modules": [item.manifest.document for item in instances],
+            "hardware": hardware,
+            "boards": {
+                node: board.document if board is not None else None
+                for node, board in boards.items()
+            },
+            "schema_hash": model.deployment_schema_hash,
+        }
+    )
+    return DeploymentPlan(
+        name=deployment["metadata"]["name"],
+        workspace_root=workspace.root,
+        package_paths=workspace.package_paths,
+        deployment_hash=deployment_hash,
+        schema_hash=model.deployment_schema_hash,
+        deployment=deployment,
+        application=application,
+        instances=instances,
+        hardware=hardware,
+        boards=boards,
+        bindings=bindings,
+        routes=routes,
+        link_budgets=budgets,
+        type_hashes=type_hashes,
+    )
+
+
+def compile_deployment(
+    workspace_path: str | Path,
+    deployment_path: str | Path,
+    output_dir: str | Path,
+    lock_path: str | Path | None = None,
+) -> DeploymentResult:
+    workspace = Path(workspace_path).resolve()
+    deployment = Path(deployment_path).resolve()
+    output = Path(output_dir).resolve()
+    authoritative_lock = Path(lock_path).resolve() if lock_path is not None else None
+    try:
+        plan = _build_plan(workspace, deployment)
+        from aster_tools.deployment_output import write_deployment
+
+        write_deployment(plan, output, authoritative_lock)
+    except (ValidationError, WorkspaceError, InterfaceError) as error:
+        raise DeploymentError(str(error)) from error
+    return DeploymentResult(
+        node_count=len(plan.deployment["nodes"]),
+        instance_count=len(plan.instances),
+        cross_node_route_count=len(plan.routes),
+        deployment_hash=plan.deployment_hash,
+        output_dir=output,
+    )

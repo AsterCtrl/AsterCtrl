@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["api_version", "kind", "metadata", "deployment_hash", "schema_hash", "protocol_version", "nodes", "routes", "types", "backends"],
+  "properties": {
+    "api_version": {"const": "aster.dev/v1alpha1"},
+    "kind": {"const": "DeploymentLock"},
+    "metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["deployment"],
+      "properties": {"deployment": {"type": "string", "minLength": 1}}
+    },
+    "schema_hash": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
+    "deployment_hash": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
+    "protocol_version": {"type": "integer", "minimum": 1},
+    "nodes": {
+      "type": "object",
+      "additionalProperties": {"type": "integer", "minimum": 1, "maximum": 255}
+    },
+    "routes": {
+      "type": "object",
+      "additionalProperties": {"type": "integer", "minimum": 8, "maximum": 511}
+    },
+    "types": {
+      "type": "object",
+      "additionalProperties": {"type": "string", "pattern": "^[0-9a-f]{32}$"}
+    },
+    "backends": {
+      "type": "object",
+      "additionalProperties": {"type": "string", "minLength": 1}
+    }
+  }
+}

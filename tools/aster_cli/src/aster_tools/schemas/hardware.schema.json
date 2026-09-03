@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["api_version", "kind", "metadata", "spec"],
+  "properties": {
+    "api_version": {"const": "aster.dev/v1alpha1"},
+    "kind": {"const": "HardwareProfile"},
+    "metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "board"],
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "board": {"type": "string", "minLength": 1}
+      }
+    },
+    "spec": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["resources"],
+      "properties": {
+        "resources": {
+          "type": "object",
+          "additionalProperties": {"$ref": "#/$defs/resource"}
+        },
+        "devices": {
+          "type": "object",
+          "additionalProperties": {"$ref": "#/$defs/device"}
+        }
+      }
+    }
+  },
+  "$defs": {
+    "resource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "backend", "resource"],
+      "properties": {
+        "kind": {"type": "string", "minLength": 1},
+        "backend": {"type": "string", "minLength": 1},
+        "resource": {"type": "string", "minLength": 1},
+        "options": {"type": "object", "additionalProperties": true},
+        "reserved_standard_ids": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/canStandardIdReservation"}
+        }
+      }
+    },
+    "canStandardIdReservation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "owner"],
+      "properties": {
+        "id": {"type": "integer", "minimum": 0, "maximum": 2047},
+        "owner": {"type": "string", "minLength": 1}
+      }
+    },
+    "device": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["driver", "resources"],
+      "properties": {
+        "driver": {"type": "string", "minLength": 1},
+        "resources": {
+          "type": "object",
+          "additionalProperties": {"type": "string", "minLength": 1}
+        },
+        "parameters": {"type": "object", "additionalProperties": true}
+      }
+    }
+  }
+}

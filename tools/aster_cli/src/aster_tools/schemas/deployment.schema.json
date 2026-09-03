@@ -1,0 +1,125 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["api_version", "kind", "metadata", "application", "nodes", "links", "qos_profiles", "route_rules"],
+  "properties": {
+    "api_version": {"const": "aster.dev/v1alpha1"},
+    "kind": {"const": "Deployment"},
+    "metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": {"name": {"type": "string", "minLength": 1}}
+    },
+    "application": {"type": "string", "minLength": 1},
+    "time_authority": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
+    "nodes": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": {"pattern": "^[a-z][a-z0-9_]*$"},
+      "additionalProperties": {"$ref": "#/$defs/node"}
+    },
+    "links": {
+      "type": "object",
+      "additionalProperties": {"$ref": "#/$defs/link"}
+    },
+    "qos_profiles": {
+      "type": "object",
+      "additionalProperties": {"$ref": "#/$defs/qos"}
+    },
+    "route_rules": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/routeRule"}
+    },
+    "reserved_bandwidth": {
+      "type": "object",
+      "additionalProperties": {"type": "number", "minimum": 0, "maximum": 1}
+    }
+  },
+  "$defs": {
+    "node": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["runtime", "target", "instances"],
+      "properties": {
+        "runtime": {"enum": ["aster-mcu", "aster-host", "aimrt"]},
+        "target": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["bsp", "hardware", "profile"],
+          "properties": {
+            "bsp": {"type": "string", "minLength": 1},
+            "hardware": {"type": "string", "minLength": 1},
+            "profile": {"type": "string", "minLength": 1}
+          }
+        },
+        "instances": {"type": "array", "items": {"type": "string"}, "uniqueItems": true}
+      }
+    },
+    "link": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["transport", "endpoints", "options", "budget"],
+      "properties": {
+        "transport": {"type": "string", "minLength": 1},
+        "endpoints": {
+          "type": "array",
+          "minItems": 2,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["node", "resource"],
+            "properties": {
+              "node": {"type": "string", "minLength": 1},
+              "resource": {"type": "string", "minLength": 1}
+            }
+          }
+        },
+        "options": {"type": "object", "additionalProperties": true},
+        "budget": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["utilization_limit"],
+          "properties": {
+            "utilization_limit": {"type": "number", "exclusiveMinimum": 0, "maximum": 1}
+          }
+        }
+      }
+    },
+    "qos": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["class", "delivery", "reliability", "history_depth"],
+      "properties": {
+        "class": {"enum": ["control", "state", "event", "background"]},
+        "delivery": {"enum": ["latest", "queue"]},
+        "reliability": {"enum": ["best_effort", "reliable"]},
+        "history_depth": {"type": "integer", "minimum": 1},
+        "min_rate_hz": {"type": "number", "exclusiveMinimum": 0},
+        "max_rate_hz": {"type": "number", "exclusiveMinimum": 0},
+        "deadline_ms": {"type": "number", "exclusiveMinimum": 0},
+        "lifespan_ms": {"type": "number", "exclusiveMinimum": 0},
+        "max_age_ms": {"type": "number", "exclusiveMinimum": 0},
+        "on_stale": {"enum": ["zero", "hold_then_zero", "relax", "fault", "module_defined"]},
+        "rearm": {"enum": ["automatic", "fresh_sample", "explicit"]},
+        "adaptive": {"type": "boolean"}
+      }
+    },
+    "routeRule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["match", "qos"],
+      "properties": {
+        "match": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["topic"],
+          "properties": {"topic": {"type": "string", "minLength": 1}}
+        },
+        "qos": {"type": "string", "minLength": 1},
+        "via": {"type": "string", "minLength": 1}
+      }
+    }
+  }
+}
