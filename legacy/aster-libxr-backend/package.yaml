@@ -1,0 +1,9 @@
+api_version: aster.dev/v1alpha1
+kind: Package
+metadata: {name: aster-libxr-backend, version: 0.1.0-dev, license: Apache-2.0}
+spec:
+  build: {system: cmake}
+  exports:
+    libraries:
+      - {name: aster::libxr-backend, portable: false}
+  dependencies: [libxr, aster-runtime, aster-transports]
