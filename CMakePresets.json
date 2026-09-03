@@ -2,7 +2,7 @@
   "version": 6,
   "cmakeMinimumRequired": {
     "major": 3,
-    "minor": 22,
+    "minor": 28,
     "patch": 0
   },
   "configurePresets": [
@@ -12,23 +12,74 @@
       "binaryDir": "${sourceDir}/build/host-debug",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
-        "ASTER_RUNTIME_BUILD_TESTS": "ON"
+        "ASTER_BUILD_TESTS": "ON"
+      }
+    },
+    {
+      "name": "host-release",
+      "inherits": "host-debug",
+      "binaryDir": "${sourceDir}/build/host-release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    },
+    {
+      "name": "host-clang",
+      "inherits": "host-debug",
+      "binaryDir": "${sourceDir}/build/host-clang",
+      "cacheVariables": {
+        "CMAKE_CXX_COMPILER": "clang++"
+      }
+    },
+    {
+      "name": "host-asan",
+      "inherits": "host-clang",
+      "binaryDir": "${sourceDir}/build/host-asan",
+      "cacheVariables": {
+        "ASTER_ENABLE_SANITIZERS": "ON"
+      }
+    },
+    {
+      "name": "host-tsan",
+      "inherits": "host-clang",
+      "binaryDir": "${sourceDir}/build/host-tsan",
+      "cacheVariables": {
+        "ASTER_ENABLE_TSAN": "ON"
       }
     }
   ],
   "buildPresets": [
-    {
-      "name": "host-debug",
-      "configurePreset": "host-debug"
-    }
+    {"name": "host-debug", "configurePreset": "host-debug"},
+    {"name": "host-release", "configurePreset": "host-release"},
+    {"name": "host-clang", "configurePreset": "host-clang"},
+    {"name": "host-asan", "configurePreset": "host-asan"},
+    {"name": "host-tsan", "configurePreset": "host-tsan"}
   ],
   "testPresets": [
     {
       "name": "host-debug",
       "configurePreset": "host-debug",
-      "output": {
-        "outputOnFailure": true
-      }
+      "output": {"outputOnFailure": true}
+    },
+    {
+      "name": "host-release",
+      "configurePreset": "host-release",
+      "output": {"outputOnFailure": true}
+    },
+    {
+      "name": "host-clang",
+      "configurePreset": "host-clang",
+      "output": {"outputOnFailure": true}
+    },
+    {
+      "name": "host-asan",
+      "configurePreset": "host-asan",
+      "output": {"outputOnFailure": true}
+    },
+    {
+      "name": "host-tsan",
+      "configurePreset": "host-tsan",
+      "output": {"outputOnFailure": true}
     }
   ]
 }

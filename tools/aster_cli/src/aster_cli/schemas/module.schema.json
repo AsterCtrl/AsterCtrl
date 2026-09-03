@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://asterctrl.dev/schemas/v1alpha2/module.schema.json",
+  "type": "object",
+  "required": ["api_version", "kind", "metadata", "spec"],
+  "properties": {
+    "api_version": {"const": "aster.dev/v1alpha2"},
+    "kind": {"const": "Module"},
+    "metadata": {"$ref": "common.schema.json#/$defs/metadata"},
+    "spec": {
+      "type": "object",
+      "required": ["implementation"],
+      "properties": {
+        "implementation": {"type": "object", "required": ["target"], "properties": {"target": {"type": "string"}, "class": {"type": "string"}, "header": {"type": "string"}}, "additionalProperties": false},
+        "platforms": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"enum": ["linux", "zephyr"]}},
+        "parameters": {"description": "Self-contained JSON Schema (Draft 2020-12) for Application instance config", "type": "object"},
+        "resources": {
+          "type": "object",
+          "properties": {
+            "static_ram_bytes": {"$ref": "common.schema.json#/$defs/positive"},
+            "flash_bytes": {"$ref": "common.schema.json#/$defs/positive"}
+          },
+          "additionalProperties": false
+        },
+        "ports": {
+          "type": "array",
+          "items": {"type": "object", "required": ["name", "kind", "type"], "properties": {"name": {"$ref": "common.schema.json#/$defs/name"}, "kind": {"enum": ["publisher", "subscriber", "rpc_client", "rpc_server"]}, "type": {"$ref": "common.schema.json#/$defs/typeName"}, "schema_hash": {"description": "Optional assertion checked against the hash derived from the package descriptor set and bounds", "type": "string", "pattern": "^[0-9a-f]{64}$"}, "required": {"type": "boolean"}, "max_rate_hz": {"type": "number", "exclusiveMinimum": 0}}, "additionalProperties": false}
+        },
+        "provides": {
+          "type": "array",
+          "items": {"type": "object", "required": ["name", "interface"], "properties": {"name": {"$ref": "common.schema.json#/$defs/name"}, "interface": {"$ref": "common.schema.json#/$defs/typeName"}, "domain": {"$ref": "common.schema.json#/$defs/name"}}, "additionalProperties": false}
+        },
+        "requires": {
+          "type": "array",
+          "items": {"type": "object", "required": ["name", "interface"], "properties": {"name": {"$ref": "common.schema.json#/$defs/name"}, "interface": {"$ref": "common.schema.json#/$defs/typeName"}, "domain": {"$ref": "common.schema.json#/$defs/name"}, "optional": {"type": "boolean"}}, "additionalProperties": false}
+        },
+        "capabilities": {
+          "type": "array",
+          "items": {"type": "object", "required": ["name", "kind"], "properties": {"name": {"$ref": "common.schema.json#/$defs/name"}, "kind": {"enum": ["can", "canfd", "uart", "usb_cdc", "spi", "i2c", "gpio", "pwm", "ethernet", "watchdog"]}, "optional": {"type": "boolean"}}, "additionalProperties": false}
+        },
+        "tasks": {
+          "type": "array",
+          "items": {"type": "object", "required": ["name", "domain", "stack_bytes", "queue_depth"], "properties": {"name": {"$ref": "common.schema.json#/$defs/name"}, "domain": {"$ref": "common.schema.json#/$defs/name"}, "period_us": {"$ref": "common.schema.json#/$defs/positive"}, "deadline_us": {"$ref": "common.schema.json#/$defs/positive"}, "stack_bytes": {"$ref": "common.schema.json#/$defs/positive"}, "queue_depth": {"$ref": "common.schema.json#/$defs/positive"}, "priority": {"type": "integer", "minimum": 0, "maximum": 255}}, "additionalProperties": false}
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

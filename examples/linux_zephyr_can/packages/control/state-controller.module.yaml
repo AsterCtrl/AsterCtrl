@@ -1,0 +1,24 @@
+api_version: aster.dev/v1alpha2
+kind: Module
+metadata:
+  name: state-controller
+  version: 0.1.0
+spec:
+  implementation:
+    target: state_controller
+    class: ::examples::StateController
+    header: examples/state_controller.hpp
+  platforms: [linux]
+  ports:
+    - name: state
+      kind: subscriber
+      type: aster.examples.can.v1.ImuState
+      max_rate_hz: 100
+  tasks:
+    - name: update
+      domain: control
+      period_us: 10000
+      deadline_us: 8000
+      stack_bytes: 2048
+      queue_depth: 8
+      priority: 15

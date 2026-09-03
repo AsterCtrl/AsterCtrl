@@ -1,0 +1,23 @@
+api_version: aster.dev/v1alpha2
+kind: Module
+metadata:
+  name: clock-client
+  version: 0.1.0
+spec:
+  implementation:
+    target: clock_consumer
+    class: ::examples::ClockClient
+    header: examples/clock_client.hpp
+  platforms: [linux, zephyr]
+  requires:
+    - name: clock
+      interface: example.Clock/v1
+      domain: control
+  tasks:
+    - name: control
+      domain: control
+      period_us: 1000
+      deadline_us: 1000
+      stack_bytes: 1024
+      queue_depth: 4
+      priority: 9

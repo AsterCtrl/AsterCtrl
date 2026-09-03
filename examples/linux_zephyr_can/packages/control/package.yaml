@@ -1,0 +1,17 @@
+api_version: aster.dev/v1alpha2
+kind: Package
+metadata:
+  name: control
+  version: 0.1.0
+  license: Apache-2.0
+spec:
+  build:
+    system: cmake
+    target: state_controller
+  exports:
+    modules: [state-controller.module.yaml]
+    protos: [../../proto/imu.proto]
+  protobuf:
+    bounds: ../../proto/bounds.yaml
+    includes: [../../proto]
+  dependencies: {}

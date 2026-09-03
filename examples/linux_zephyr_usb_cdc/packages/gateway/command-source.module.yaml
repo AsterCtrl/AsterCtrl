@@ -1,0 +1,24 @@
+api_version: aster.dev/v1alpha2
+kind: Module
+metadata:
+  name: command-source
+  version: 0.1.0
+spec:
+  implementation:
+    target: command_source
+    class: ::examples::CommandSource
+    header: examples/command_source.hpp
+  platforms: [linux]
+  ports:
+    - name: command
+      kind: publisher
+      type: aster.examples.usb.v1.Command
+      max_rate_hz: 50
+  tasks:
+    - name: send
+      domain: io
+      period_us: 20000
+      deadline_us: 10000
+      stack_bytes: 1024
+      queue_depth: 4
+      priority: 12

@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://asterctrl.dev/schemas/v1alpha2/package-lock.schema.json",
+  "type": "object",
+  "required": ["api_version", "kind", "metadata", "packages", "content_hash"],
+  "properties": {
+    "api_version": {"const": "aster.dev/v1alpha2"},
+    "kind": {"const": "PackageLock"},
+    "metadata": {"$ref": "common.schema.json#/$defs/metadata"},
+    "packages": {"type": "object", "additionalProperties": {"type": "object", "required": ["source", "revision", "digest"], "properties": {"source": {"type": "string"}, "version": {"type": "string"}, "revision": {"type": "string"}, "digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"}}, "additionalProperties": false}},
+    "content_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,164 @@
+name: Zephyr
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zephyr-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  runtime-and-boards:
+    name: Zephyr 4.4 runtime and boards
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out AsterCtrl as the west manifest repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: asterctrl
+      - name: Set up Python 3.12
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Set up uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          version: "0.12.9"
+      - name: Prepare Zephyr 4.4.0 and SDK 1.0.1
+        uses: zephyrproject-rtos/action-zephyr-setup@be8136a8bba01580485d98b7ad2d32477c36a49a # v1
+        with:
+          app-path: asterctrl
+          sdk-version: "1.0.1"
+          toolchains: arm-zephyr-eabi:x86_64-zephyr-elf
+          west-version: "1.5.0"
+      - name: Materialize code generator dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes protobuf-compiler
+          uv sync --project asterctrl --frozen --all-groups
+      - name: Record the fully resolved manifest
+        run: |
+          mkdir -p build/artifacts
+          west manifest --freeze > build/artifacts/west-frozen.yml
+          west list -f '{name} {revision} {sha}'
+      - name: Run native_sim and QEMU smoke tests
+        run: >-
+          west twister
+          -T asterctrl/scripts/ci/zephyr_smoke
+          -p native_sim
+          -p qemu_cortex_m3
+          --inline-logs
+          --integration
+          --extra-args="ZEPHYR_EXTRA_MODULES=$PWD/asterctrl"
+      - name: Compile dev_c
+        run: >-
+          west build -p always
+          -b dev_c/stm32f407xx
+          -d build/dev_c
+          asterctrl/scripts/ci/zephyr_smoke
+          -- -DZEPHYR_EXTRA_MODULES="$PWD/asterctrl"
+      - name: Check dev_c size budget
+        run: >-
+          python3 asterctrl/scripts/ci/check_zephyr_size.py
+          build/dev_c/zephyr/zephyr.elf
+          --max-flash 524288
+          --max-ram 98304
+      - name: Compile mc02
+        run: >-
+          west build -p always
+          -b mc02/stm32h723xx
+          -d build/mc02
+          asterctrl/scripts/ci/zephyr_smoke
+          -- -DZEPHYR_EXTRA_MODULES="$PWD/asterctrl"
+      - name: Check mc02 size budget
+        run: >-
+          python3 asterctrl/scripts/ci/check_zephyr_size.py
+          build/mc02/zephyr/zephyr.elf
+          --max-flash 524288
+          --max-ram 262144
+      - name: Generate cross-node application inputs
+        run: |
+          uv run --project asterctrl aster codegen \
+            asterctrl/examples/linux_zephyr_can/workspace.yaml \
+            asterctrl/examples/linux_zephyr_can/deployment.yaml \
+            build/generated/can --release
+          uv run --project asterctrl aster codegen \
+            asterctrl/examples/linux_zephyr_usb_cdc/workspace.yaml \
+            asterctrl/examples/linux_zephyr_usb_cdc/deployment.yaml \
+            build/generated/usb --release
+      - name: Compile generated CAN node
+        run: >-
+          west build -p always
+          -b dev_c/stm32f407xx
+          -d build/generated-can
+          asterctrl/examples/linux_zephyr_can
+          -- -DZEPHYR_EXTRA_MODULES="$PWD/asterctrl"
+          -DASTER_ZEPHYR_BUILD=ON
+          -DASTER_GENERATED_DIR="$PWD/build/generated/can/nodes/sensor-node"
+          -DEXTRA_CONF_FILE="$PWD/build/generated/can/nodes/sensor-node/aster.generated.conf"
+          -DDTC_OVERLAY_FILE="$PWD/build/generated/can/nodes/sensor-node/aster.generated.overlay"
+      - name: Compile generated USB CDC ACM node
+        run: >-
+          west build -p always
+          -b dev_c/stm32f407xx
+          -d build/generated-usb
+          asterctrl/examples/linux_zephyr_usb_cdc
+          -- -DZEPHYR_EXTRA_MODULES="$PWD/asterctrl"
+          -DASTER_ZEPHYR_BUILD=ON
+          -DASTER_GENERATED_DIR="$PWD/build/generated/usb/nodes/actuator-node"
+          -DEXTRA_CONF_FILE="$PWD/build/generated/usb/nodes/actuator-node/aster.generated.conf"
+          -DDTC_OVERLAY_FILE="$PWD/build/generated/usb/nodes/actuator-node/aster.generated.overlay"
+      - name: Check generated-node size budgets
+        run: |
+          python3 asterctrl/scripts/ci/check_zephyr_size.py build/generated-can/zephyr/zephyr.elf --max-flash 524288 --max-ram 98304
+          python3 asterctrl/scripts/ci/check_zephyr_size.py build/generated-usb/zephyr/zephyr.elf --max-flash 524288 --max-ram 98304
+      - name: Prove builds need no post-setup dependency fetch
+        env:
+          PIP_NO_INDEX: "1"
+          UV_OFFLINE: "true"
+        run: |
+          rm -rf build/offline-dev_c build/offline-mc02
+          sudo unshare --net -- env \
+            PATH="$PATH" ZEPHYR_BASE="$ZEPHYR_BASE" \
+            ZEPHYR_SDK_INSTALL_DIR="$ZEPHYR_SDK_INSTALL_DIR" \
+            ZEPHYR_TOOLCHAIN_VARIANT="$ZEPHYR_TOOLCHAIN_VARIANT" \
+            west build -p always -b dev_c/stm32f407xx \
+            -d build/offline-dev_c asterctrl/scripts/ci/zephyr_smoke \
+            -- -DZEPHYR_EXTRA_MODULES="$PWD/asterctrl"
+          sudo unshare --net -- env \
+            PATH="$PATH" ZEPHYR_BASE="$ZEPHYR_BASE" \
+            ZEPHYR_SDK_INSTALL_DIR="$ZEPHYR_SDK_INSTALL_DIR" \
+            ZEPHYR_TOOLCHAIN_VARIANT="$ZEPHYR_TOOLCHAIN_VARIANT" \
+            west build -p always -b mc02/stm32h723xx \
+            -d build/offline-mc02 asterctrl/scripts/ci/zephyr_smoke \
+            -- -DZEPHYR_EXTRA_MODULES="$PWD/asterctrl"
+      - name: Collect firmware and size reports
+        run: |
+          for board in dev_c mc02; do
+            mkdir -p build/artifacts/$board
+            cp build/$board/zephyr/zephyr.elf build/artifacts/$board/
+            cp build/$board/zephyr/zephyr.map build/artifacts/$board/
+            cp build/$board/zephyr/zephyr.hex build/artifacts/$board/
+            cp build/$board/zephyr/zephyr.bin build/artifacts/$board/
+            arm-zephyr-eabi-size build/$board/zephyr/zephyr.elf > build/artifacts/$board/size.txt
+          done
+          for example in generated-can generated-usb; do
+            mkdir -p build/artifacts/$example
+            cp build/$example/zephyr/zephyr.elf build/artifacts/$example/
+            cp build/$example/zephyr/zephyr.map build/artifacts/$example/
+            cp build/$example/zephyr/zephyr.hex build/artifacts/$example/
+            cp build/$example/zephyr/zephyr.bin build/artifacts/$example/
+            arm-zephyr-eabi-size build/$example/zephyr/zephyr.elf > build/artifacts/$example/size.txt
+          done
+      - name: Upload compile-only firmware
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: zephyr-compile-only
+          path: build/artifacts
+          if-no-files-found: error

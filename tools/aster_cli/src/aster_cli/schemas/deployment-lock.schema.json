@@ -1,0 +1,253 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://asterctrl.dev/schemas/v1alpha2/deployment-lock.schema.json",
+  "$defs": {
+    "digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "budget": {
+      "type": "object",
+      "required": ["used", "limit"],
+      "properties": {
+        "used": {"type": "number", "minimum": 0},
+        "limit": {"type": ["number", "null"], "minimum": 0}
+      },
+      "additionalProperties": false
+    },
+    "executor": {
+      "type": "object",
+      "required": ["policy", "backend", "workers", "priority", "stack_bytes", "queue_depth"],
+      "properties": {
+        "policy": {"enum": ["serial", "worker_pool"]},
+        "backend": {"enum": ["linux_thread", "linux_worker_pool", "zephyr_work_queue"]},
+        "workers": {"type": "integer", "minimum": 1, "maximum": 64},
+        "priority": {"type": "integer", "minimum": -255, "maximum": 255},
+        "stack_bytes": {"type": "integer", "minimum": 1},
+        "queue_depth": {"type": "integer", "minimum": 1}
+      },
+      "additionalProperties": false
+    },
+    "hardwareResource": {
+      "type": "object",
+      "required": ["kind", "backend", "device", "options"],
+      "properties": {
+        "kind": {"enum": ["can", "canfd", "uart", "usb_cdc", "spi", "i2c", "gpio", "pwm", "ethernet", "watchdog"]},
+        "backend": {"enum": ["devicetree", "socketcan", "tty"]},
+        "device": {"type": "string", "minLength": 1},
+        "options": {"type": "object"}
+      },
+      "additionalProperties": false
+    },
+    "capabilityBinding": {
+      "type": "object",
+      "required": ["kind", "resource", "backend", "device", "options"],
+      "properties": {
+        "kind": {"type": "string"},
+        "resource": {"type": "string"},
+        "backend": {"type": "string"},
+        "device": {"type": "string"},
+        "options": {"type": "object"}
+      },
+      "additionalProperties": false
+    }
+  },
+  "type": "object",
+  "required": [
+    "api_version",
+    "kind",
+    "metadata",
+    "deployment_id",
+    "application_hash",
+    "deployment_hash",
+    "nodes",
+    "routes",
+    "hosts",
+    "hardware",
+    "capability_bindings",
+    "transports",
+    "resource_budgets",
+    "artifacts",
+    "static_ram_bytes",
+    "flash_bytes",
+    "content_hash"
+  ],
+  "properties": {
+    "api_version": {"const": "aster.dev/v1alpha2"},
+    "kind": {"const": "DeploymentLock"},
+    "metadata": {"$ref": "common.schema.json#/$defs/metadata"},
+    "deployment_id": {"$ref": "#/$defs/digest"},
+    "application_hash": {"$ref": "#/$defs/digest"},
+    "deployment_hash": {"$ref": "#/$defs/digest"},
+    "nodes": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["id", "host", "instances", "executors"],
+        "properties": {
+          "id": {"type": "integer", "minimum": 1},
+          "host": {"type": "string"},
+          "instances": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+          "executors": {"type": "object", "additionalProperties": {"$ref": "#/$defs/executor"}}
+        },
+        "additionalProperties": false
+      }
+    },
+    "routes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "from",
+          "to",
+          "type",
+          "schema_hash",
+          "schema_input_digest",
+          "schema_hash_source",
+          "source_node",
+          "destination_node",
+          "transport",
+          "qos",
+          "max_size",
+          "max_encoded_size",
+          "max_rate_hz"
+        ],
+        "properties": {
+          "id": {"type": "integer", "minimum": 1},
+          "from": {"type": "string"},
+          "to": {"type": "string"},
+          "type": {"type": "string"},
+          "schema_hash": {"$ref": "#/$defs/digest"},
+          "schema_input_digest": {"$ref": "#/$defs/digest"},
+          "schema_hash_source": {"enum": ["descriptor_bounds", "development_fallback"]},
+          "source_node": {"type": "string"},
+          "destination_node": {"type": "string"},
+          "transport": {"type": "string"},
+          "qos": {"type": "string"},
+          "max_size": {"type": "integer", "minimum": 1},
+          "max_encoded_size": {"type": "integer", "minimum": 1},
+          "max_rate_hz": {"type": "number", "exclusiveMinimum": 0}
+        },
+        "additionalProperties": false
+      }
+    },
+    "hosts": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["os", "arch"],
+        "properties": {
+          "os": {"enum": ["linux", "zephyr"]},
+          "arch": {"type": "string"},
+          "board": {"type": ["string", "null"]}
+        },
+        "additionalProperties": false
+      }
+    },
+    "hardware": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["profile", "platform", "board", "resources"],
+        "properties": {
+          "profile": {"type": "string"},
+          "platform": {"enum": ["linux", "zephyr"]},
+          "board": {"oneOf": [{"$ref": "common.schema.json#/$defs/boardTarget"}, {"type": "null"}]},
+          "resources": {"type": "object", "additionalProperties": {"$ref": "#/$defs/hardwareResource"}}
+        },
+        "additionalProperties": false
+      }
+    },
+    "capability_bindings": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": {"$ref": "#/$defs/capabilityBinding"}
+      }
+    },
+    "transports": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["type", "backend", "package", "hosts", "bitrate_bps", "mtu", "resource", "options"],
+        "properties": {
+          "type": {"type": "string"},
+          "backend": {"type": ["string", "null"]},
+          "package": {"type": ["string", "null"]},
+          "hosts": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+          "bitrate_bps": {"type": ["integer", "null"], "minimum": 1},
+          "mtu": {"type": "integer", "minimum": 1},
+          "resource": {"type": ["string", "null"]},
+          "options": {"type": "object"}
+        },
+        "additionalProperties": false
+      }
+    },
+    "resource_budgets": {
+      "type": "object",
+      "required": ["hosts", "transports"],
+      "properties": {
+        "hosts": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "required": ["stack_bytes", "ram_bytes", "flash_bytes"],
+            "properties": {
+              "stack_bytes": {"$ref": "#/$defs/budget"},
+              "ram_bytes": {"$ref": "#/$defs/budget"},
+              "flash_bytes": {"$ref": "#/$defs/budget"}
+            },
+            "additionalProperties": false
+          }
+        },
+        "transports": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "required": ["used", "limit"],
+            "properties": {
+              "used": {"type": "number", "minimum": 0},
+              "limit": {"type": "number", "exclusiveMinimum": 0, "maximum": 1}
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "artifacts": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["digest_kind", "input_digest", "artifact_digest", "inputs"],
+        "properties": {
+          "digest_kind": {"const": "inputs"},
+          "input_digest": {"$ref": "#/$defs/digest"},
+          "artifact_digest": {
+            "oneOf": [
+              {"$ref": "#/$defs/digest"},
+              {"type": "null"}
+            ]
+          },
+          "inputs": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["label", "digest"],
+              "properties": {
+                "label": {"type": "string"},
+                "digest": {"$ref": "#/$defs/digest"}
+              },
+              "additionalProperties": false
+            }
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "utilization": {"type": "object", "additionalProperties": {"type": "number", "minimum": 0}},
+    "stack_bytes": {"type": "object", "additionalProperties": {"type": "integer", "minimum": 0}},
+    "static_ram_bytes": {"type": "object", "additionalProperties": {"type": "integer", "minimum": 0}},
+    "flash_bytes": {"type": "object", "additionalProperties": {"type": "integer", "minimum": 0}},
+    "content_hash": {"$ref": "#/$defs/digest"}
+  },
+  "additionalProperties": false
+}

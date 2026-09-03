@@ -1,0 +1,24 @@
+api_version: aster.dev/v1alpha2
+kind: Module
+metadata:
+  name: imu-source
+  version: 0.1.0
+spec:
+  implementation:
+    target: imu_source
+    class: ::examples::ImuSource
+    header: examples/imu_source.hpp
+  platforms: [zephyr]
+  ports:
+    - name: state
+      kind: publisher
+      type: aster.examples.can.v1.ImuState
+      max_rate_hz: 100
+  tasks:
+    - name: sample
+      domain: control
+      period_us: 10000
+      deadline_us: 5000
+      stack_bytes: 1536
+      queue_depth: 4
+      priority: 20

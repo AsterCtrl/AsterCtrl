@@ -1,0 +1,22 @@
+api_version: aster.dev/v1alpha2
+kind: Module
+metadata:
+  name: command-sink
+  version: 0.1.0
+spec:
+  implementation:
+    target: command_sink
+    class: ::examples::CommandSink
+    header: examples/command_sink.hpp
+  platforms: [zephyr]
+  ports:
+    - name: command
+      kind: subscriber
+      type: aster.examples.usb.v1.Command
+      max_rate_hz: 50
+  tasks:
+    - name: receive
+      domain: io
+      stack_bytes: 1536
+      queue_depth: 8
+      priority: 11

@@ -1,0 +1,17 @@
+api_version: aster.dev/v1alpha2
+kind: Package
+metadata:
+  name: actuator
+  version: 0.1.0
+  license: Apache-2.0
+spec:
+  build:
+    system: zephyr
+    target: command_sink
+  exports:
+    modules: [command-sink.module.yaml]
+    protos: [../../proto/command.proto]
+  protobuf:
+    bounds: ../../proto/bounds.yaml
+    includes: [../../proto]
+  dependencies: {}

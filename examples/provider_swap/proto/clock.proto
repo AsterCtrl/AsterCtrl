@@ -1,0 +1,8 @@
+syntax = "proto3";
+
+package aster.examples.clock.v1;
+
+message ClockSample {
+  uint64 monotonic_us = 1;
+  string source = 2;
+}

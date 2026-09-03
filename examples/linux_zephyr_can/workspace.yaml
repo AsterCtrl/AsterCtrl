@@ -1,0 +1,10 @@
+api_version: aster.dev/v1alpha2
+kind: Workspace
+metadata:
+  name: linux-zephyr-can
+spec:
+  packages:
+    control:
+      source: packages/control
+    sensors:
+      source: packages/sensors

@@ -1,0 +1,19 @@
+api_version: aster.dev/v1alpha2
+kind: Application
+metadata:
+  name: usb-command
+spec:
+  instances:
+    gateway:
+      module: gateway/command-source
+    actuator:
+      module: actuator/command-sink
+  connections:
+    - from: gateway.command
+      to: actuator.command
+      qos: reliable
+      max_rate_hz: 50
+      max_size: 96
+  domains:
+    - name: io
+      time: monotonic

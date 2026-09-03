@@ -1,0 +1,10 @@
+api_version: aster.dev/v1alpha2
+kind: Workspace
+metadata:
+  name: provider-sim
+spec:
+  packages:
+    clock:
+      source: packages/fake_clock
+    consumer:
+      source: packages/consumer

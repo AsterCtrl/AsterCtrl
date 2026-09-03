@@ -1,0 +1,27 @@
+api_version: aster.dev/v1alpha2
+kind: Deployment
+metadata:
+  name: provider-sim
+spec:
+  application: application.yaml
+  hosts:
+    simulator:
+      os: linux
+      arch: x86_64
+      inventory: simulator
+  nodes:
+    simulation:
+      host: simulator
+      instances: [clock, client]
+      domains: [control]
+      executors:
+        control: {policy: serial, stack_bytes: 2048, queue_depth: 8}
+  time:
+    authority: simulation
+    domains:
+      control:
+        source: simulated
+  budgets:
+    hosts:
+      simulator:
+        stack_bytes: 4096

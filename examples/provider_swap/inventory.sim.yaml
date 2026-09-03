@@ -1,0 +1,9 @@
+api_version: aster.dev/v1alpha2
+kind: Inventory
+metadata:
+  name: provider-sim
+spec:
+  hosts:
+    simulator:
+      transport: local
+      deploy_root: build/deploy/provider-sim

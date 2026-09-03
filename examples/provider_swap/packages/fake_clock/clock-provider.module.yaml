@@ -1,0 +1,23 @@
+api_version: aster.dev/v1alpha2
+kind: Module
+metadata:
+  name: clock-provider
+  version: 0.1.0
+spec:
+  implementation:
+    target: fake_clock
+    class: ::examples::FakeClock
+    header: examples/fake_clock.hpp
+  platforms: [linux]
+  provides:
+    - name: clock
+      interface: example.Clock/v1
+      domain: control
+  tasks:
+    - name: advance
+      domain: control
+      period_us: 1000
+      deadline_us: 1000
+      stack_bytes: 1024
+      queue_depth: 2
+      priority: 10

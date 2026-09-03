@@ -1,0 +1,16 @@
+name: Feature request
+description: Propose a focused capability or Interface change
+title: "proposal: "
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: Explain the user problem without prescribing an Implementation.
+    validations:
+      required: true
+  - type: textarea
+    id: constraints
+    attributes:
+      label: Embedded constraints
+      description: Include latency, memory, platform and compatibility needs.

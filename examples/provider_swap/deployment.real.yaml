@@ -1,0 +1,30 @@
+api_version: aster.dev/v1alpha2
+kind: Deployment
+metadata:
+  name: provider-real
+spec:
+  application: application.yaml
+  hosts:
+    controller:
+      os: zephyr
+      arch: arm
+      board: dev_c/stm32f407xx
+      hardware: hardware.real.yaml
+      inventory: controller
+  nodes:
+    firmware:
+      host: controller
+      instances: [clock, client]
+      domains: [control]
+      executors:
+        control: {policy: serial, stack_bytes: 2048, queue_depth: 8, priority: 10}
+  time:
+    authority: firmware
+    domains:
+      control:
+        source: monotonic
+  budgets:
+    hosts:
+      controller:
+        stack_bytes: 4096
+        ram_bytes: 32768

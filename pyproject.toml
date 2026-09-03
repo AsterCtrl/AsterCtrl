@@ -1,0 +1,30 @@
+[project]
+name = "asterctrl-workspace"
+version = "0.2.0a1"
+requires-python = ">=3.12,<3.13"
+dependencies = ["aster-cli"]
+
+[dependency-groups]
+dev = [
+  "furo==2025.7.19",
+  "pip-licenses==5.0.0",
+  "pytest>=8.3,<9",
+  "ruff==0.12.12",
+  "sphinx==8.2.3",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+aster-cli = { workspace = true }
+
+[tool.uv.workspace]
+members = ["tools/aster_cli"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]

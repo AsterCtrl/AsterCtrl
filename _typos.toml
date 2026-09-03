@@ -1,0 +1,11 @@
+[files]
+extend-exclude = ["document/_build/**"]
+
+[default.extend-identifiers]
+NowNs = "NowNs"
+
+[default.extend-words]
+crate = "crate"
+nd = "nd"
+te = "te"
+ue = "ue"

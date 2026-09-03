@@ -1,0 +1,16 @@
+api_version: aster.dev/v1alpha2
+kind: Inventory
+metadata:
+  name: linux-zephyr-usb-cdc
+spec:
+  hosts:
+    dev_c:
+      transport: serial
+      address: /dev/ttyACM0
+      labels:
+        role: actuator
+    gateway-soc:
+      transport: local
+      deploy_root: build/deploy/gateway-soc
+      labels:
+        role: gateway

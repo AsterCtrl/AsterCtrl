@@ -1,0 +1,24 @@
+api_version: aster.dev/v1alpha2
+kind: Module
+metadata:
+  name: state-source
+  version: 0.1.0
+spec:
+  implementation:
+    target: linux_local_demo
+    class: ::examples::StateSource
+    header: examples/state_source.hpp
+  platforms: [linux]
+  ports:
+    - name: state
+      kind: publisher
+      type: aster.examples.local.v1.State
+      max_rate_hz: 20
+  tasks:
+    - name: publish
+      domain: main
+      period_us: 50000
+      deadline_us: 50000
+      stack_bytes: 1024
+      queue_depth: 4
+      priority: 10

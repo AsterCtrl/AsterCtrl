@@ -1,0 +1,11 @@
+api_version: aster.dev/v1alpha2
+kind: Inventory
+metadata:
+  name: provider-real
+spec:
+  hosts:
+    controller:
+      transport: debug-probe
+      address: dev_c
+      labels:
+        role: target

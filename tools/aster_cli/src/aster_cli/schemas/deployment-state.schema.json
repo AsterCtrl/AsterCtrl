@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://asterctrl.dev/schemas/v1alpha2/deployment-state.schema.json",
+  "$defs": {
+    "digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "release": {
+      "type": "object",
+      "required": ["deployment_id", "bundle_digest", "release"],
+      "properties": {
+        "deployment_id": {"$ref": "#/$defs/digest"},
+        "bundle_digest": {"$ref": "#/$defs/digest"},
+        "release": {
+          "type": "string",
+          "pattern": "^releases/[0-9a-f]{64}$"
+        }
+      },
+      "additionalProperties": false
+    },
+    "node": {
+      "type": "object",
+      "required": ["current", "previous"],
+      "properties": {
+        "current": {"$ref": "#/$defs/release"},
+        "previous": {
+          "oneOf": [
+            {"$ref": "#/$defs/release"},
+            {"type": "null"}
+          ]
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "type": "object",
+  "required": ["api_version", "kind", "metadata", "deployments"],
+  "properties": {
+    "api_version": {"const": "aster.dev/v1alpha2"},
+    "kind": {"const": "DeploymentState"},
+    "metadata": {"$ref": "common.schema.json#/$defs/metadata"},
+    "deployments": {
+      "type": "object",
+      "propertyNames": {"$ref": "common.schema.json#/$defs/name"},
+      "additionalProperties": {"$ref": "#/$defs/node"}
+    }
+  },
+  "additionalProperties": false
+}

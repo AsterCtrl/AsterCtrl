@@ -1,0 +1,28 @@
+api_version: aster.dev/v1alpha2
+kind: Deployment
+metadata:
+  name: linux-local
+spec:
+  application: application.yaml
+  hosts:
+    workstation:
+      os: linux
+      arch: x86_64
+      inventory: workstation
+  nodes:
+    app:
+      host: workstation
+      instances: [source, sink]
+      domains: [main]
+      executors:
+        main: {policy: serial, stack_bytes: 2048, queue_depth: 8}
+  time:
+    authority: app
+    domains:
+      main:
+        source: monotonic
+  budgets:
+    hosts:
+      workstation:
+        stack_bytes: 4096
+        ram_bytes: 65536

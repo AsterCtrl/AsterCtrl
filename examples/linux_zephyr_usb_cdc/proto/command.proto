@@ -1,0 +1,9 @@
+syntax = "proto3";
+
+package aster.examples.usb.v1;
+
+message Command {
+  uint32 sequence = 1;
+  string verb = 2;
+  bytes payload = 3;
+}

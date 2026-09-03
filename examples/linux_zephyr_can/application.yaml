@@ -1,0 +1,19 @@
+api_version: aster.dev/v1alpha2
+kind: Application
+metadata:
+  name: can-control
+spec:
+  instances:
+    imu:
+      module: sensors/imu-source
+    controller:
+      module: control/state-controller
+  connections:
+    - from: imu.state
+      to: controller.state
+      qos: reliable
+      max_rate_hz: 100
+      max_size: 64
+  domains:
+    - name: control
+      time: monotonic

@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://asterctrl.dev/schemas/v1alpha2/package.schema.json",
+  "type": "object",
+  "required": ["api_version", "kind", "metadata", "spec"],
+  "properties": {
+    "api_version": {"const": "aster.dev/v1alpha2"},
+    "kind": {"const": "Package"},
+    "metadata": {"$ref": "common.schema.json#/$defs/metadata"},
+    "spec": {
+      "type": "object",
+      "required": ["build"],
+      "properties": {
+        "build": {
+          "type": "object",
+          "required": ["system"],
+          "properties": {"system": {"enum": ["cmake", "zephyr", "protobuf", "header-only", "python"]}, "target": {"type": "string"}},
+          "additionalProperties": false
+        },
+        "exports": {
+          "type": "object",
+          "properties": {
+            "modules": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+            "protos": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+            "transports": {"type": "array", "items": {"$ref": "common.schema.json#/$defs/name"}, "uniqueItems": true},
+            "boards": {"type": "array", "items": {"$ref": "common.schema.json#/$defs/name"}, "uniqueItems": true},
+            "tools": {"type": "array", "items": {"$ref": "common.schema.json#/$defs/name"}, "uniqueItems": true}
+          },
+          "additionalProperties": false
+        },
+        "protobuf": {
+          "description": "Bounded protobuf compiler inputs for exported .proto files.",
+          "type": "object",
+          "minProperties": 1,
+          "properties": {
+            "bounds": {"type": "string", "minLength": 1},
+            "includes": {
+              "type": "array",
+              "items": {"type": "string", "minLength": 1},
+              "uniqueItems": true
+            }
+          },
+          "additionalProperties": false
+        },
+        "dependencies": {
+          "type": "object",
+          "additionalProperties": {
+            "oneOf": [
+              {"type": "string"},
+              {"type": "object", "required": ["source"], "properties": {"source": {"type": "string"}, "version": {"type": "string"}, "revision": {"type": "string"}}, "additionalProperties": false}
+            ]
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

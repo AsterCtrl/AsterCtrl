@@ -1,0 +1,26 @@
+api_version: aster.dev/v1alpha2
+kind: Module
+metadata:
+  name: clock-provider
+  version: 0.1.0
+spec:
+  implementation:
+    target: hardware_clock
+    class: ::examples::HardwareClock
+    header: examples/hardware_clock.hpp
+  platforms: [zephyr]
+  provides:
+    - name: clock
+      interface: example.Clock/v1
+      domain: control
+  capabilities:
+    - name: rtc-interrupt
+      kind: gpio
+  tasks:
+    - name: sample
+      domain: control
+      period_us: 1000
+      deadline_us: 1000
+      stack_bytes: 1024
+      queue_depth: 2
+      priority: 10

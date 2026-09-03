@@ -1,0 +1,3 @@
+fields:
+  aster.examples.local.v1.State.label:
+    max_size: 24

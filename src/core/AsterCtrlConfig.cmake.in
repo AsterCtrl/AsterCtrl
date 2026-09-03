@@ -1,0 +1,10 @@
+@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+@ASTERCTRL_CONFIG_DEPENDENCIES@
+
+set(AsterCtrl_VERSION_STRING "@ASTERCTRL_VERSION_STRING@")
+
+include("${CMAKE_CURRENT_LIST_DIR}/AsterCtrlTargets.cmake")
+
+check_required_components(AsterCtrl)

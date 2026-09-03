@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://asterctrl.dev/schemas/v1alpha2/deployment-bundle.schema.json",
+  "$defs": {
+    "digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "file": {
+      "type": "object",
+      "required": ["path", "sha256", "size"],
+      "properties": {
+        "path": {
+          "type": "string",
+          "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[^\\u0000]+$"
+        },
+        "sha256": {"$ref": "#/$defs/digest"},
+        "size": {"type": "integer", "minimum": 0}
+      },
+      "additionalProperties": false
+    }
+  },
+  "type": "object",
+  "required": [
+    "api_version",
+    "kind",
+    "metadata",
+    "format_version",
+    "deployment_id",
+    "deployment_lock",
+    "files",
+    "bundle_digest"
+  ],
+  "properties": {
+    "api_version": {"const": "aster.dev/v1alpha2"},
+    "kind": {"const": "DeploymentBundle"},
+    "metadata": {"$ref": "common.schema.json#/$defs/metadata"},
+    "format_version": {"const": 1},
+    "deployment_id": {"$ref": "#/$defs/digest"},
+    "deployment_lock": {"$ref": "#/$defs/file"},
+    "files": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/file"},
+      "minItems": 1
+    },
+    "bundle_digest": {"$ref": "#/$defs/digest"}
+  },
+  "additionalProperties": false
+}

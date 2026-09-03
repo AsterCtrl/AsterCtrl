@@ -1,0 +1,17 @@
+api_version: aster.dev/v1alpha2
+kind: Hardware
+metadata:
+  name: provider-real-hardware
+spec:
+  platform: zephyr
+  board: dev_c/stm32f407xx
+  resources:
+    rtc_irq:
+      kind: gpio
+      backend: devicetree
+      device: gpioa
+      options:
+        pin: 7
+  memory:
+    flash_bytes: 1048576
+    ram_bytes: 131072

@@ -1,0 +1,10 @@
+api_version: aster.dev/v1alpha2
+kind: Workspace
+metadata:
+  name: provider-real
+spec:
+  packages:
+    clock:
+      source: packages/hardware_clock
+    consumer:
+      source: packages/consumer

@@ -1,0 +1,17 @@
+api_version: aster.dev/v1alpha2
+kind: Hardware
+metadata:
+  name: dev-c-usb-cdc
+spec:
+  platform: zephyr
+  board: dev_c/stm32f407xx
+  resources:
+    usb_console:
+      kind: usb_cdc
+      backend: devicetree
+      device: cdc_acm_uart0
+      options:
+        zephyr_compatible: zephyr,cdc-acm-uart
+  memory:
+    flash_bytes: 1048576
+    ram_bytes: 131072

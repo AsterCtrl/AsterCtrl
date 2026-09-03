@@ -1,0 +1,16 @@
+api_version: aster.dev/v1alpha2
+kind: Application
+metadata:
+  name: provider-clock
+spec:
+  instances:
+    clock:
+      module: clock/clock-provider
+    client:
+      module: consumer/clock-client
+  bindings:
+    - requirement: client.clock
+      provider: clock.clock
+  domains:
+    - name: control
+      time: monotonic

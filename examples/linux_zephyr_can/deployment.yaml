@@ -1,0 +1,58 @@
+api_version: aster.dev/v1alpha2
+kind: Deployment
+metadata:
+  name: linux-zephyr-can
+spec:
+  application: application.yaml
+  hosts:
+    mcu:
+      os: zephyr
+      arch: arm
+      board: dev_c/stm32f407xx
+      hardware: dev_c.hardware.yaml
+      inventory: dev_c
+    soc:
+      os: linux
+      arch: aarch64
+      hardware: linux.hardware.yaml
+      inventory: control-soc
+  nodes:
+    sensor-node:
+      host: mcu
+      instances: [imu]
+      domains: [control]
+      executors:
+        control: {policy: serial, stack_bytes: 2048, queue_depth: 8, priority: 10}
+    controller-node:
+      host: soc
+      instances: [controller]
+      domains: [control]
+      executors:
+        control: {policy: serial, stack_bytes: 2048, queue_depth: 8}
+  transports:
+    can0:
+      type: can
+      hosts: [mcu, soc]
+      bitrate_bps: 1000000
+      mtu: 8
+      resource: can_bus
+  route_rules:
+    - match: imu.state->controller.state
+      transport: can0
+      qos: reliable
+  time:
+    authority: sensor-node
+    domains:
+      control:
+        source: synced
+        authority: sensor-node
+        max_skew_us: 500
+  budgets:
+    hosts:
+      mcu:
+        stack_bytes: 4096
+        ram_bytes: 32768
+      soc:
+        stack_bytes: 8192
+    transports:
+      can0: 0.50

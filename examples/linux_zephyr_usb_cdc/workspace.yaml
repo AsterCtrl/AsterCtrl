@@ -1,0 +1,10 @@
+api_version: aster.dev/v1alpha2
+kind: Workspace
+metadata:
+  name: linux-zephyr-usb-cdc
+spec:
+  packages:
+    actuator:
+      source: packages/actuator
+    gateway:
+      source: packages/gateway

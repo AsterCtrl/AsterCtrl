@@ -1,0 +1,25 @@
+# SPDX-License-Identifier: Apache-2.0
+
+manifest:
+  version: "1.2"
+
+  remotes:
+    - name: zephyrproject-rtos
+      url-base: https://github.com/zephyrproject-rtos
+    - name: asterctrl
+      url-base: https://github.com/AsterCtrl
+
+  projects:
+    - name: zephyr
+      remote: zephyrproject-rtos
+      # Zephyr v4.4.0, peeled to the commit used for all release builds.
+      revision: 684c9e8f32e4373a21098559f748f06915f950c9
+      import: true
+
+    - name: asterctrl-boards
+      remote: asterctrl
+      path: asterctrl-boards
+      revision: fbf4f75f0d7cd306e237f5baf06a0978a14a98c3
+
+  self:
+    path: asterctrl

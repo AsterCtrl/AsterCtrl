@@ -1,0 +1,24 @@
+[Unit]
+Description=AsterCtrl node %i
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=aster
+Group=aster
+EnvironmentFile=-/etc/aster/%i.env
+ExecStart=/usr/bin/aster run --execute /opt/aster/%i/current/bin/aster-node
+Restart=on-failure
+RestartSec=2s
+TimeoutStopSec=15s
+KillSignal=SIGTERM
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/aster/%i
+StateDirectory=aster/%i
+
+[Install]
+WantedBy=multi-user.target

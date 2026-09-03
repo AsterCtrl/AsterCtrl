@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://asterctrl.dev/schemas/v1alpha2/application.schema.json",
+  "type": "object",
+  "required": ["api_version", "kind", "metadata", "spec"],
+  "properties": {
+    "api_version": {"const": "aster.dev/v1alpha2"},
+    "kind": {"const": "Application"},
+    "metadata": {"$ref": "common.schema.json#/$defs/metadata"},
+    "spec": {
+      "type": "object",
+      "required": ["instances"],
+      "properties": {
+        "instances": {"type": "object", "additionalProperties": {"type": "object", "required": ["module"], "properties": {"module": {"type": "string", "pattern": "^[a-z][a-z0-9_.-]*/[a-z][a-z0-9_.-]*$"}, "config": {"type": "object"}, "startup_after": {"type": "array", "items": {"$ref": "common.schema.json#/$defs/name"}, "uniqueItems": true}}, "additionalProperties": false}},
+        "connections": {"type": "array", "items": {"type": "object", "required": ["from", "to"], "properties": {"id": {"$ref": "common.schema.json#/$defs/positive"}, "from": {"$ref": "common.schema.json#/$defs/endpoint"}, "to": {"$ref": "common.schema.json#/$defs/endpoint"}, "qos": {"enum": ["best_effort", "reliable"]}, "max_rate_hz": {"type": "number", "exclusiveMinimum": 0}, "max_size": {"description": "Optional route capacity; defaults to and must not be smaller than the derived maximum encoded size", "$ref": "common.schema.json#/$defs/positive"}}, "additionalProperties": false}},
+        "bindings": {"type": "array", "items": {"type": "object", "required": ["requirement", "provider"], "properties": {"requirement": {"$ref": "common.schema.json#/$defs/endpoint"}, "provider": {"$ref": "common.schema.json#/$defs/endpoint"}}, "additionalProperties": false}},
+        "domains": {"type": "array", "items": {"type": "object", "required": ["name", "time"], "properties": {"name": {"$ref": "common.schema.json#/$defs/name"}, "time": {"enum": ["monotonic", "wall", "simulated"]}}, "additionalProperties": false}}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

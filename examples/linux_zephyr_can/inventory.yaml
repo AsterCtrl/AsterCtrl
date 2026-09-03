@@ -1,0 +1,16 @@
+api_version: aster.dev/v1alpha2
+kind: Inventory
+metadata:
+  name: linux-zephyr-can
+spec:
+  hosts:
+    dev_c:
+      transport: debug-probe
+      address: dev_c
+      labels:
+        role: sensor
+    control-soc:
+      transport: local
+      deploy_root: build/deploy/control-soc
+      labels:
+        role: controller

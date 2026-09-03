@@ -1,16 +1,21 @@
-api_version: aster.dev/v1alpha1
+api_version: aster.dev/v1alpha2
 kind: Package
 
 metadata:
-  name: aster-runtime
-  version: 0.1.0-dev
+  name: asterctrl
+  version: 0.2.0-alpha.1
   license: Apache-2.0
 
 spec:
   build:
     system: cmake
+    target: aster_core
   exports:
-    libraries:
-      - name: aster::runtime
-        portable: true
-  dependencies: []
+    tools:
+      - aster
+    transports:
+      - local
+      - can
+      - socketcan
+      - usb_cdc_acm
+  dependencies: {}

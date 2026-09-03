@@ -1,0 +1,17 @@
+api_version: aster.dev/v1alpha2
+kind: Hardware
+metadata:
+  name: dev_c-can
+spec:
+  platform: zephyr
+  board: dev_c/stm32f407xx
+  resources:
+    can_bus:
+      kind: can
+      backend: devicetree
+      device: can1
+      options:
+        sample_point: 0.875
+  memory:
+    flash_bytes: 1048576
+    ram_bytes: 131072

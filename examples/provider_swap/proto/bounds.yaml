@@ -1,0 +1,3 @@
+fields:
+  aster.examples.clock.v1.ClockSample.source:
+    max_size: 16

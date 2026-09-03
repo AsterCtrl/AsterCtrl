@@ -1,0 +1,62 @@
+api_version: aster.dev/v1alpha2
+kind: Deployment
+metadata:
+  name: linux-zephyr-usb-cdc
+spec:
+  application: application.yaml
+  hosts:
+    mcu:
+      os: zephyr
+      arch: arm
+      board: dev_c/stm32f407xx
+      hardware: dev_c.hardware.yaml
+      inventory: dev_c
+    soc:
+      os: linux
+      arch: aarch64
+      hardware: linux.hardware.yaml
+      inventory: gateway-soc
+  nodes:
+    gateway-node:
+      host: soc
+      instances: [gateway]
+      domains: [io]
+      executors:
+        io: {policy: serial, stack_bytes: 2048, queue_depth: 8}
+    actuator-node:
+      host: mcu
+      instances: [actuator]
+      domains: [io]
+      executors:
+        io: {policy: serial, stack_bytes: 2048, queue_depth: 8, priority: 10}
+  transports:
+    usb0:
+      type: usb_cdc
+      hosts: [mcu, soc]
+      bitrate_bps: 12000000
+      mtu: 64
+      resource: usb_console
+      options:
+        # Development-only identifiers; products must use their assigned VID/PID.
+        vid: 51966
+        pid: 16385
+  route_rules:
+    - match: gateway.command->actuator.command
+      transport: usb0
+      qos: reliable
+  time:
+    authority: gateway-node
+    domains:
+      io:
+        source: synced
+        authority: gateway-node
+        max_skew_us: 1000
+  budgets:
+    hosts:
+      mcu:
+        stack_bytes: 4096
+        ram_bytes: 32768
+      soc:
+        stack_bytes: 4096
+    transports:
+      usb0: 0.25

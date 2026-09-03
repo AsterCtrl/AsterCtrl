@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://asterctrl.dev/schemas/v1alpha2/inventory.schema.json",
+  "type": "object",
+  "required": ["api_version", "kind", "metadata", "spec"],
+  "properties": {
+    "api_version": {"const": "aster.dev/v1alpha2"},
+    "kind": {"const": "Inventory"},
+    "metadata": {"$ref": "common.schema.json#/$defs/metadata"},
+    "spec": {
+      "type": "object",
+      "required": ["hosts"],
+      "properties": {
+        "hosts": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "required": ["transport"],
+            "properties": {
+              "transport": {"enum": ["local", "ssh", "serial", "debug-probe"]},
+              "address": {"type": "string"},
+              "serial_number": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128,
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+              },
+              "deploy_root": {"type": "string"},
+              "labels": {
+                "type": "object",
+                "additionalProperties": {"type": "string"}
+              }
+            },
+            "allOf": [
+              {
+                "if": {"properties": {"transport": {"const": "ssh"}}},
+                "then": {
+                  "required": ["address", "deploy_root"],
+                  "properties": {
+                    "address": {
+                      "pattern": "^(?:[A-Za-z0-9][A-Za-z0-9._-]*@)?[A-Za-z0-9][A-Za-z0-9.-]*$"
+                    },
+                    "deploy_root": {
+                      "pattern": "^/(?:[A-Za-z0-9._-]+/)*[A-Za-z0-9._-]+$"
+                    }
+                  }
+                }
+              }
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

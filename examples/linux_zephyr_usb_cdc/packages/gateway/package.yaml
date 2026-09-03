@@ -1,0 +1,17 @@
+api_version: aster.dev/v1alpha2
+kind: Package
+metadata:
+  name: gateway
+  version: 0.1.0
+  license: Apache-2.0
+spec:
+  build:
+    system: cmake
+    target: command_source
+  exports:
+    modules: [command-source.module.yaml]
+    protos: [../../proto/command.proto]
+  protobuf:
+    bounds: ../../proto/bounds.yaml
+    includes: [../../proto]
+  dependencies: {}

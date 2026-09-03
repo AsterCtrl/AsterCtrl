@@ -1,0 +1,8 @@
+syntax = "proto3";
+
+package aster.examples.local.v1;
+
+message State {
+  uint64 sequence = 1;
+  string label = 2;
+}

@@ -1,0 +1,22 @@
+name: Bug report
+description: Report reproducible incorrect behaviour
+title: "bug: "
+body:
+  - type: textarea
+    id: observed
+    attributes:
+      label: Observed behaviour
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Reproduction
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment and Deployment Lock
+    validations:
+      required: true

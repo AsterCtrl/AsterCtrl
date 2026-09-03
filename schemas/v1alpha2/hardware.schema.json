@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://asterctrl.dev/schemas/v1alpha2/hardware.schema.json",
+  "type": "object",
+  "required": ["api_version", "kind", "metadata", "spec"],
+  "properties": {
+    "api_version": {"const": "aster.dev/v1alpha2"},
+    "kind": {"const": "Hardware"},
+    "metadata": {"$ref": "common.schema.json#/$defs/metadata"},
+    "spec": {
+      "type": "object",
+      "required": ["platform", "resources"],
+      "properties": {
+        "platform": {"enum": ["linux", "zephyr"]},
+        "board": {"$ref": "common.schema.json#/$defs/boardTarget"},
+        "resources": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "required": ["kind", "backend", "device"],
+            "properties": {
+              "kind": {"enum": ["can", "canfd", "uart", "usb_cdc", "spi", "i2c", "gpio", "pwm", "ethernet", "watchdog"]},
+              "backend": {"enum": ["devicetree", "socketcan", "tty"]},
+              "device": {"type": "string", "minLength": 1},
+              "options": {"type": "object"}
+            },
+            "additionalProperties": false
+          }
+        },
+        "memory": {
+          "type": "object",
+          "properties": {
+            "flash_bytes": {"$ref": "common.schema.json#/$defs/positive"},
+            "ram_bytes": {"$ref": "common.schema.json#/$defs/positive"}
+          },
+          "additionalProperties": false
+        }
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"platform": {"const": "zephyr"}}},
+          "then": {"required": ["board"]},
+          "else": {"not": {"required": ["board"]}}
+        }
+      ],
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

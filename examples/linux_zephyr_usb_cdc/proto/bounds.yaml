@@ -1,0 +1,5 @@
+fields:
+  aster.examples.usb.v1.Command.verb:
+    max_size: 16
+  aster.examples.usb.v1.Command.payload:
+    max_size: 64

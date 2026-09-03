@@ -1,0 +1,13 @@
+api_version: aster.dev/v1alpha2
+kind: Package
+metadata:
+  name: consumer
+  version: 0.1.0
+  license: Apache-2.0
+spec:
+  build:
+    system: cmake
+    target: clock_consumer
+  exports:
+    modules: [clock-client.module.yaml]
+  dependencies: {}

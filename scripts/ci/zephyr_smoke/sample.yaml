@@ -1,0 +1,34 @@
+# SPDX-License-Identifier: Apache-2.0
+
+sample:
+  name: AsterCtrl Zephyr Runtime smoke
+  description: Runs the portable publish/subscribe Module contract and lifecycle.
+tests:
+  sample.asterctrl.runtime.native_sim:
+    platform_allow:
+      - native_sim
+    integration_platforms:
+      - native_sim
+    harness: console
+    harness_config:
+      type: one_line
+      regex:
+        - "ASTERCTRL_RUNTIME_SMOKE: PASS"
+  sample.asterctrl.runtime.qemu_cortex_m3:
+    platform_allow:
+      - qemu_cortex_m3
+    integration_platforms:
+      - qemu_cortex_m3
+    harness: console
+    harness_config:
+      type: one_line
+      regex:
+        - "ASTERCTRL_RUNTIME_SMOKE: PASS"
+  sample.asterctrl.runtime.dev_c:
+    platform_allow:
+      - dev_c
+    build_only: true
+  sample.asterctrl.runtime.mc02:
+    platform_allow:
+      - mc02
+    build_only: true

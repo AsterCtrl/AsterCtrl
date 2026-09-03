@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://asterctrl.dev/schemas/v1alpha2/deployment.schema.json",
+  "type": "object",
+  "required": ["api_version", "kind", "metadata", "spec"],
+  "properties": {
+    "api_version": {"const": "aster.dev/v1alpha2"},
+    "kind": {"const": "Deployment"},
+    "metadata": {"$ref": "common.schema.json#/$defs/metadata"},
+    "spec": {
+      "type": "object",
+      "required": ["application", "hosts", "nodes"],
+      "properties": {
+        "application": {"type": "string"},
+        "hosts": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "required": ["os", "arch"],
+            "properties": {"os": {"enum": ["linux", "zephyr"]}, "arch": {"enum": ["x86_64", "aarch64", "arm", "riscv32", "riscv64"]}, "board": {"$ref": "common.schema.json#/$defs/boardTarget"}, "hardware": {"type": "string"}, "inventory": {"$ref": "common.schema.json#/$defs/name"}},
+            "allOf": [{"if": {"properties": {"os": {"const": "zephyr"}}}, "then": {"required": ["board", "hardware"]}}],
+            "additionalProperties": false
+          }
+        },
+        "nodes": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "required": ["host", "instances"],
+            "properties": {
+              "id": {"$ref": "common.schema.json#/$defs/positive"},
+              "host": {"$ref": "common.schema.json#/$defs/name"},
+              "instances": {"type": "array", "items": {"$ref": "common.schema.json#/$defs/name"}, "uniqueItems": true},
+              "domains": {"type": "array", "items": {"$ref": "common.schema.json#/$defs/name"}, "uniqueItems": true},
+              "executors": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "object",
+                  "properties": {
+                    "policy": {"enum": ["serial", "worker_pool"]},
+                    "workers": {"type": "integer", "minimum": 1, "maximum": 64},
+                    "priority": {"type": "integer", "minimum": -255, "maximum": 255},
+                    "stack_bytes": {"$ref": "common.schema.json#/$defs/positive"},
+                    "queue_depth": {"$ref": "common.schema.json#/$defs/positive"}
+                  },
+                  "additionalProperties": false
+                }
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "transports": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "required": ["type", "hosts"],
+            "properties": {"type": {"$ref": "common.schema.json#/$defs/name"}, "backend": {"$ref": "common.schema.json#/$defs/name"}, "package": {"$ref": "common.schema.json#/$defs/name"}, "hosts": {"type": "array", "minItems": 1, "items": {"$ref": "common.schema.json#/$defs/name"}, "uniqueItems": true}, "bitrate_bps": {"$ref": "common.schema.json#/$defs/positive"}, "mtu": {"$ref": "common.schema.json#/$defs/positive"}, "resource": {"$ref": "common.schema.json#/$defs/name"}, "options": {"type": "object", "properties": {"vid": {"type": "integer", "minimum": 1, "maximum": 65535}, "pid": {"type": "integer", "minimum": 1, "maximum": 65535}}, "additionalProperties": true}},
+            "allOf": [{"if": {"properties": {"type": {"const": "usb_cdc"}}, "required": ["type"]}, "then": {"required": ["options"], "properties": {"options": {"required": ["vid", "pid"]}}}}],
+            "additionalProperties": false
+          }
+        },
+        "route_rules": {
+          "type": "array",
+          "items": {"type": "object", "required": ["match", "transport"], "properties": {"match": {"type": "string"}, "transport": {"$ref": "common.schema.json#/$defs/name"}, "qos": {"enum": ["best_effort", "reliable"]}}, "additionalProperties": false}
+        },
+        "time": {
+          "type": "object",
+          "properties": {"authority": {"$ref": "common.schema.json#/$defs/name"}, "domains": {"type": "object", "additionalProperties": {"type": "object", "required": ["source"], "properties": {"source": {"enum": ["monotonic", "wall", "simulated", "synced"]}, "authority": {"$ref": "common.schema.json#/$defs/name"}, "max_skew_us": {"type": "integer", "minimum": 0}}, "additionalProperties": false}}},
+          "additionalProperties": false
+        },
+        "budgets": {
+          "type": "object",
+          "properties": {"hosts": {"type": "object", "additionalProperties": {"type": "object", "properties": {"ram_bytes": {"$ref": "common.schema.json#/$defs/positive"}, "flash_bytes": {"$ref": "common.schema.json#/$defs/positive"}, "stack_bytes": {"$ref": "common.schema.json#/$defs/positive"}}, "additionalProperties": false}}, "transports": {"type": "object", "additionalProperties": {"type": "number", "exclusiveMinimum": 0, "maximum": 1}}},
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

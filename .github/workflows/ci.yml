@@ -1,0 +1,239 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  UV_FROZEN: "true"
+  UV_NO_PROGRESS: "true"
+
+jobs:
+  python-and-graphs:
+    name: Python, graphs, and bounded protobuf
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up Python 3.12
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Set up uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          version: "0.12.9"
+          enable-cache: true
+          cache-dependency-glob: |
+            uv.lock
+            tools/aster_cli/uv.lock
+      - name: Install protoc and a C++ compiler
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes clang-18 g++ protobuf-compiler
+      - name: Materialize the locked Python environment
+        run: uv sync --all-groups
+      - name: Check Python source
+        run: |
+          uv run ruff check tools/aster_cli/src tests/cli scripts/ci
+          uv run ruff format --check tools/aster_cli/src tests/cli scripts/ci
+      - name: Check documentation spelling
+        uses: crate-ci/typos@d43b6c087ac471e2ea7b8af622ff15f05c0c365b # v1.50.1
+        with:
+          files: README.md CHANGELOG.md CONTRIBUTING.md SECURITY.md document examples
+      - name: Run CLI, graph, lock, and protobuf tests
+        run: uv run --package aster-cli pytest tests/cli
+      - name: Fuzz the bounded protobuf decoder
+        run: |
+          mkdir -p build/fuzz
+          uv run aster codegen \
+            --proto "$PWD/examples/linux_local/proto/state.proto" \
+            --include "$PWD/examples/linux_local/proto" \
+            --bounds "$PWD/examples/linux_local/proto/bounds.yaml" \
+            --output "$PWD/build/fuzz/state.pb.hpp"
+          clang++-18 -std=c++20 -fsanitize=fuzzer,address,undefined \
+            -fno-omit-frame-pointer -Iinclude -Ibuild/fuzz \
+            scripts/ci/bounded_protobuf_fuzz.cpp \
+            -o build/fuzz/bounded-protobuf-fuzz
+          ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 \
+            UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+            build/fuzz/bounded-protobuf-fuzz -runs=10000 -max_len=256
+      - name: Validate deterministic examples and generated C++
+        run: uv run python scripts/ci/check_examples.py
+      - name: Verify the public executable name
+        run: |
+          uv run aster --version
+          test ! -e .venv/bin/asterctl
+      - name: Recreate the environment without network access
+        env:
+          UV_OFFLINE: "true"
+          UV_PROJECT_ENVIRONMENT: .venv-offline
+        run: uv sync --all-groups
+      - name: Verify lock files remain unchanged
+        run: git diff --exit-code -- uv.lock tools/aster_cli/uv.lock
+
+  host-build:
+    name: Host ${{ matrix.compiler }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - compiler: gcc
+            cc: gcc
+            cxx: g++
+          - compiler: clang-18
+            cc: clang-18
+            cxx: clang++-18
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install host toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes clang-18 cmake g++ iproute2 kmod ninja-build
+      - name: Configure
+        env:
+          CC: ${{ matrix.cc }}
+          CXX: ${{ matrix.cxx }}
+        run: >-
+          cmake -S . -B build/${{ matrix.compiler }} -G Ninja
+          -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+          -DASTER_BUILD_TESTS=ON
+      - name: Build
+        run: cmake --build build/${{ matrix.compiler }} --parallel 2
+      - name: Create the required SocketCAN test interface
+        run: |
+          sudo modprobe vcan
+          sudo ip link add dev vcan0 type vcan
+          sudo ip link set dev vcan0 up
+          ip -details link show dev vcan0
+      - name: Test
+        env:
+          ASTER_TEST_VCAN: vcan0
+        run: ctest --test-dir build/${{ matrix.compiler }} --output-on-failure --timeout 30
+      - name: Install and verify exported CMake targets
+        run: |
+          cmake --install build/${{ matrix.compiler }} --prefix build/install
+          cmake -S scripts/ci/cmake_consumer -B build/consumer-${{ matrix.compiler }} -G Ninja -DCMAKE_PREFIX_PATH="$PWD/build/install"
+          cmake --build build/consumer-${{ matrix.compiler }}
+          build/consumer-${{ matrix.compiler }}/asterctrl_consumer
+
+  linux-architectures:
+    name: Linux ${{ matrix.architecture }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - architecture: x86_64
+            runner: ubuntu-24.04
+          - architecture: arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes cmake g++ ninja-build
+      - name: Build and test natively
+        run: |
+          cmake -S . -B build/arch -G Ninja -DCMAKE_BUILD_TYPE=Release -DASTER_BUILD_TESTS=ON
+          cmake --build build/arch --parallel 2
+          ctest --test-dir build/arch --output-on-failure --timeout 30
+
+  clang-quality:
+    name: Clang 18 format and tidy
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install LLVM 18
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes clang-18 clang-format-18 clang-tidy-18 cmake ninja-build
+      - name: Check formatting
+        run: |
+          mapfile -d '' sources < <(find include src tests scripts/ci -type f \( -name '*.c' -o -name '*.cc' -o -name '*.cpp' -o -name '*.h' -o -name '*.hpp' \) -print0)
+          clang-format-18 --dry-run --Werror "${sources[@]}"
+      - name: Build a compilation database
+        env:
+          CC: clang-18
+          CXX: clang++-18
+        run: |
+          cmake -S . -B build/tidy -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DASTER_BUILD_TESTS=ON
+          cmake --build build/tidy --parallel 2
+      - name: Run clang-tidy
+        run: >-
+          clang-tidy-18 -p build/tidy
+          src/core/runtime.cpp
+          src/platform/linux/plugin_loader.cpp
+          src/transports/can/socketcan.cpp
+          src/transports/usb/linux_tty.cpp
+          --warnings-as-errors='*'
+      - name: Reject forbidden portable dependencies
+        run: python3 scripts/check_forbidden_dependencies.py
+
+  sanitizers:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: ASan and UBSan
+            option: ASTER_ENABLE_SANITIZERS
+            runtime_options: ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1
+          - name: TSan
+            option: ASTER_ENABLE_TSAN
+            runtime_options: TSAN_OPTIONS=halt_on_error=1:second_deadlock_stack=1
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install LLVM 18
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes clang-18 cmake ninja-build
+      - name: Configure and build
+        env:
+          CC: clang-18
+          CXX: clang++-18
+        run: |
+          cmake -S . -B build/sanitizer -G Ninja -DCMAKE_BUILD_TYPE=Debug -DASTER_BUILD_TESTS=ON -D${{ matrix.option }}=ON
+          cmake --build build/sanitizer --parallel 2
+      - name: Run tests
+        run: ${{ matrix.runtime_options }} ctest --test-dir build/sanitizer --output-on-failure --timeout 30
+
+  documentation:
+    name: Sphinx documentation
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up Python 3.12
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Set up uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          version: "0.12.9"
+      - name: Materialize the locked documentation environment
+        run: uv sync --frozen --all-groups
+      - name: Build documentation with warnings as errors
+        run: uv run sphinx-build -W --keep-going -b html document document/_build/html
+      - name: Validate documentation links
+        run: >-
+          uv run sphinx-build -W --keep-going -b linkcheck
+          document document/_build/linkcheck

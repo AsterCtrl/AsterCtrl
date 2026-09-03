@@ -1,0 +1,32 @@
+2026-09-04: v0.2 foundation
+============================
+
+Decision
+--------
+
+Replace the legacy collection of Runtime, tool and transport repositories with
+one native Linux/Zephyr core and one board repository. AimRT remains a design
+reference; no AimRT, ROS, XRobot, libxr or FreeRTOS Runtime dependency is
+retained.
+
+Implemented
+-----------
+
+* Imported legacy histories with provenance tags, then removed the libxr
+  backend in a separate migration commit.
+* Froze Module/CoreRef, stable Status categories, lifecycle rollback, C ABI and
+  static Zephyr composition contracts.
+* Added the v1alpha2 Application/Deployment Graph compiler, deterministic locks,
+  bounded Protobuf generator and the ``aster`` CLI.
+* Added Local, CAN/SocketCAN and USB CDC ACM Adapter foundations plus Host,
+  ``native_sim``, QEMU and board compile gates.
+* Published ``dev_c`` and ``mc02`` board definitions without the former prefix
+  and retained upstream SPDX/source notices.
+
+Deferred and release constraints
+--------------------------------
+
+PIL, UDP and ecosystem bridges move to v0.3. The alpha is compile-only. The
+final v0.2.0 tag and legacy-repository archive remain blocked until both boards
+pass physical smoke tests. USB device enumeration may remain an explicitly
+documented unverified item, but its protocol and pseudo-TTY tests must pass.

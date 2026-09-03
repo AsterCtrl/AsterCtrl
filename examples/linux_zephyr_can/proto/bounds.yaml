@@ -1,0 +1,5 @@
+fields:
+  aster.examples.can.v1.ImuState.quaternion:
+    max_count: 4
+  aster.examples.can.v1.ImuState.status:
+    max_size: 8

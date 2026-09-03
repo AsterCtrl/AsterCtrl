@@ -1,0 +1,11 @@
+api_version: aster.dev/v1alpha2
+kind: Inventory
+metadata:
+  name: linux-local
+spec:
+  hosts:
+    workstation:
+      transport: local
+      deploy_root: build/deploy/linux-local
+      labels:
+        role: development

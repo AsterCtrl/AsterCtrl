@@ -1,0 +1,8 @@
+api_version: aster.dev/v1alpha2
+kind: Workspace
+metadata:
+  name: linux-local
+spec:
+  packages:
+    demo:
+      source: packages/demo

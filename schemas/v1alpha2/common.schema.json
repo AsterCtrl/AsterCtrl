@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://asterctrl.dev/schemas/v1alpha2/common.schema.json",
+  "$defs": {
+    "name": {"type": "string", "pattern": "^[a-z][a-z0-9]*(?:[-_.][a-z0-9]+)*$"},
+    "boardTarget": {"type": "string", "pattern": "^[a-z][a-z0-9_-]*(?:/[a-z0-9_.+-]+)+(?:@[a-z0-9_.+-]+)?$"},
+    "typeName": {"type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_.]*(?:/v[0-9]+)?$"},
+    "metadata": {
+      "type": "object",
+      "required": ["name"],
+      "properties": {
+        "name": {"$ref": "#/$defs/name"},
+        "version": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$"},
+        "license": {"type": "string"},
+        "labels": {"type": "object", "additionalProperties": {"type": "string"}}
+      },
+      "additionalProperties": false
+    },
+    "endpoint": {"type": "string", "pattern": "^[a-z][a-z0-9_.-]*\\.[a-z][a-z0-9_.-]*$"},
+    "positive": {"type": "integer", "minimum": 1}
+  }
+}

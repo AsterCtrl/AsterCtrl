@@ -1,0 +1,12 @@
+api_version: aster.dev/v1alpha2
+kind: Hardware
+metadata:
+  name: linux-socketcan
+spec:
+  platform: linux
+  resources:
+    can_bus:
+      kind: can
+      backend: socketcan
+      device: can0
+      options: {}
