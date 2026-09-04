@@ -45,7 +45,7 @@ jobs:
       - name: Record the fully resolved manifest
         run: |
           mkdir -p build/artifacts
-          west manifest --freeze > build/artifacts/west-frozen.yml
+          west manifest --freeze --active-only > build/artifacts/west-frozen.yml
           west list -f '{name} {revision} {sha}'
       - name: Run native_sim and QEMU smoke tests
         run: >-

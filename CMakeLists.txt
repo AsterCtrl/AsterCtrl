@@ -205,6 +205,17 @@ if(ASTER_BUILD_TESTS)
                    tests/transports/can_channel_bridge_test.cpp aster::transport)
     aster_add_test(aster_can_rpc_bridge_test
                    tests/transports/can_rpc_bridge_test.cpp aster::transport)
+    if(ASTER_ENABLE_TSAN)
+      # TSan supplies its own global allocation interceptors. Ordinary and
+      # ASan builds retain the no-allocation assertions; TSan still exercises
+      # the protocol behavior while using the sanitizer interceptors.
+      target_compile_definitions(aster_can_protocol_test PRIVATE
+        ASTER_TEST_DISABLE_ALLOCATION_TRACKER=1)
+      target_compile_definitions(aster_can_link_control_test PRIVATE
+        ASTER_TEST_DISABLE_ALLOCATION_TRACKER=1)
+      target_compile_definitions(aster_can_rpc_bridge_test PRIVATE
+        ASTER_TEST_DISABLE_ALLOCATION_TRACKER=1)
+    endif()
     aster_add_test(aster_usb_framing_test
                    tests/transports/usb_framing_test.cpp aster::transport)
     aster_add_test(aster_usb_stream_transport_test

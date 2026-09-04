@@ -219,8 +219,9 @@ class StateSink final : public aster::Module {
 
 int main() {
   aster::LocalChannel<1, 1, 16> channel;
-  const aster::CoreRef core(
-      aster::CoreHandles{.channel = aster::ChannelRef(channel)});
+  auto handles = aster::CoreHandles{};
+  handles.channel = aster::ChannelRef(channel);
+  const aster::CoreRef core(handles);
   aster::generated::Composition composition(core);
   std::array<aster::RegistrySlot, 1> registries{{{&channel}}};
   aster::Runtime runtime(composition.Modules(), registries);

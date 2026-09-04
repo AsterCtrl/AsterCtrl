@@ -171,8 +171,9 @@ def test_linux_and_zephyr_emitters_are_bounded(tmp_path: Path) -> None:
                 "  const std::uint32_t marker = 42;\n"
                 '  if (fallback.Put("global", marker) != aster::Status::kOk ||\n'
                 "      fallback.Seal() != aster::Status::kOk) return 1;\n"
-                "  const aster::CoreRef core(aster::CoreHandles{\n"
-                "      .configurator = aster::ConfiguratorRef(fallback)});\n"
+                "  auto handles = aster::CoreHandles{};\n"
+                "  handles.configurator = aster::ConfiguratorRef(fallback);\n"
+                "  const aster::CoreRef core(handles);\n"
                 "  aster::generated::Composition value(core);\n"
                 "  if (value.Modules().size() != 1) return 1;\n"
                 "  std::uint32_t loaded{};\n"

@@ -76,7 +76,9 @@ jobs:
       - name: Install build tools
         run: |
           sudo apt-get update
-          sudo apt-get install --yes cmake g++ iproute2 kmod ninja-build
+          kernel_release=$(uname -r)
+          sudo apt-get install --yes cmake g++ iproute2 kmod ninja-build \
+            "linux-modules-extra-${kernel_release}"
       - name: Build and test
         run: |
           cmake -S . -B build/release -G Ninja -DCMAKE_BUILD_TYPE=Release -DASTER_BUILD_TESTS=ON
@@ -214,7 +216,7 @@ jobs:
             cp build/$image/zephyr/zephyr.bin "build/package/$package/$image/"
             arm-zephyr-eabi-size build/$image/zephyr/zephyr.elf > "build/package/$package/$image/size.txt"
           done
-          west manifest --freeze > "build/package/$package/west-frozen.yml"
+          west manifest --freeze --active-only > "build/package/$package/west-frozen.yml"
           tar -C build/package -czf "build/$package.tar.gz" "$package"
       - name: Upload Zephyr firmware package
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

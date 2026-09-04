@@ -27,6 +27,7 @@ std::size_t AllocationCount() noexcept { return allocation_count.load(std::memor
 
 }  // namespace aster_test
 
+#if !defined(ASTER_TEST_DISABLE_ALLOCATION_TRACKER)
 void* operator new(std::size_t size) {
   return aster_test::Allocate(size, alignof(std::max_align_t));
 }
@@ -47,3 +48,4 @@ void operator delete(void* memory, std::align_val_t) noexcept { std::free(memory
 void operator delete[](void* memory, std::align_val_t) noexcept { std::free(memory); }
 void operator delete(void* memory, std::size_t, std::align_val_t) noexcept { std::free(memory); }
 void operator delete[](void* memory, std::size_t, std::align_val_t) noexcept { std::free(memory); }
+#endif
