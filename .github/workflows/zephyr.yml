@@ -131,7 +131,6 @@ jobs:
             --reuid="$runner_uid" --regid="$runner_gid" --clear-groups \
             env HOME="$HOME" PATH="$PATH" ZEPHYR_BASE="$zephyr_base" \
             ZEPHYR_SDK_INSTALL_DIR="$ZEPHYR_SDK_INSTALL_DIR" \
-            ZEPHYR_TOOLCHAIN_VARIANT="$ZEPHYR_TOOLCHAIN_VARIANT" \
             west build -p always -b dev_c/stm32f407xx \
             -d build/offline-dev_c asterctrl/scripts/ci/zephyr_smoke \
             -- -DZEPHYR_EXTRA_MODULES="$PWD/asterctrl"
@@ -139,7 +138,6 @@ jobs:
             --reuid="$runner_uid" --regid="$runner_gid" --clear-groups \
             env HOME="$HOME" PATH="$PATH" ZEPHYR_BASE="$zephyr_base" \
             ZEPHYR_SDK_INSTALL_DIR="$ZEPHYR_SDK_INSTALL_DIR" \
-            ZEPHYR_TOOLCHAIN_VARIANT="$ZEPHYR_TOOLCHAIN_VARIANT" \
             west build -p always -b mc02/stm32h723xx \
             -d build/offline-mc02 asterctrl/scripts/ci/zephyr_smoke \
             -- -DZEPHYR_EXTRA_MODULES="$PWD/asterctrl"

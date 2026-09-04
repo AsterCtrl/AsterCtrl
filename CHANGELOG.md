@@ -5,6 +5,8 @@ the project follows Semantic Versioning.
 
 ## [Unreleased]
 
+## [0.2.0-alpha.1] - 2026-09-04
+
 ### Added
 
 - Native Linux and Zephyr runtime architecture.
@@ -14,6 +16,7 @@ the project follows Semantic Versioning.
 - Bounded Protobuf profile and deterministic graph locks.
 - Fixed-capacity Zephyr node owner for Runtime lifecycle and core services.
 - Zephyr CAN Device Adapter with bounded ISR-to-thread receive handoff.
+- Build-time classic-CAN Route ID, fragmentation and transmit-queue bounds.
 
 ### Known limitations
 

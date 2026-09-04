@@ -76,17 +76,27 @@ jobs:
       - name: Install build tools
         run: |
           sudo apt-get update
+          sudo apt-get install --yes cmake g++ ninja-build
+      - name: Install the SocketCAN test fixture
+        if: matrix.architecture == 'x86_64'
+        run: |
           kernel_release=$(uname -r)
-          sudo apt-get install --yes cmake g++ iproute2 kmod ninja-build \
+          sudo apt-get install --yes iproute2 kmod \
             "linux-modules-extra-${kernel_release}"
       - name: Build and test
         run: |
           cmake -S . -B build/release -G Ninja -DCMAKE_BUILD_TYPE=Release -DASTER_BUILD_TESTS=ON
           cmake --build build/release --parallel 2
+          ctest --test-dir build/release --output-on-failure --timeout 30
+      - name: Test SocketCAN on x86_64
+        if: matrix.architecture == 'x86_64'
+        run: |
           sudo modprobe vcan
           sudo ip link add dev vcan0 type vcan
           sudo ip link set dev vcan0 up
-          ASTER_TEST_VCAN=vcan0 ctest --test-dir build/release --output-on-failure --timeout 30
+          ASTER_TEST_VCAN=vcan0 \
+            ctest --test-dir build/release --output-on-failure --timeout 30 \
+            -R '^aster_socketcan_vcan_test$'
       - name: Stage versioned Linux package
         run: |
           package="asterctrl-${GITHUB_REF_NAME}-linux-${{ matrix.architecture }}"

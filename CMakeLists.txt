@@ -94,10 +94,20 @@ configure_package_config_file(
   src/core/AsterCtrlConfig.cmake.in
   ${CMAKE_CURRENT_BINARY_DIR}/AsterCtrlConfig.cmake
   INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/AsterCtrl)
-write_basic_package_version_file(
-  ${CMAKE_CURRENT_BINARY_DIR}/AsterCtrlConfigVersion.cmake
-  VERSION ${PROJECT_VERSION}
-  COMPATIBILITY SameMajorVersion)
+if(ASTERCTRL_VERSION_STRING STREQUAL PROJECT_VERSION)
+  write_basic_package_version_file(
+    ${CMAKE_CURRENT_BINARY_DIR}/AsterCtrlConfigVersion.cmake
+    VERSION ${PROJECT_VERSION}
+    COMPATIBILITY SameMajorVersion)
+else()
+  # CMake only accepts numeric package requirements. A prerelease must not
+  # satisfy a consumer asking for the future stable 0.2.0 (or even 0.2), so
+  # versioned discovery is deliberately rejected until the final release.
+  configure_file(
+    src/core/AsterCtrlPrereleaseConfigVersion.cmake.in
+    ${CMAKE_CURRENT_BINARY_DIR}/AsterCtrlConfigVersion.cmake
+    @ONLY)
+endif()
 install(FILES
   ${CMAKE_CURRENT_BINARY_DIR}/AsterCtrlConfig.cmake
   ${CMAKE_CURRENT_BINARY_DIR}/AsterCtrlConfigVersion.cmake

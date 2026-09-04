@@ -130,6 +130,10 @@ jobs:
           cmake -S scripts/ci/cmake_consumer -B build/consumer-${{ matrix.compiler }} -G Ninja -DCMAKE_PREFIX_PATH="$PWD/build/install"
           cmake --build build/consumer-${{ matrix.compiler }}
           build/consumer-${{ matrix.compiler }}/asterctrl_consumer
+          if cmake -S scripts/ci/cmake_consumer -B build/stable-consumer-${{ matrix.compiler }} -G Ninja -DCMAKE_PREFIX_PATH="$PWD/build/install" -DASTER_CONSUMER_REQUIRE_STABLE=ON; then
+            echo "the alpha package incorrectly satisfied stable 0.2.0" >&2
+            exit 1
+          fi
 
   linux-architectures:
     name: Linux ${{ matrix.architecture }}

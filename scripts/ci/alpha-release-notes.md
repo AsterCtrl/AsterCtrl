@@ -1,4 +1,4 @@
-# AsterCtrl v0.2 alpha
+# AsterCtrl v0.2.0-alpha.1
 
 This is a compile-only prerelease of the native Linux and Zephyr architecture.
 It is intended for API review, deterministic graph/code-generation testing, and
@@ -23,6 +23,6 @@ Known hardware-validation gaps:
 - This prerelease is not `v0.2.0`; legacy repositories must not be archived on
   the strength of this alpha alone.
 
-Each downloadable artifact is covered by `SHA256SUMS`. The release metadata
-bundle contains schemas, deterministic deployment locks, the changelog,
-development log, and rollback procedure.
+Every packaged artifact and the SBOM is listed in `SHA256SUMS`. The release
+metadata bundle contains schemas, deterministic deployment locks, the
+changelog, development log, and rollback procedure.
