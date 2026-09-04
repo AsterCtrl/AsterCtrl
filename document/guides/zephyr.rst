@@ -9,8 +9,9 @@ base Devicetree files directly.
 
 The generated overlay creates ``aster-<resource>`` aliases that point at the
 validated node labels and marks those devices ``okay``. The generated Kconfig
-fragment enables CAN when a CAN resource is present. For USB CDC it selects the
-new Zephyr USB device stack, CDC ACM class and Aster adapter, and records the
+fragment enables the Zephyr CAN subsystem and Aster CAN Adapter when a CAN
+resource is present. For USB CDC it selects the new Zephyr USB device stack,
+CDC ACM class and Aster adapter, and records the
 validated product VID/PID as ``CONFIG_ASTERCTRL_USB_VID`` and
 ``CONFIG_ASTERCTRL_USB_PID``. Those identifiers remain product metadata; the
 new USB stack consumes them when the application defines its USBD context.

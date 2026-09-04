@@ -13,7 +13,10 @@ Tests are arranged by contract rather than by operating system alone:
 * Transport tests cover Local dispatch, CAN fragmentation/loss/reorder/restart,
   SocketCAN ``vcan`` and USB COBS/CRC framing through a pseudo-TTY.
 * Zephyr tests execute the portable pub/sub Module source in ``native_sim`` and
-  QEMU, then compile-link both official boards with size regression limits.
+  QEMU. ``native_sim`` also drives the CAN Device Adapter through Zephyr's
+  loopback controller, including its RX handoff from the driver callback into
+  thread context. Both official boards are compile-linked with size regression
+  limits.
 
 Physical-board smoke results are release evidence, not ordinary CI simulation.
 The v0.2.0 release checklist requires console, clock, CAN loopback, UART, SPI and

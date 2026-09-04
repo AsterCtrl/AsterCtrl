@@ -17,6 +17,12 @@ CAN and SocketCAN
   Each endpoint uses the same logical Deployment resource name. Its Zephyr
   Hardware Profile maps to a Devicetree node label, while its Linux profile maps
   to a ``socketcan`` interface such as ``can0`` or ``vcan0``.
+  On Zephyr, ``CanDeviceAdapter`` owns controller start/stop and one standard-ID
+  RX filter. Its driver callback only copies a frame and timestamp into a
+  bounded ``k_msgq``; ``Poll`` performs protocol dispatch later in executor
+  thread context. Async transmit completion and queue overflow remain visible
+  through fixed-size statistics. Callers must stop the Adapter before its
+  storage or receiver state leaves scope.
 
 USB CDC ACM
   The same COBS and CRC32C framing runs over a Zephyr CDC ACM byte stream and a

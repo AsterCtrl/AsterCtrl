@@ -7,10 +7,14 @@
 #include <climits>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <string_view>
 
+#include "aster/channel.hpp"
 #include "aster/core_ref.hpp"
+#include "aster/rpc.hpp"
+#include "aster/runtime.hpp"
 #include "aster/static_hardware.hpp"
 
 namespace aster::platform::zephyr {
@@ -174,5 +178,185 @@ class ThreadExecutor final : public Executor {
   alignas(4) std::array<char, Capacity * sizeof(Entry)> queue_storage_{};
   bool running_{};
 };
+
+template <typename Composition, std::size_t MaxModules, std::size_t MaxTopics,
+          std::size_t MaxSubscribersPerTopic, std::size_t MaximumMessageSize,
+          std::size_t MaxRpcServices, std::size_t MaxPendingRpc, std::size_t ArenaBytes,
+          std::size_t MaxHardwareCapabilities, std::size_t ExecutorQueueDepth>
+class StaticNodeRuntime final {
+ public:
+  static_assert(MaxModules > 0);
+  static_assert(MaxHardwareCapabilities > 0);
+
+  StaticNodeRuntime(k_thread_stack_t* executor_stack, std::size_t executor_stack_size,
+                    std::string_view executor_name, int executor_priority) noexcept
+      : executor_(executor_name, clock_, executor_stack, executor_stack_size, executor_priority),
+        rpc_(ExecutorRef(executor_)),
+        core_(CoreHandles{
+            .configurator = {},
+            .logger = LoggerRef(logger_),
+            .executor = ExecutorRef(executor_),
+            .channel = ChannelRef(channel_),
+            .rpc = RpcRef(rpc_),
+            .parameter = {},
+            .clock = ClockRef(clock_),
+            .allocator = AllocatorRef(allocator_),
+            .hardware = HardwareManagerRef(hardware_),
+        }),
+        composition_(core_) {
+    for (const auto& slot : composition_.Modules()) {
+      Record(AddModuleSlot(slot));
+    }
+    Record(AddRegistrySlot(channel_));
+    Record(AddRegistrySlot(rpc_));
+    Record(AddRegistrySlot(hardware_));
+    for (const auto& slot : composition_.Registries()) {
+      if (slot.registry == nullptr) {
+        Record(Status::kInvalidArgument);
+      } else {
+        Record(AddRegistrySlot(*slot.registry));
+      }
+    }
+  }
+
+  ~StaticNodeRuntime() { Shutdown(); }
+
+  StaticNodeRuntime(const StaticNodeRuntime&) = delete;
+  StaticNodeRuntime& operator=(const StaticNodeRuntime&) = delete;
+  StaticNodeRuntime(StaticNodeRuntime&&) = delete;
+  StaticNodeRuntime& operator=(StaticNodeRuntime&&) = delete;
+
+  Status AddInfrastructureModule(Module& module, std::string_view instance_name) noexcept {
+    if (runtime_.has_value() || !IsOk(setup_status_)) {
+      return Status::kInvalidState;
+    }
+    if (module_count_ == module_slots_.size()) {
+      Record(Status::kCapacityExceeded);
+      return Status::kCapacityExceeded;
+    }
+    for (std::size_t index = module_count_; index > infrastructure_module_count_; --index) {
+      module_slots_[index] = module_slots_[index - 1U];
+    }
+    module_slots_[infrastructure_module_count_] = {&module, core_, instance_name};
+    ++infrastructure_module_count_;
+    ++module_count_;
+    return Status::kOk;
+  }
+
+  Status AddRegistry(Registry& registry) noexcept {
+    if (runtime_.has_value() || !IsOk(setup_status_)) {
+      return Status::kInvalidState;
+    }
+    return AddRegistrySlot(registry);
+  }
+
+  Status Initialize() noexcept {
+    if (!IsOk(setup_status_)) {
+      return setup_status_;
+    }
+    if (runtime_.has_value() || module_count_ == 0) {
+      return runtime_.has_value() ? Status::kInvalidState : Status::kUnavailable;
+    }
+    auto status = executor_.Start();
+    if (!IsOk(status)) {
+      setup_status_ = status;
+      return status;
+    }
+    runtime_.emplace(std::span<ModuleSlot>(module_slots_).first(module_count_),
+                     std::span<RegistrySlot>(registry_slots_).first(registry_count_));
+    status = runtime_->Initialize();
+    if (!IsOk(status)) {
+      executor_.Shutdown();
+    }
+    return status;
+  }
+
+  Status Start() noexcept {
+    if (!runtime_.has_value()) {
+      return Status::kInvalidState;
+    }
+    const auto status = runtime_->Start();
+    if (!IsOk(status) && runtime_->state() == RuntimeState::kFailed) {
+      executor_.Shutdown();
+    }
+    return status;
+  }
+
+  void Shutdown() noexcept {
+    if (runtime_.has_value()) {
+      runtime_->Shutdown();
+    }
+    executor_.Shutdown();
+    allocator_.Reset();
+  }
+
+  [[nodiscard]] RuntimeState state() const noexcept {
+    return runtime_.has_value()  ? runtime_->state()
+           : IsOk(setup_status_) ? RuntimeState::kConstructed
+                                 : RuntimeState::kFailed;
+  }
+  [[nodiscard]] Status setup_status() const noexcept { return setup_status_; }
+  [[nodiscard]] CoreRef core() const noexcept { return core_; }
+  [[nodiscard]] Composition& composition() noexcept { return composition_; }
+
+ private:
+  static constexpr std::size_t kMaximumRegistries = MaxModules + 3U;
+
+  Status AddModuleSlot(const ModuleSlot& slot) noexcept {
+    if (slot.module == nullptr) {
+      return Status::kInvalidArgument;
+    }
+    if (module_count_ == module_slots_.size()) {
+      return Status::kCapacityExceeded;
+    }
+    module_slots_[module_count_++] = slot;
+    return Status::kOk;
+  }
+
+  Status AddRegistrySlot(Registry& registry) noexcept {
+    for (std::size_t index = 0; index < registry_count_; ++index) {
+      if (registry_slots_[index].registry == &registry) {
+        return Status::kAlreadyExists;
+      }
+    }
+    if (registry_count_ == registry_slots_.size()) {
+      Record(Status::kCapacityExceeded);
+      return Status::kCapacityExceeded;
+    }
+    registry_slots_[registry_count_++] = {&registry};
+    return Status::kOk;
+  }
+
+  void Record(Status status) noexcept {
+    if (IsOk(setup_status_) && !IsOk(status)) {
+      setup_status_ = status;
+    }
+  }
+
+  UptimeClock clock_;
+  PrintkLogger logger_;
+  ThreadExecutor<ExecutorQueueDepth> executor_;
+  LocalChannel<MaxTopics, MaxSubscribersPerTopic, MaximumMessageSize> channel_;
+  LocalRpc<MaxRpcServices, MaximumMessageSize, MaximumMessageSize, MaxPendingRpc> rpc_;
+  FixedArenaAllocator<ArenaBytes> allocator_;
+  StaticHardwareManager<MaxHardwareCapabilities> hardware_;
+  CoreRef core_;
+  Composition composition_;
+  std::array<ModuleSlot, MaxModules> module_slots_{};
+  std::array<RegistrySlot, kMaximumRegistries> registry_slots_{};
+  std::optional<Runtime> runtime_;
+  std::size_t module_count_{};
+  std::size_t infrastructure_module_count_{};
+  std::size_t registry_count_{};
+  Status setup_status_{Status::kOk};
+};
+
+template <typename Composition>
+using ConfiguredStaticNodeRuntime =
+    StaticNodeRuntime<Composition, CONFIG_ASTERCTRL_MAX_MODULES, CONFIG_ASTERCTRL_MAX_CHANNELS,
+                      CONFIG_ASTERCTRL_MAX_MODULES, CONFIG_ASTERCTRL_MAX_MESSAGE_BYTES,
+                      CONFIG_ASTERCTRL_MAX_RPC_SERVICES, CONFIG_ASTERCTRL_MAX_RPC_SERVICES,
+                      CONFIG_ASTERCTRL_ARENA_BYTES, CONFIG_ASTERCTRL_MAX_HARDWARE_CAPABILITIES,
+                      CONFIG_ASTERCTRL_EXECUTOR_QUEUE_DEPTH>;
 
 }  // namespace aster::platform::zephyr

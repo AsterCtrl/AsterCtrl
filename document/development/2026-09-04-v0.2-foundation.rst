@@ -20,6 +20,9 @@ Implemented
   bounded Protobuf generator and the ``aster`` CLI.
 * Added Local, CAN/SocketCAN and USB CDC ACM Adapter foundations plus Host,
   ``native_sim``, QEMU and board compile gates.
+* Added a fixed-capacity Zephyr node owner that runs the real lifecycle for
+  local graphs, and a CAN Device Adapter that moves RX work from the driver
+  callback to thread context through a bounded queue.
 * Published ``dev_c`` and ``mc02`` board definitions without the former prefix
   and retained upstream SPDX/source notices.
 
@@ -30,3 +33,6 @@ PIL, UDP and ecosystem bridges move to v0.3. The alpha is compile-only. The
 final v0.2.0 tag and legacy-repository archive remain blocked until both boards
 pass physical smoke tests. USB device enumeration may remain an explicitly
 documented unverified item, but its protocol and pseudo-TTY tests must pass.
+Cross-node alpha images compile their resolved composition and platform inputs,
+but deliberately refuse Runtime startup until CAN/USB route-bridge construction
+is generated; they are not presented as an end-to-end link demonstration.

@@ -11,6 +11,11 @@ zephyr_library_sources(
 )
 
 zephyr_library_sources_ifdef(
+  CONFIG_ASTERCTRL_CAN
+  ${CMAKE_CURRENT_LIST_DIR}/../src/platform/zephyr/can_device.cpp
+)
+
+zephyr_library_sources_ifdef(
   CONFIG_ASTERCTRL_USB_CDC_ACM
   ${CMAKE_CURRENT_LIST_DIR}/../src/platform/zephyr/usb_cdc_acm.cpp
 )

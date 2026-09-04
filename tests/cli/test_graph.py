@@ -103,8 +103,15 @@ def test_linux_and_zephyr_emitters_are_bounded(tmp_path: Path) -> None:
     assert "CONFIG_CPP=y" in zephyr_config
     assert "CONFIG_STD_CPP20=y" in zephyr_config
     assert "CONFIG_REQUIRES_FULL_LIBCPP=y" in zephyr_config
+    assert "CONFIG_ASTERCTRL_MAX_MODULES=2" in zephyr_config
+    assert "CONFIG_ASTERCTRL_MAX_CHANNELS=1" in zephyr_config
+    assert "CONFIG_ASTERCTRL_MAX_RPC_SERVICES=1" in zephyr_config
     assert "CONFIG_ASTERCTRL_ROUTE_COUNT=1" in zephyr_config
+    assert "CONFIG_ASTERCTRL_MAX_MESSAGE_BYTES=32" in zephyr_config
+    assert "CONFIG_ASTERCTRL_EXECUTOR_QUEUE_DEPTH=4" in zephyr_config
+    assert "CONFIG_ASTERCTRL_MAX_HARDWARE_CAPABILITIES=1" in zephyr_config
     assert "CONFIG_CAN=y" in zephyr_config
+    assert "CONFIG_ASTERCTRL_CAN=y" in zephyr_config
     assert (
         "aster-bus = &can1;" in (output / "nodes/sensor-node/aster.generated.overlay").read_text()
     )
@@ -162,6 +169,8 @@ def test_linux_and_zephyr_emitters_are_bounded(tmp_path: Path) -> None:
             assert "schema_input_digest" in header.read_text(encoding="utf-8")
             assert "max_encoded_size" in header.read_text(encoding="utf-8")
             assert "kExecutors" in header.read_text(encoding="utf-8")
+            assert "kExternalRouteCount = 1U" in header.read_text(encoding="utf-8")
+            assert "kRequiresTransportWiring" in header.read_text(encoding="utf-8")
             assert "config_json" in header.read_text(encoding="utf-8")
             check = source.with_name("composition.check.cpp")
             check.write_text(

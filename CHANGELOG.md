@@ -12,6 +12,13 @@ the project follows Semantic Versioning.
 - Public `aster` command and `aster_cli` Python package.
 - Versioned C ABI for Linux Module Bundles and Core Plugins.
 - Bounded Protobuf profile and deterministic graph locks.
+- Fixed-capacity Zephyr node owner for Runtime lifecycle and core services.
+- Zephyr CAN Device Adapter with bounded ISR-to-thread receive handoff.
+
+### Known limitations
+
+- The alpha cross-node firmware is compile-only. Generated CAN/USB route-bridge
+  construction and physical-board data-link validation remain release work.
 
 ### Removed
 
