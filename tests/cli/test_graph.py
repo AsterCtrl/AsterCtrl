@@ -99,11 +99,12 @@ def test_linux_and_zephyr_emitters_are_bounded(tmp_path: Path) -> None:
     bounded_header = output / "types/state.pb.hpp"
     assert bounded_header.is_file()
     assert 'kSchemaSha256 = "' in bounded_header.read_text(encoding="utf-8")
-    assert (
-        "CONFIG_ASTERCTRL_ROUTE_COUNT=1"
-        in (output / "nodes/sensor-node/aster.generated.conf").read_text()
-    )
-    assert "CONFIG_CAN=y" in (output / "nodes/sensor-node/aster.generated.conf").read_text()
+    zephyr_config = (output / "nodes/sensor-node/aster.generated.conf").read_text()
+    assert "CONFIG_CPP=y" in zephyr_config
+    assert "CONFIG_STD_CPP20=y" in zephyr_config
+    assert "CONFIG_REQUIRES_FULL_LIBCPP=y" in zephyr_config
+    assert "CONFIG_ASTERCTRL_ROUTE_COUNT=1" in zephyr_config
+    assert "CONFIG_CAN=y" in zephyr_config
     assert (
         "aster-bus = &can1;" in (output / "nodes/sensor-node/aster.generated.overlay").read_text()
     )
