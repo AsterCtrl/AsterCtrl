@@ -251,15 +251,18 @@ jobs:
         with:
           path: release-inputs
           merge-multiple: true
-      - name: Generate CycloneDX SBOM for packaged inputs
-        uses: anchore/sbom-action@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
+      - name: Generate deterministic CycloneDX inventory for packaged inputs
+        run: >-
+          python3 scripts/ci/generate_release_sbom.py
+          release-inputs
+          asterctrl-${GITHUB_REF_NAME}.cdx.json
+          --version "${GITHUB_REF_NAME}"
+      - name: Upload release SBOM
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          path: release-inputs
-          format: cyclonedx-json
-          output-file: asterctrl-${{ github.ref_name }}.cdx.json
-          artifact-name: release-sbom
-          syft-version: v1.51.1
-          upload-release-assets: false
+          name: release-sbom
+          path: asterctrl-*.cdx.json
+          if-no-files-found: error
 
   publish:
     name: Publish GitHub prerelease
