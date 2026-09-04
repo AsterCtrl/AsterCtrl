@@ -24,6 +24,12 @@ the project follows Semantic Versioning.
 - SocketCAN Adapter lifecycle coverage on Linux ``vcan`` and explicit CAN
   transport state in the Zephyr RAM budget.
 
+### Changed
+
+- Technical documentation now uses MyST Markdown throughout while retaining
+  Sphinx HTML and link validation, matching the contribution workflow used by
+  the AimRT reference project.
+
 ### Fixed
 
 - Release SBOMs now inventory every packaged asset by path, size, and SHA-256

@@ -51,7 +51,7 @@ jobs:
           Clang 18 format and tidy
           ASan and UBSan
           TSan
-          Sphinx documentation
+          Sphinx/MyST documentation
           Dependency pins and licenses
           Secret scan
           Source SBOM
@@ -255,7 +255,7 @@ jobs:
         run: >-
           python3 scripts/ci/generate_release_sbom.py
           release-inputs
-          asterctrl-${GITHUB_REF_NAME}.cdx.json
+          "asterctrl-${GITHUB_REF_NAME}.cdx.json"
           --version "${GITHUB_REF_NAME}"
       - name: Upload release SBOM
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

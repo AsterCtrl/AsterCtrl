@@ -222,7 +222,7 @@ jobs:
         run: ${{ matrix.runtime_options }} ctest --test-dir build/sanitizer --output-on-failure --timeout 30
 
   documentation:
-    name: Sphinx documentation
+    name: Sphinx/MyST documentation
     runs-on: ubuntu-24.04
     steps:
       - name: Check out repository
@@ -237,6 +237,12 @@ jobs:
           version: "0.12.9"
       - name: Materialize the locked documentation environment
         run: uv sync --frozen --all-groups
+      - name: Enforce Markdown documentation sources
+        run: |
+          if find document -type f -name '*.rst' -print -quit | grep -q .; then
+            echo 'document/ accepts MyST Markdown sources only'
+            exit 1
+          fi
       - name: Build documentation with warnings as errors
         run: uv run sphinx-build -W --keep-going -b html document document/_build/html
       - name: Validate documentation links

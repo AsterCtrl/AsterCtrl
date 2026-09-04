@@ -1,8 +1,10 @@
 project = "AsterCtrl"
 author = "AsterCtrl contributors"
 release = "0.2.0-alpha.1"
-extensions = ["sphinx.ext.autosectionlabel", "sphinx.ext.extlinks"]
+extensions = ["myst_parser", "sphinx.ext.autosectionlabel", "sphinx.ext.extlinks"]
 autosectionlabel_prefix_document = True
 html_theme = "furo"
 exclude_patterns = ["_build"]
 language = "en"
+source_suffix = {".md": "markdown"}
+myst_enable_extensions = ["deflist"]

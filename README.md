@@ -66,11 +66,11 @@ src/transports/      Local, CAN/SocketCAN and USB CDC ACM Adapters
 tools/aster_cli/     Python implementation of the `aster` command
 schemas/             versioned YAML schemas
 examples/            executable Application/Deployment examples
-document/            Sphinx concepts, tutorials, references and dev logs
+document/            Sphinx/MyST Markdown concepts, tutorials, references and dev logs
 ```
 
 ## Project policy
 
 AsterCtrl uses Apache-2.0, Semantic Versioning, GitHub Flow and squash merges.
 See [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md), and the
-[development log](document/development/index.rst).
+[development log](document/development/index.md).

@@ -19,7 +19,12 @@ uv run --package aster-cli pytest tests/cli
 cmake --preset host-debug
 cmake --build --preset host-debug
 ctest --preset host-debug
+uv run sphinx-build -W --keep-going -b html document document/_build/html
 ```
+
+Technical documentation under `document/` uses MyST Markdown (`.md`) only.
+Use MyST directives for Sphinx features such as `toctree`; do not add RST
+source files.
 
 Portable code must not include Zephyr, POSIX, ROS, AimRT, XRobot, libxr or STM32
 HAL headers. Put platform behaviour behind an existing Interface and add an
