@@ -6,7 +6,11 @@ cmake_minimum_required(VERSION 3.28)
 if(ASTER_ZEPHYR_BUILD)
   find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
   project(aster_can_generated_node LANGUAGES CXX)
-  zephyr_compile_options(-fno-exceptions -fno-rtti -fno-threadsafe-statics)
+  zephyr_compile_options(
+    $<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions>
+    $<$<COMPILE_LANGUAGE:CXX>:-fno-rtti>
+    $<$<COMPILE_LANGUAGE:CXX>:-fno-threadsafe-statics>
+  )
 else()
   project(aster_can_generated_node LANGUAGES CXX)
 endif()

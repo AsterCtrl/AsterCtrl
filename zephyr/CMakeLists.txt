@@ -1,6 +1,6 @@
 zephyr_library()
 
-zephyr_library_include_directories(${CMAKE_CURRENT_LIST_DIR}/../include)
+zephyr_include_directories(${CMAKE_CURRENT_LIST_DIR}/../include)
 zephyr_library_compile_options(
   $<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions>
   $<$<COMPILE_LANGUAGE:CXX>:-fno-rtti>
