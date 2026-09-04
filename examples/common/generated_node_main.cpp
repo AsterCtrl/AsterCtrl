@@ -60,6 +60,10 @@ int main() {
     }
   }
 #if defined(__ZEPHYR__)
+  auto status = aster::generated::RegisterHardwareBindings(node);
+  if (!aster::IsOk(status)) {
+    return Fail("hardware", status);
+  }
   if (aster::generated::kRequiresTransportWiring) {
     printk(
         "ASTERCTRL_GENERATED_NODE: BLOCKED transport wiring required routes=%u "
@@ -68,7 +72,7 @@ int main() {
         static_cast<unsigned int>(aster::Status::kUnavailable));
     return 2;
   }
-  auto status = node.Initialize();
+  status = node.Initialize();
   if (!aster::IsOk(status)) {
     return Fail("initialize", status);
   }

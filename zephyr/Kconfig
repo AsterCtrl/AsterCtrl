@@ -16,6 +16,14 @@ config ASTERCTRL_MAX_CHANNELS
   range 1 512
   default 32
 
+config ASTERCTRL_MAX_SUBSCRIBERS_PER_CHANNEL
+  int "Maximum subscriber count per Channel"
+  range 1 512
+  default 16
+  help
+    Capacity of each generated local Channel subscriber table. Normally
+    generated from all declared subscriber ports, including optional ports.
+
 config ASTERCTRL_MAX_RPC_SERVICES
   int "Maximum RPC service count"
   range 1 128
@@ -73,6 +81,16 @@ config ASTERCTRL_CAN_RX_QUEUE_DEPTH
   range 1 256
   default 16
   depends on ASTERCTRL_CAN
+
+config ASTERCTRL_CAN_TX_QUEUE_DEPTH
+  int "CAN transmit queue depth"
+  range 1 256
+  default 16
+  depends on ASTERCTRL_CAN
+  help
+    Fixed-capacity FIFO in front of the CAN controller. AsterCtrl submits only
+    one frame at a time so fragmented frames with equal identifiers retain
+    their order even when a controller provides multiple transmit mailboxes.
 
 config ASTERCTRL_USB_CDC_ACM
   bool "AsterCtrl USB CDC ACM Transport Adapter"

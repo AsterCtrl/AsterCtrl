@@ -22,8 +22,12 @@ deterministic and available offline. The generated composition exposes those
 bytes from the Instance-specific ``CoreRef`` Configurator under the ``config``
 key, without heap allocation or a Runtime YAML parser. A Module's
 ``static_ram_bytes`` is counted once per placed Instance in addition to executor
-stacks; ``flash_bytes`` is also accumulated per Host and checked against the
-Deployment and Hardware Profile limits.
+stacks. For Zephyr, the Lock also records ``runtime_ram_bytes``: a conservative
+bound for the fixed arena, executor queue, Module and Registry slots, declared
+Channel/subscriber and RPC capacities, message buffers, and Hardware registry.
+``flash_bytes`` is accumulated per Host, and all three RAM components and flash
+are checked against the Deployment and Hardware Profile limits. Final linker
+size checks remain authoritative.
 
 Hardware Profiles are host-specific. A Zephyr profile maps logical resource
 names to Devicetree node labels with the ``devicetree`` backend; a Linux profile
@@ -32,6 +36,11 @@ and USB links require compatible mappings at every endpoint. Zephyr ``board``
 values use the qualified Zephyr target form, for example
 ``dev_c/stm32f407xx``. Resolved resource options and every Module
 capability-to-device binding are immutable parts of ``deployment.lock.yaml``.
+The generated composition exposes pointer-free ``HardwareBindingDescriptor``
+rows. On Zephyr, its registration helper resolves each already-validated node
+label with ``DEVICE_DT_GET``, checks ``device_is_ready``, and registers the
+borrowed device before ``Initialize``. No address or ownership is serialized in
+YAML or the Lock.
 
 A Module may declare ``capabilities`` containing ``name``, ``kind`` and an
 optional flag. The resolver requires exactly one resource of that kind on the
@@ -50,6 +59,9 @@ resolver derives the Schema Hash and maximum encoded size from those inputs.
 ``max_size`` in a connection is an optional route-capacity override and must be
 at least that derived maximum, so link budgets cannot silently undercount a
 message that the generated TypeSupport can legally encode.
+Automatic application Route IDs begin at 8 so the same Application can move to
+classic CAN without colliding with its control-plane IDs. A Deployment still
+validates every selected Transport's narrower ID and payload limits.
 
 Executor policy belongs to the Deployment Graph, not the Module. A Module task
 declares a domain plus bounded stack and queue requirements. A node may map that
@@ -57,3 +69,5 @@ domain to ``serial`` or, on Linux, ``worker_pool``. Resolution checks the policy
 against the placed tasks and records the concrete ``linux_thread``,
 ``linux_worker_pool`` or ``zephyr_work_queue`` backend in the lock. If omitted,
 the deterministic default is one serial executor per enabled domain.
+The v0.2 Zephyr Runtime owns one executor, so resolution rejects a Zephyr node
+with more than one enabled domain instead of silently collapsing policies.

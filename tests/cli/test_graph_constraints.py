@@ -81,6 +81,30 @@ def test_rejects_external_module_parameter_schema_references(tmp_path: Path) -> 
         compile_application(workspace, application)
 
 
+def test_rejects_unverifiable_schema_hash_on_unconnected_port(tmp_path: Path) -> None:
+    workspace, application, _, _ = create_workspace(tmp_path)
+    app = _load(application)
+    app["spec"]["connections"] = []
+    _save(application, app)
+    for package_name in ("sensors", "control"):
+        package_path = tmp_path / package_name / "package.yaml"
+        package = _load(package_path)
+        package["spec"]["exports"].pop("protos")
+        package["spec"].pop("protobuf")
+        _save(package_path, package)
+        module_path = tmp_path / package_name / "module.yaml"
+        module = _load(module_path)
+        module["spec"]["ports"][0]["required"] = False
+        _save(module_path, module)
+    sensor_path = tmp_path / "sensors/module.yaml"
+    sensor = _load(sensor_path)
+    sensor["spec"]["ports"][0]["schema_hash"] = "a" * 64
+    _save(sensor_path, sensor)
+
+    with pytest.raises(GraphError, match="cannot verify schema_hash"):
+        compile_application(workspace, application)
+
+
 def test_rejects_platform_incompatibility(tmp_path: Path) -> None:
     workspace, _, _, deployment = create_workspace(tmp_path)
     module = tmp_path / "sensors/module.yaml"
@@ -171,7 +195,7 @@ def test_rejects_stack_resource_overrun(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     ("resource", "budget", "message"),
     (
-        ("static_ram_bytes", {"ram_bytes": 1200}, "RAM 1536 exceeds budget 1200"),
+        ("static_ram_bytes", {"ram_bytes": 1200}, r"RAM \d+ exceeds budget 1200"),
         ("flash_bytes", {"flash_bytes": 2048}, "flash 4096 exceeds budget 2048"),
     ),
 )
@@ -214,6 +238,152 @@ def test_resolves_executor_backends_and_rejects_zephyr_worker_pool(tmp_path: Pat
         resolve_deployment(workspace, deployment)
 
 
+def test_rejects_multiple_executor_domains_on_zephyr_node(tmp_path: Path) -> None:
+    workspace, application, _, deployment = create_workspace(tmp_path)
+    app = _load(application)
+    app["spec"]["domains"].append({"name": "telemetry", "time": "monotonic"})
+    _save(application, app)
+    document = _load(deployment)
+    document["spec"]["nodes"]["sensor-node"]["domains"].append("telemetry")
+    document["spec"]["time"]["domains"]["telemetry"] = {"source": "monotonic"}
+    _save(deployment, document)
+
+    with pytest.raises(GraphError, match="multiple executor domains"):
+        resolve_deployment(workspace, deployment)
+
+
+@pytest.mark.parametrize("priority", (-129, 127))
+def test_rejects_unsupported_zephyr_executor_priority(tmp_path: Path, priority: int) -> None:
+    workspace, _, _, deployment = create_workspace(tmp_path)
+    document = _load(deployment)
+    document["spec"]["nodes"]["sensor-node"]["executors"] = {"control": {"priority": priority}}
+    _save(deployment, document)
+
+    with pytest.raises(GraphError, match=f"priority {priority} is outside"):
+        resolve_deployment(workspace, deployment)
+
+
+def test_rejects_zephyr_executor_queue_above_kconfig_capacity(tmp_path: Path) -> None:
+    workspace, _, _, deployment = create_workspace(tmp_path)
+    document = _load(deployment)
+    document["spec"]["nodes"]["sensor-node"]["executors"] = {"control": {"queue_depth": 257}}
+    _save(deployment, document)
+
+    with pytest.raises(GraphError, match="executor queue depth 257.*maximum 256"):
+        resolve_deployment(workspace, deployment)
+
+
+def test_zephyr_kconfig_limits_do_not_constrain_linux_executor(tmp_path: Path) -> None:
+    workspace, _, _, deployment = create_workspace(tmp_path)
+    document = _load(deployment)
+    document["spec"]["nodes"]["controller-node"]["executors"] = {
+        "control": {"priority": 200, "queue_depth": 300, "stack_bytes": 2_000_000}
+    }
+    document["spec"]["budgets"]["hosts"]["soc"]["stack_bytes"] = 3_000_000
+    _save(deployment, document)
+
+    lock = resolve_deployment(workspace, deployment)
+    executor = lock["nodes"]["controller-node"]["executors"]["control"]
+    assert executor["priority"] == 200
+    assert executor["queue_depth"] == 300
+    assert executor["stack_bytes"] == 2_000_000
+
+
+def test_rejects_channel_above_classic_can_fragment_capacity(tmp_path: Path) -> None:
+    workspace, application, _, deployment = create_workspace(tmp_path)
+    document = _load(application)
+    document["spec"]["connections"][0]["max_size"] = 65_536
+    _save(application, document)
+    deploy = _load(deployment)
+    deploy["spec"]["transports"]["can0"]["bitrate_bps"] = 1_000_000_000_000
+    _save(deployment, deploy)
+
+    with pytest.raises(GraphError, match="channel capacity 65536 exceeds maximum 94 bytes"):
+        resolve_deployment(workspace, deployment)
+
+
+def test_rejects_rpc_above_classic_can_fragment_capacity(tmp_path: Path) -> None:
+    workspace, application, _, deployment = create_workspace(tmp_path)
+    for path, kind in (
+        (tmp_path / "sensors/module.yaml", "rpc_client"),
+        (tmp_path / "control/module.yaml", "rpc_server"),
+    ):
+        module = _load(path)
+        module["spec"]["ports"][0]["kind"] = kind
+        _save(path, module)
+    for path in (tmp_path / "sensors/package.yaml", tmp_path / "control/package.yaml"):
+        package = _load(path)
+        package["spec"]["exports"].pop("protos")
+        package["spec"].pop("protobuf")
+        _save(path, package)
+    document = _load(application)
+    document["spec"]["connections"][0]["max_size"] = 85
+    _save(application, document)
+
+    with pytest.raises(GraphError, match="rpc capacity 85 exceeds maximum 84 bytes"):
+        resolve_deployment(workspace, deployment)
+
+
+@pytest.mark.parametrize("route_id", (1, 512))
+def test_rejects_route_id_outside_classic_can_range(tmp_path: Path, route_id: int) -> None:
+    workspace, application, _, deployment = create_workspace(tmp_path)
+    document = _load(application)
+    document["spec"]["connections"][0]["id"] = route_id
+    _save(application, document)
+
+    with pytest.raises(GraphError, match=rf"ID {route_id} is outside 8\.\.511"):
+        resolve_deployment(workspace, deployment)
+
+
+def test_rejects_unimplemented_can_fd_transport(tmp_path: Path) -> None:
+    workspace, _, _, deployment = create_workspace(tmp_path)
+    document = _load(deployment)
+    document["spec"]["transports"]["can0"].update({"type": "canfd", "mtu": 64})
+    _save(deployment, document)
+
+    with pytest.raises(GraphError, match="requests canfd.*only the classic CAN"):
+        resolve_deployment(workspace, deployment)
+
+
+def test_rejects_declared_zephyr_ports_above_channel_capacity(tmp_path: Path) -> None:
+    workspace, application, _, deployment = create_workspace(tmp_path)
+    module_path = tmp_path / "sensors/module.yaml"
+    module = _load(module_path)
+    module["spec"]["ports"] = [
+        {
+            "name": f"optional-{index}",
+            "kind": "publisher",
+            "type": "test.v1.State",
+            "required": False,
+        }
+        for index in range(513)
+    ]
+    _save(module_path, module)
+    app = _load(application)
+    app["spec"]["connections"] = []
+    control_path = tmp_path / "control/module.yaml"
+    control = _load(control_path)
+    control["spec"]["ports"][0]["required"] = False
+    _save(control_path, control)
+    _save(application, app)
+
+    with pytest.raises(GraphError, match="channel capacity 513.*maximum 512"):
+        resolve_deployment(workspace, deployment)
+
+
+def test_rejects_zephyr_hardware_aliases_above_registry_capacity(tmp_path: Path) -> None:
+    workspace, _, _, deployment = create_workspace(tmp_path)
+    module_path = tmp_path / "sensors/module.yaml"
+    module = _load(module_path)
+    module["spec"]["capabilities"] = [
+        {"name": f"control-bus-{index}", "kind": "can"} for index in range(257)
+    ]
+    _save(module_path, module)
+
+    with pytest.raises(GraphError, match="hardware capacity 257.*maximum 256"):
+        resolve_deployment(workspace, deployment)
+
+
 def test_rejects_executor_capacity_below_task_requirements(tmp_path: Path) -> None:
     workspace, _, _, deployment = create_workspace(tmp_path)
     document = _load(deployment)
@@ -243,6 +413,16 @@ def test_rejects_can_mtu_overrun(tmp_path: Path) -> None:
     _save(deployment, document)
 
     with pytest.raises(GraphError, match="MTU 9 exceeds can limit 8"):
+        resolve_deployment(workspace, deployment)
+
+
+def test_rejects_noncanonical_classic_can_mtu(tmp_path: Path) -> None:
+    workspace, _, _, deployment = create_workspace(tmp_path)
+    document = _load(deployment)
+    document["spec"]["transports"]["can0"]["mtu"] = 7
+    _save(deployment, document)
+
+    with pytest.raises(GraphError, match="classic CAN MTU must be 8, got 7"):
         resolve_deployment(workspace, deployment)
 
 
@@ -514,4 +694,4 @@ def test_graph_cli_outputs_clear_json_and_dot(tmp_path: Path, capsys) -> None:
     )
     dot = capsys.readouterr().out
     assert "digraph application" in dot
-    assert "#1 channel test.v1.State" in dot
+    assert "#8 channel test.v1.State" in dot

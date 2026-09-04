@@ -102,6 +102,66 @@ def _file_digest(path: Path) -> str:
 _DT_NODE_LABEL = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _LINUX_INTERFACE = re.compile(r"^[A-Za-z0-9_.:-]{1,15}$")
 
+# These are the public ranges in zephyr/Kconfig. Keep resolution ahead of the
+# emitter so an oversized graph fails with a useful source-level error instead
+# of being truncated or rejected later by Kconfig.
+_ZEPHYR_LIMITS = {
+    "module_capacity": 128,
+    "channel_capacity": 512,
+    "subscriber_capacity": 512,
+    "rpc_capacity": 128,
+    "route_capacity": 65_535,
+    "maximum_message_size": 65_535,
+    "executor_queue_depth": 256,
+    "can_tx_queue_depth": 256,
+    "hardware_capacity": 256,
+    "executor_stack_bytes": 1_048_576,
+}
+_ZEPHYR_ARENA_BYTES = 4096
+_ZEPHYR_MIN_PRIORITY = -128
+_ZEPHYR_MAX_PRIORITY = 126
+_CAN_FIRST_APPLICATION_ROUTE_ID = 8
+_CAN_MAXIMUM_ROUTE_ID = 511
+_CAN_MAXIMUM_FRAGMENTS = 16
+_CAN_FRAGMENT_PAYLOAD = 6
+_CAN_CONSERVATIVE_FRAME_BITS = 160
+
+
+def _zephyr_fixed_ram(capacities: dict[str, int]) -> int:
+    """Return a deliberately conservative fixed-runtime storage bound.
+
+    The values include padding and Zephyr kernel-object overhead. The linker
+    size gate remains authoritative; this bound exists so graph budgets do not
+    omit the generated runtime's dominant fixed allocations.
+    """
+
+    modules = capacities["module_capacity"]
+    channels = capacities["channel_capacity"]
+    rpc_services = capacities["rpc_capacity"]
+    message_size = capacities["maximum_message_size"]
+    return (
+        capacities["arena_bytes"]
+        + 512  # executor object, thread control block, semaphores, and message queue
+        + capacities["executor_queue_depth"] * 32
+        + capacities["can_tx_queue_depth"] * 32
+        + modules * 32  # ModuleSlot storage
+        + (modules + 3) * 8  # RegistrySlot storage
+        + channels * (96 + capacities["subscriber_capacity"] * 16)  # topics and subscribers
+        + rpc_services * 160  # service descriptors and callbacks
+        + rpc_services * (2 * message_size + 96)  # pending request/response slots
+        + capacities["hardware_capacity"] * 48
+    )
+
+
+def _validate_zephyr_capacities(node_name: str, capacities: dict[str, int]) -> None:
+    for name, maximum in _ZEPHYR_LIMITS.items():
+        value = capacities[name]
+        if value > maximum:
+            label = name.replace("_", " ")
+            raise GraphError(
+                f"Zephyr node {node_name!r} {label} {value} exceeds Kconfig maximum {maximum}"
+            )
+
 
 def _validate_hardware(host: Any, profile: Hardware) -> None:
     if profile.platform != host.os:
@@ -136,12 +196,14 @@ def _validate_hardware(host: Any, profile: Hardware) -> None:
             )
 
 
-def _assign_ids(values: list[tuple[str, int | None]], location: str) -> dict[str, int]:
+def _assign_ids(
+    values: list[tuple[str, int | None]], location: str, first_automatic_id: int = 1
+) -> dict[str, int]:
     explicit = [item_id for _, item_id in values if item_id is not None]
     _unique([str(item_id) for item_id in explicit], f"{location} IDs")
     used = set(explicit)
     result: dict[str, int] = {}
-    candidate = 1
+    candidate = first_automatic_id
     for name, item_id in sorted(values):
         if item_id is None:
             while candidate in used:
@@ -312,6 +374,7 @@ def compile_application(
     connection_ids = _assign_ids(
         [(f"{item.source}->{item.destination}", item.route_id) for item in ordered_connections],
         "application route",
+        _CAN_FIRST_APPLICATION_ROUTE_ID,
     )
     connection_rows: list[dict[str, Any]] = []
     connected: set[str] = set()
@@ -471,6 +534,47 @@ def compile_application(
     if missing_requirements:
         raise GraphError(f"requirements are not bound: {', '.join(missing_requirements)}")
 
+    instance_ports: dict[str, list[dict[str, Any]]] = {}
+    for instance_name, module in sorted(module_by_instance.items()):
+        package_name = module_ref_by_instance[instance_name].split("/", 1)[0]
+        schema = package_schemas.get(package_name)
+        rows: list[dict[str, Any]] = []
+        for port in module.ports:
+            is_rpc = port.kind.startswith("rpc_")
+            maximum = schema.max_wire_size(port.type_name, rpc=is_rpc) if schema else None
+            if maximum is None:
+                if port.schema_hash is not None and schema is None:
+                    raise GraphError(
+                        f"port {instance_name}.{port.name!s} cannot verify schema_hash "
+                        "without exported bounded protobuf"
+                    )
+                if schema is not None or release:
+                    contract_kind = "RPC method" if is_rpc else "message"
+                    raise GraphError(
+                        f"port {instance_name}.{port.name!s} {contract_kind} "
+                        f"{port.type_name!r} is not exported by package {package_name!r} "
+                        "protobuf descriptors"
+                    )
+                # Development-only manifests without protobuf still need a
+                # deterministic finite capacity. Release resolution rejects
+                # this fallback above.
+                maximum = 256
+            if port.schema_hash is not None and schema is not None:
+                if port.schema_hash != schema.schema_hash:
+                    raise GraphError(
+                        f"port {instance_name}.{port.name!s} schema_hash assertion does not "
+                        "match the descriptor-and-bounds hash"
+                    )
+            rows.append(
+                {
+                    "name": port.name,
+                    "kind": port.kind,
+                    "type": port.type_name,
+                    "max_encoded_size": maximum,
+                }
+            )
+        instance_ports[instance_name] = rows
+
     graph = {
         "kind": "ApplicationGraph",
         "name": application.metadata.name,
@@ -486,6 +590,7 @@ def compile_application(
                     "static_ram_bytes": module_by_instance[name].static_ram_bytes,
                     "flash_bytes": module_by_instance[name].flash_bytes,
                 },
+                "ports": instance_ports[name],
                 "capabilities": [asdict(item) for item in module_by_instance[name].capabilities],
             }
             for name in startup_order
@@ -591,6 +696,11 @@ def resolve_deployment(
         package = load_package(manifest)
         package_transports[entry.name] = set(package.exports.get("transports", ()))
     for transport in deployment.transports:
+        if transport.type == "canfd":
+            raise GraphError(
+                f"transport {transport.name!r} requests canfd, but v0.2 implements "
+                "only the classic CAN wire protocol"
+            )
         if transport.type not in {"can", "canfd", "usb_cdc"}:
             if not transport.backend or not transport.package:
                 raise GraphError(
@@ -621,6 +731,10 @@ def resolve_deployment(
             raise GraphError(
                 f"transport {transport.name!r} MTU {transport.mtu} exceeds "
                 f"{transport.type} limit {maximum_mtu}"
+            )
+        if transport.type == "can" and transport.mtu != 8:
+            raise GraphError(
+                f"transport {transport.name!r} classic CAN MTU must be 8, got {transport.mtu}"
             )
         if transport.type == "shm" and len(set(transport.hosts)) > 1:
             raise GraphError(f"shared-memory transport {transport.name!r} cannot cross hosts")
@@ -758,6 +872,20 @@ def resolve_deployment(
                 "options": dict(sorted(resource.options.items())),
             }
         capability_bindings[instance_name] = resolved
+    for node in deployment.nodes:
+        if hosts[node.host].os != "zephyr":
+            continue
+        aliases: dict[str, tuple[str, str]] = {}
+        for instance_name in node.instances:
+            for name, binding in capability_bindings[instance_name].items():
+                target = (binding["kind"], binding["device"])
+                previous = aliases.get(name)
+                if previous is not None and previous != target:
+                    raise GraphError(
+                        f"Zephyr node {node.name!r} hardware capability name {name!r} "
+                        "maps to different devices; HardwareManager names are node-global"
+                    )
+                aliases[name] = target
     for binding in application.bindings:
         requirement_instance, _ = _split_endpoint(binding.requirement)
         provider_instance, _ = _split_endpoint(binding.provider)
@@ -792,6 +920,11 @@ def resolve_deployment(
             ]
             for domain in sorted(enabled_domains)
         }
+        if host.os == "zephyr" and len(tasks_by_domain) > 1:
+            raise GraphError(
+                f"Zephyr node {node.name!r} enables multiple executor domains; "
+                "v0.2 supports exactly one executor domain per Zephyr node"
+            )
         resolved: dict[str, Any] = {}
         for domain, tasks in tasks_by_domain.items():
             policy = configured.get(domain)
@@ -833,6 +966,13 @@ def resolve_deployment(
                 if policy is not None and policy.priority is not None
                 else max((task.priority for task in tasks), default=0)
             )
+            if host.os == "zephyr" and not (
+                _ZEPHYR_MIN_PRIORITY <= priority <= _ZEPHYR_MAX_PRIORITY
+            ):
+                raise GraphError(
+                    f"Zephyr node {node.name!r} executor {domain!r} priority {priority} "
+                    f"is outside {_ZEPHYR_MIN_PRIORITY}..{_ZEPHYR_MAX_PRIORITY}"
+                )
             resolved[domain] = {
                 "policy": policy_name,
                 "backend": (
@@ -873,9 +1013,40 @@ def resolve_deployment(
             transport = transport_by_name[transport_name]
             if transport.mtu <= 0:
                 raise GraphError(f"transport {transport.name!r} has invalid MTU")
+            if transport.type == "can":
+                if not (
+                    _CAN_FIRST_APPLICATION_ROUTE_ID <= connection["id"] <= _CAN_MAXIMUM_ROUTE_ID
+                ):
+                    raise GraphError(
+                        f"CAN route {route_name!r} ID {connection['id']} is outside "
+                        f"{_CAN_FIRST_APPLICATION_ROUTE_ID}..{_CAN_MAXIMUM_ROUTE_ID}"
+                    )
+                protocol_overhead = 12 if connection["kind"] == "rpc" else 2
+                payload_size = int(connection["max_size"]) + protocol_overhead
+                frame_count = (
+                    1
+                    if connection["kind"] == "channel" and payload_size <= 7
+                    else (payload_size + _CAN_FRAGMENT_PAYLOAD - 1) // _CAN_FRAGMENT_PAYLOAD
+                )
+                if frame_count > _CAN_MAXIMUM_FRAGMENTS:
+                    maximum_size = (
+                        _CAN_MAXIMUM_FRAGMENTS * _CAN_FRAGMENT_PAYLOAD - protocol_overhead
+                    )
+                    raise GraphError(
+                        f"CAN route {route_name!r} {connection['kind']} capacity "
+                        f"{connection['max_size']} exceeds maximum {maximum_size} bytes "
+                        f"({_CAN_MAXIMUM_FRAGMENTS} fragments)"
+                    )
             if transport.bitrate_bps:
-                frames = (connection["max_size"] + transport.mtu - 1) // transport.mtu
-                bits = (connection["max_size"] + frames * 8) * 8
+                bits = (
+                    frame_count * _CAN_CONSERVATIVE_FRAME_BITS
+                    if transport.type == "can"
+                    else (
+                        connection["max_size"]
+                        + (connection["max_size"] + transport.mtu - 1) // transport.mtu * 8
+                    )
+                    * 8
+                )
                 utilization[transport_name] += (
                     bits * connection["max_rate_hz"] / transport.bitrate_bps
                 )
@@ -884,6 +1055,7 @@ def resolve_deployment(
                 "id": connection["id"],
                 "from": connection["from"],
                 "to": connection["to"],
+                "kind": connection["kind"],
                 "type": connection["type"],
                 "schema_hash": connection["schema_hash"],
                 "schema_input_digest": connection["schema_input_digest"],
@@ -904,8 +1076,74 @@ def resolve_deployment(
                 f"transport {name!r} utilization {used:.3f} exceeds budget {limit:.3f}"
             )
 
+    application_instances = {item["name"]: item for item in app_graph["instances"]}
+    zephyr_runtime_by_node: dict[str, dict[str, int]] = {}
+    for node in deployment.nodes:
+        if hosts[node.host].os != "zephyr":
+            continue
+        node_routes = [
+            route
+            for route in routes
+            if node.name in {route["source_node"], route["destination_node"]}
+        ]
+        ports = [
+            port
+            for instance_name in node.instances
+            for port in application_instances[instance_name]["ports"]
+        ]
+        channel_ports = sum(port["kind"] in {"publisher", "subscriber"} for port in ports)
+        subscriber_ports = sum(port["kind"] == "subscriber" for port in ports)
+        rpc_ports = sum(port["kind"] in {"rpc_client", "rpc_server"} for port in ports)
+        external_transports = {
+            route["transport"] for route in node_routes if route["transport"] != "local"
+        }
+        capability_names = {
+            name for instance_name in node.instances for name in capability_bindings[instance_name]
+        }
+        message_sizes = [int(port["max_encoded_size"]) for port in ports] + [
+            int(route["max_size"]) for route in node_routes
+        ]
+        can_frame_counts = []
+        for route in node_routes:
+            if route["transport"] == "local" or transport_by_name[route["transport"]].type != "can":
+                continue
+            protocol_overhead = 12 if route["kind"] == "rpc" else 2
+            payload_size = int(route["max_size"]) + protocol_overhead
+            can_frame_counts.append(
+                1
+                if route["kind"] == "channel" and payload_size <= 7
+                else (payload_size + _CAN_FRAGMENT_PAYLOAD - 1) // _CAN_FRAGMENT_PAYLOAD
+            )
+        capacities = {
+            "module_capacity": max(1, len(node.instances) + len(external_transports)),
+            # Every declared port may bind a distinct local name. Routes remain
+            # a lower bound for generated transport infrastructure.
+            "channel_capacity": max(1, channel_ports, len(node_routes)),
+            "subscriber_capacity": max(1, subscriber_ports, len(node_routes)),
+            "rpc_capacity": max(1, rpc_ports, len(node_routes)),
+            "route_capacity": max(1, len(node_routes)),
+            "maximum_message_size": max(message_sizes, default=256),
+            "executor_queue_depth": max(
+                (int(executor["queue_depth"]) for executor in executor_lock[node.name].values()),
+                default=16,
+            ),
+            # A full maximum-size message can enter an initially empty Adapter
+            # even when the controller has no mailbox available yet.
+            "can_tx_queue_depth": max(can_frame_counts, default=1),
+            "hardware_capacity": max(1, len(capability_names)),
+            "executor_stack_bytes": max(
+                [1024]
+                + [int(executor["stack_bytes"]) for executor in executor_lock[node.name].values()]
+            ),
+            "arena_bytes": _ZEPHYR_ARENA_BYTES,
+        }
+        _validate_zephyr_capacities(node.name, capacities)
+        capacities["fixed_ram_bytes"] = _zephyr_fixed_ram(capacities)
+        zephyr_runtime_by_node[node.name] = capacities
+
     stack_by_host: dict[str, int] = {name: 0 for name in hosts}
     static_ram_by_host: dict[str, int] = {name: 0 for name in hosts}
+    runtime_ram_by_host: dict[str, int] = {name: 0 for name in hosts}
     flash_by_host: dict[str, int] = {name: 0 for name in hosts}
     for node_name, executors in executor_lock.items():
         host = nodes[node_name].host
@@ -916,6 +1154,8 @@ def resolve_deployment(
         host = nodes[placements[instance_name]].host
         static_ram_by_host[host] += module.static_ram_bytes
         flash_by_host[host] += module.flash_bytes
+    for node_name, runtime in zephyr_runtime_by_node.items():
+        runtime_ram_by_host[nodes[node_name].host] += runtime["fixed_ram_bytes"]
     resource_hosts: dict[str, Any] = {}
     for host_name, stack in stack_by_host.items():
         host_budget = deployment.host_budgets.get(host_name, {})
@@ -939,7 +1179,7 @@ def resolve_deployment(
         ]
         ram_limit = min(ram_limits) if ram_limits else None
         flash_limit = min(flash_limits) if flash_limits else None
-        ram = stack + static_ram_by_host[host_name]
+        ram = stack + static_ram_by_host[host_name] + runtime_ram_by_host[host_name]
         flash = flash_by_host[host_name]
         if stack_limit is not None and stack > stack_limit:
             raise GraphError(f"host {host_name!r} stack {stack} exceeds budget {stack_limit}")
@@ -960,6 +1200,11 @@ def resolve_deployment(
             "host": node.host,
             "instances": sorted(node.instances, key=lambda name: startup_position[name]),
             "executors": executor_lock[node.name],
+            **(
+                {"runtime": zephyr_runtime_by_node[node.name]}
+                if node.name in zephyr_runtime_by_node
+                else {}
+            ),
         }
         for node in sorted(deployment.nodes, key=lambda item: item.name)
     }
@@ -1130,6 +1375,7 @@ def resolve_deployment(
         "utilization": {name: round(value, 9) for name, value in sorted(utilization.items())},
         "stack_bytes": dict(sorted(stack_by_host.items())),
         "static_ram_bytes": dict(sorted(static_ram_by_host.items())),
+        "runtime_ram_bytes": dict(sorted(runtime_ram_by_host.items())),
         "flash_bytes": dict(sorted(flash_by_host.items())),
         "hosts": {
             item.name: {"os": item.os, "arch": item.arch, "board": item.board}

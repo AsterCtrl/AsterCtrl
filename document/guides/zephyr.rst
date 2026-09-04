@@ -19,6 +19,11 @@ new USB stack consumes them when the application defines its USBD context.
 Generated Module composition is statically linked. C++ exceptions and RTTI are
 disabled. Thread executors use bounded ``k_msgq`` queues, ISR work crosses into
 thread context through bounded handoff, and the allocator uses fixed storage.
+Generated capacities include every Module port placed on the node, including
+optional ports without an Application route. Subscriber capacity is independent
+from Module capacity. ``deployment.lock.yaml`` records the exact Kconfig inputs
+and a conservative fixed Runtime RAM bound, so invalid graphs fail during
+``aster resolve`` rather than during Kconfig or startup.
 
 The alpha build matrix executes the shared Runtime contract on ``native_sim``
 and QEMU and compile-links ``dev_c/stm32f407xx`` and ``mc02/stm32h723xx``.

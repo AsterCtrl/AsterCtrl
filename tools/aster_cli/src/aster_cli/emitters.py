@@ -115,6 +115,7 @@ def _composition(
     instances: list[dict[str, Any]],
     routes: list[dict[str, Any]],
     budgets: dict[str, Any],
+    hardware_bindings: list[dict[str, Any]],
     deployment_id: str,
     artifact_input_digest: str,
 ) -> str:
@@ -132,7 +133,7 @@ def _composition(
         f"{_cpp_string(route['schema_input_digest'])}, "
         f"{_cpp_string(route['schema_hash_source'])}, "
         f"{_cpp_string(route['from'])}, {_cpp_string(route['to'])}, "
-        f"{_cpp_string(route['transport'])}, {route['max_size']}U"
+        f"{_cpp_string(route['kind'])}, {_cpp_string(route['transport'])}, {route['max_size']}U"
         f", {route['max_encoded_size']}U"
         "}"
         for route in routes
@@ -150,6 +151,30 @@ def _composition(
         f"{executor['priority']}, {executor['stack_bytes']}U, {executor['queue_depth']}U"
         "}"
         for domain, executor in sorted(node["executors"].items())
+    )
+    hardware_rows = ",\n".join(
+        "  {"
+        f"{_cpp_string(binding['name'])}, {_cpp_string(binding['kind'])}, "
+        f"{_cpp_string(binding['resource'])}, {_cpp_string(binding['backend'])}, "
+        f"{_cpp_string(binding['device'])}"
+        "}"
+        for binding in hardware_bindings
+    )
+    hardware_device_rows = "\n".join(
+        f"  const auto* device_{index} = DEVICE_DT_GET(DT_NODELABEL({binding['device']}));\n"
+        f"  if (!device_is_ready(device_{index})) {{\n"
+        "    return ::aster::Status::kUnavailable;\n"
+        "  }"
+        for index, binding in enumerate(hardware_bindings)
+    )
+    hardware_registration_rows = "\n".join(
+        f"  const auto status_{index} = runtime.RegisterHardware(\n"
+        f"      {_cpp_string(binding['name'])}, {_cpp_string(binding['kind'])},\n"
+        f"      const_cast<void*>(static_cast<const void*>(device_{index})));\n"
+        f"  if (!::aster::IsOk(status_{index})) {{\n"
+        f"    return status_{index};\n"
+        "  }"
+        for index, binding in enumerate(hardware_bindings)
     )
     external_route_count = sum(route["transport"] != "local" for route in routes)
     typed = bool(instances) and all(item["class_name"] and item["header"] for item in instances)
@@ -208,6 +233,10 @@ def _composition(
 #include <string_view>
 #include "aster/module.hpp"
 #include "aster/registry.hpp"
+#if defined(__ZEPHYR__)
+#include <zephyr/device.h>
+#include <zephyr/devicetree.h>
+#endif
 
 {typed_prefix}
 
@@ -230,6 +259,7 @@ struct Route {{
   std::string_view schema_hash_source;
   std::string_view source;
   std::string_view destination;
+  std::string_view kind;
   std::string_view transport;
   std::size_t max_size;
   std::size_t max_encoded_size;
@@ -248,6 +278,13 @@ struct ExecutorDescriptor {{
   int priority;
   std::size_t stack_bytes;
   std::size_t queue_depth;
+}};
+struct HardwareBindingDescriptor {{
+  std::string_view name;
+  std::string_view kind;
+  std::string_view resource;
+  std::string_view backend;
+  std::string_view device_label;
 }};
 
 inline constexpr std::string_view kDeploymentId = {_cpp_string(deployment_id)};
@@ -269,6 +306,22 @@ inline constexpr std::array<ResourceBudget, {len(budget_rows)}> kResourceBudgets
 inline constexpr std::array<ExecutorDescriptor, {len(node["executors"])}> kExecutors{{{{
 {executor_rows}
 }}}};
+inline constexpr std::array<HardwareBindingDescriptor,
+                            {len(hardware_bindings)}> kHardwareBindings{{{{
+{hardware_rows}
+}}}};
+
+template <typename Runtime>
+::aster::Status RegisterHardwareBindings(Runtime& runtime) noexcept {{
+#if defined(__ZEPHYR__)
+{hardware_device_rows}
+{hardware_registration_rows}
+  return ::aster::Status::kOk;
+#else
+  static_cast<void>(runtime);
+  return {"::aster::Status::kUnavailable" if hardware_bindings else "::aster::Status::kOk"};
+#endif
+}}
 inline constexpr bool kTypedComposition =
     ASTER_GENERATED_TYPED_COMPOSITION != 0;
 inline constexpr std::string_view kInstanceConfigKey = "config";
@@ -337,6 +390,9 @@ struct Composition {{
   [[nodiscard]] std::span<::aster::RegistrySlot> Registries() noexcept {{
     return registry_slots;
   }}
+  [[nodiscard]] std::span<const HardwareBindingDescriptor> HardwareBindings() const noexcept {{
+    return kHardwareBindings;
+  }}
 }};
 #else
 struct Composition {{
@@ -350,6 +406,9 @@ struct Composition {{
   }}
   [[nodiscard]] std::span<::aster::RegistrySlot> Registries() noexcept {{
     return registry_slots;
+  }}
+  [[nodiscard]] std::span<const HardwareBindingDescriptor> HardwareBindings() const noexcept {{
+    return kHardwareBindings;
   }}
 }};
 #endif
@@ -430,10 +489,9 @@ def _emit_zephyr(
     node_name: str,
     host_name: str,
     board: str,
-    instance_count: int,
     routes: list[dict[str, Any]],
     executors: dict[str, Any],
-    stack_bytes: int,
+    runtime: dict[str, int],
     lock_hash: str,
     hardware: dict[str, Any],
     transports: dict[str, Any],
@@ -443,34 +501,38 @@ def _emit_zephyr(
         root / "composition.generated.cpp",
         '#include "composition.generated.hpp"\n',
     )
-    route_depth = max(1, len(routes))
     resources = hardware["resources"]
-    maximum_message_size = max(
-        (int(route["max_size"]) for route in routes),
-        default=256,
-    )
-    executor_queue_depth = max(
-        (int(executor["queue_depth"]) for executor in executors.values()),
-        default=16,
-    )
     config = [
         "# Generated by aster. Do not edit.",
         "CONFIG_CPP=y",
         "CONFIG_STD_CPP20=y",
         "CONFIG_REQUIRES_FULL_LIBCPP=y",
         "CONFIG_ASTERCTRL=y",
-        f"CONFIG_ASTERCTRL_MAX_MODULES={max(1, instance_count + len(transports))}",
-        f"CONFIG_ASTERCTRL_MAX_CHANNELS={route_depth}",
-        f"CONFIG_ASTERCTRL_MAX_RPC_SERVICES={route_depth}",
-        f"CONFIG_ASTERCTRL_ROUTE_COUNT={route_depth}",
-        f"CONFIG_ASTERCTRL_STACK_BYTES={max(1024, stack_bytes)}",
-        f"CONFIG_ASTERCTRL_MAX_MESSAGE_BYTES={maximum_message_size}",
-        f"CONFIG_ASTERCTRL_EXECUTOR_QUEUE_DEPTH={executor_queue_depth}",
-        f"CONFIG_ASTERCTRL_MAX_HARDWARE_CAPABILITIES={max(1, len(resources))}",
+        f"CONFIG_ASTERCTRL_MAX_MODULES={runtime['module_capacity']}",
+        f"CONFIG_ASTERCTRL_MAX_CHANNELS={runtime['channel_capacity']}",
+        f"CONFIG_ASTERCTRL_MAX_SUBSCRIBERS_PER_CHANNEL={runtime['subscriber_capacity']}",
+        f"CONFIG_ASTERCTRL_MAX_RPC_SERVICES={runtime['rpc_capacity']}",
+        f"CONFIG_ASTERCTRL_ROUTE_COUNT={runtime['route_capacity']}",
+        f"CONFIG_ASTERCTRL_STACK_BYTES={runtime['executor_stack_bytes']}",
+        f"CONFIG_ASTERCTRL_MAX_MESSAGE_BYTES={runtime['maximum_message_size']}",
+        f"CONFIG_ASTERCTRL_EXECUTOR_QUEUE_DEPTH={runtime['executor_queue_depth']}",
+        f"CONFIG_ASTERCTRL_ARENA_BYTES={runtime['arena_bytes']}",
+        f"CONFIG_ASTERCTRL_MAX_HARDWARE_CAPABILITIES={runtime['hardware_capacity']}",
     ]
+    priority = next(iter(executors.values()))["priority"] if executors else 0
+    if priority < 0:
+        config.append(f"CONFIG_NUM_COOP_PRIORITIES={max(16, -priority)}")
+    else:
+        config.append(f"CONFIG_NUM_PREEMPT_PRIORITIES={max(15, priority + 1)}")
     kinds = {resource["kind"] for resource in resources.values()}
     if kinds.intersection({"can", "canfd"}):
-        config.extend(("CONFIG_CAN=y", "CONFIG_ASTERCTRL_CAN=y"))
+        config.extend(
+            (
+                "CONFIG_CAN=y",
+                "CONFIG_ASTERCTRL_CAN=y",
+                f"CONFIG_ASTERCTRL_CAN_TX_QUEUE_DEPTH={runtime['can_tx_queue_depth']}",
+            )
+        )
     if "canfd" in kinds:
         config.append("CONFIG_CAN_FD_MODE=y")
     usb_transports = [item for item in transports.values() if item["type"] == "usb_cdc"]
@@ -584,6 +646,10 @@ def emit_deployment(
             budgets[f"transport.{transport_name}.utilization"] = lock["resource_budgets"][
                 "transports"
             ][transport_name]
+        hardware_bindings_by_name: dict[str, dict[str, Any]] = {}
+        for instance_name in node["instances"]:
+            for name, binding in lock["capability_bindings"].get(instance_name, {}).items():
+                hardware_bindings_by_name[name] = {"name": name, **binding}
         composition = _composition(
             node_name,
             node,
@@ -591,6 +657,7 @@ def emit_deployment(
             instance_specs,
             routes,
             budgets,
+            [hardware_bindings_by_name[name] for name in sorted(hardware_bindings_by_name)],
             lock["deployment_id"],
             lock["artifacts"][node_name]["input_digest"],
         )
@@ -607,10 +674,9 @@ def emit_deployment(
                 node_name,
                 host_name,
                 host.board or "unknown",
-                len(instance_specs),
                 routes,
                 node["executors"],
-                lock["stack_bytes"][host_name],
+                node["runtime"],
                 lock["content_hash"],
                 hardware,
                 {name: lock["transports"][name] for name in transport_names},

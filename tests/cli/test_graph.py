@@ -21,7 +21,8 @@ def test_compiles_and_resolves_deterministically(tmp_path: Path) -> None:
     assert graph["connections"][0]["type"] == "test.v1.State"
     assert first == second
     assert first["routes"][0]["transport"] == "can0"
-    assert first["routes"][0]["id"] == 1
+    assert first["routes"][0]["id"] == 8
+    assert first["routes"][0]["kind"] == "channel"
     assert first["routes"][0]["schema_hash_source"] == "descriptor_bounds"
     assert first["routes"][0]["schema_hash"] == first["routes"][0]["schema_input_digest"]
     assert first["routes"][0]["max_encoded_size"] == 16
@@ -105,10 +106,14 @@ def test_linux_and_zephyr_emitters_are_bounded(tmp_path: Path) -> None:
     assert "CONFIG_REQUIRES_FULL_LIBCPP=y" in zephyr_config
     assert "CONFIG_ASTERCTRL_MAX_MODULES=2" in zephyr_config
     assert "CONFIG_ASTERCTRL_MAX_CHANNELS=1" in zephyr_config
+    assert "CONFIG_ASTERCTRL_MAX_SUBSCRIBERS_PER_CHANNEL=1" in zephyr_config
     assert "CONFIG_ASTERCTRL_MAX_RPC_SERVICES=1" in zephyr_config
     assert "CONFIG_ASTERCTRL_ROUTE_COUNT=1" in zephyr_config
     assert "CONFIG_ASTERCTRL_MAX_MESSAGE_BYTES=32" in zephyr_config
     assert "CONFIG_ASTERCTRL_EXECUTOR_QUEUE_DEPTH=4" in zephyr_config
+    assert "CONFIG_ASTERCTRL_CAN_TX_QUEUE_DEPTH=6" in zephyr_config
+    assert "CONFIG_ASTERCTRL_ARENA_BYTES=4096" in zephyr_config
+    assert "CONFIG_NUM_PREEMPT_PRIORITIES=15" in zephyr_config
     assert "CONFIG_ASTERCTRL_MAX_HARDWARE_CAPABILITIES=1" in zephyr_config
     assert "CONFIG_CAN=y" in zephyr_config
     assert "CONFIG_ASTERCTRL_CAN=y" in zephyr_config
@@ -130,6 +135,11 @@ def test_linux_and_zephyr_emitters_are_bounded(tmp_path: Path) -> None:
         "target_sources(app PRIVATE"
         in (output / "nodes/sensor-node/aster.generated.cmake").read_text()
     )
+    zephyr_composition = (output / "nodes/sensor-node/composition.generated.hpp").read_text()
+    assert '"control-bus", "can", "bus", "devicetree", "can1"' in zephyr_composition
+    assert "DEVICE_DT_GET(DT_NODELABEL(can1))" in zephyr_composition
+    assert "device_is_ready(device_0)" in zephyr_composition
+    assert "runtime.RegisterHardware" in zephyr_composition
     assert (
         "add_library(aster_generated"
         in (output / "nodes/controller-node/aster.generated.cmake").read_text()
@@ -137,10 +147,15 @@ def test_linux_and_zephyr_emitters_are_bounded(tmp_path: Path) -> None:
     assert lock["stack_bytes"] == {"mcu": 1024, "soc": 1024}
     assert lock["static_ram_bytes"] == {"mcu": 256, "soc": 128}
     assert lock["flash_bytes"] == {"mcu": 4096, "soc": 2048}
-    assert lock["resource_budgets"]["hosts"]["mcu"]["ram_bytes"]["used"] == 1280
+    assert lock["runtime_ram_bytes"]["mcu"] > 0
+    assert lock["runtime_ram_bytes"]["soc"] == 0
+    assert lock["resource_budgets"]["hosts"]["mcu"]["ram_bytes"]["used"] == (
+        1024 + 256 + lock["runtime_ram_bytes"]["mcu"]
+    )
     assert lock["resource_budgets"]["hosts"]["soc"]["flash_bytes"]["used"] == 2048
     typed_lock = load_deployment_lock(output / "deployment.lock.yaml")
-    assert typed_lock.routes[0].id == 1
+    assert typed_lock.routes[0].id == 8
+    assert typed_lock.routes[0].kind == "channel"
     assert len(typed_lock.routes[0].schema_hash) == 64
     assert typed_lock.routes[0].schema_hash_source == "descriptor_bounds"
     assert typed_lock.routes[0].schema_input_digest == typed_lock.routes[0].schema_hash
@@ -148,6 +163,11 @@ def test_linux_and_zephyr_emitters_are_bounded(tmp_path: Path) -> None:
     assert typed_lock.nodes[0].node_id == 1
     assert typed_lock.nodes[0].name == "controller-node"
     assert typed_lock.nodes[0].executors[0].backend == "linux_thread"
+    zephyr_node = next(node for node in typed_lock.nodes if node.host == "mcu")
+    assert zephyr_node.runtime is not None
+    assert zephyr_node.runtime.arena_bytes == 4096
+    assert zephyr_node.runtime.can_tx_queue_depth == 6
+    assert zephyr_node.runtime.fixed_ram_bytes == lock["runtime_ram_bytes"]["mcu"]
     assert typed_lock.hosts[0].os == "zephyr"
     assert typed_lock.hardware[0].resources[0].backend == "devicetree"
     assert typed_lock.hardware[1].resources[0].device == "can0"
@@ -158,6 +178,7 @@ def test_linux_and_zephyr_emitters_are_bounded(tmp_path: Path) -> None:
     assert typed_lock.artifacts[0].artifact_digest is None
     assert typed_lock.host_budgets[0].stack_bytes.used == 1024
     assert typed_lock.static_ram_bytes == {"mcu": 256, "soc": 128}
+    assert typed_lock.runtime_ram_bytes == lock["runtime_ram_bytes"]
     assert typed_lock.flash_bytes == {"mcu": 4096, "soc": 2048}
     compiler = shutil.which("c++")
     if compiler:
@@ -169,6 +190,7 @@ def test_linux_and_zephyr_emitters_are_bounded(tmp_path: Path) -> None:
             assert "schema_input_digest" in header.read_text(encoding="utf-8")
             assert "max_encoded_size" in header.read_text(encoding="utf-8")
             assert "kExecutors" in header.read_text(encoding="utf-8")
+            assert "kHardwareBindings" in header.read_text(encoding="utf-8")
             assert "kExternalRouteCount = 1U" in header.read_text(encoding="utf-8")
             assert "kRequiresTransportWiring" in header.read_text(encoding="utf-8")
             assert "config_json" in header.read_text(encoding="utf-8")
@@ -221,6 +243,35 @@ def test_linux_and_zephyr_emitters_are_bounded(tmp_path: Path) -> None:
                 text=True,
             )
             subprocess.run([str(source.with_suffix(".check"))], check=True)
+
+
+def test_zephyr_capacities_include_unconnected_declared_ports(tmp_path: Path) -> None:
+    workspace, _, _, deployment = create_workspace(tmp_path)
+    module_path = tmp_path / "sensors/module.yaml"
+    module = yaml.safe_load(module_path.read_text(encoding="utf-8"))
+    module["spec"]["ports"].extend(
+        [
+            {
+                "name": f"optional-{index}",
+                "kind": "subscriber",
+                "type": "test.v1.State",
+                "required": False,
+            }
+            for index in range(2)
+        ]
+    )
+    module_path.write_text(yaml.safe_dump(module, sort_keys=False), encoding="utf-8")
+
+    output = tmp_path / "generated"
+    lock = emit_deployment(workspace, deployment, output)
+    runtime = lock["nodes"]["sensor-node"]["runtime"]
+    config = (output / "nodes/sensor-node/aster.generated.conf").read_text()
+
+    assert runtime["module_capacity"] == 2
+    assert runtime["channel_capacity"] == 3
+    assert runtime["subscriber_capacity"] == 2
+    assert "CONFIG_ASTERCTRL_MAX_CHANNELS=3" in config
+    assert "CONFIG_ASTERCTRL_MAX_SUBSCRIBERS_PER_CHANNEL=2" in config
 
 
 @pytest.mark.parametrize(

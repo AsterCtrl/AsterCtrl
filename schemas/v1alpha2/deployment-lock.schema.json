@@ -25,6 +25,38 @@
       },
       "additionalProperties": false
     },
+    "zephyrRuntime": {
+      "type": "object",
+      "required": [
+        "module_capacity",
+        "channel_capacity",
+        "subscriber_capacity",
+        "rpc_capacity",
+        "route_capacity",
+        "maximum_message_size",
+        "executor_queue_depth",
+        "can_tx_queue_depth",
+        "hardware_capacity",
+        "executor_stack_bytes",
+        "arena_bytes",
+        "fixed_ram_bytes"
+      ],
+      "properties": {
+        "module_capacity": {"type": "integer", "minimum": 1, "maximum": 128},
+        "channel_capacity": {"type": "integer", "minimum": 1, "maximum": 512},
+        "subscriber_capacity": {"type": "integer", "minimum": 1, "maximum": 512},
+        "rpc_capacity": {"type": "integer", "minimum": 1, "maximum": 128},
+        "route_capacity": {"type": "integer", "minimum": 1, "maximum": 65535},
+        "maximum_message_size": {"type": "integer", "minimum": 1, "maximum": 65535},
+        "executor_queue_depth": {"type": "integer", "minimum": 1, "maximum": 256},
+        "can_tx_queue_depth": {"type": "integer", "minimum": 1, "maximum": 256},
+        "hardware_capacity": {"type": "integer", "minimum": 1, "maximum": 256},
+        "executor_stack_bytes": {"type": "integer", "minimum": 1024, "maximum": 1048576},
+        "arena_bytes": {"type": "integer", "minimum": 1, "maximum": 1048576},
+        "fixed_ram_bytes": {"type": "integer", "minimum": 1}
+      },
+      "additionalProperties": false
+    },
     "hardwareResource": {
       "type": "object",
       "required": ["kind", "backend", "device", "options"],
@@ -66,6 +98,7 @@
     "resource_budgets",
     "artifacts",
     "static_ram_bytes",
+    "runtime_ram_bytes",
     "flash_bytes",
     "content_hash"
   ],
@@ -85,7 +118,8 @@
           "id": {"type": "integer", "minimum": 1},
           "host": {"type": "string"},
           "instances": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
-          "executors": {"type": "object", "additionalProperties": {"$ref": "#/$defs/executor"}}
+          "executors": {"type": "object", "additionalProperties": {"$ref": "#/$defs/executor"}},
+          "runtime": {"$ref": "#/$defs/zephyrRuntime"}
         },
         "additionalProperties": false
       }
@@ -98,6 +132,7 @@
           "id",
           "from",
           "to",
+          "kind",
           "type",
           "schema_hash",
           "schema_input_digest",
@@ -114,6 +149,7 @@
           "id": {"type": "integer", "minimum": 1},
           "from": {"type": "string"},
           "to": {"type": "string"},
+          "kind": {"enum": ["channel", "rpc"]},
           "type": {"type": "string"},
           "schema_hash": {"$ref": "#/$defs/digest"},
           "schema_input_digest": {"$ref": "#/$defs/digest"},
@@ -246,6 +282,7 @@
     "utilization": {"type": "object", "additionalProperties": {"type": "number", "minimum": 0}},
     "stack_bytes": {"type": "object", "additionalProperties": {"type": "integer", "minimum": 0}},
     "static_ram_bytes": {"type": "object", "additionalProperties": {"type": "integer", "minimum": 0}},
+    "runtime_ram_bytes": {"type": "object", "additionalProperties": {"type": "integer", "minimum": 0}},
     "flash_bytes": {"type": "object", "additionalProperties": {"type": "integer", "minimum": 0}},
     "content_hash": {"$ref": "#/$defs/digest"}
   },

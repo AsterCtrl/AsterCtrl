@@ -289,6 +289,7 @@ class LockedRoute:
     id: int
     source: str
     destination: str
+    kind: str
     type_name: str
     schema_hash: str
     schema_input_digest: str
@@ -314,12 +315,29 @@ class LockedExecutor:
 
 
 @dataclass(frozen=True, slots=True)
+class LockedZephyrRuntime:
+    module_capacity: int
+    channel_capacity: int
+    subscriber_capacity: int
+    rpc_capacity: int
+    route_capacity: int
+    maximum_message_size: int
+    executor_queue_depth: int
+    can_tx_queue_depth: int
+    hardware_capacity: int
+    executor_stack_bytes: int
+    arena_bytes: int
+    fixed_ram_bytes: int
+
+
+@dataclass(frozen=True, slots=True)
 class LockedNode:
     name: str
     node_id: int
     host: str
     instances: tuple[str, ...]
     executors: tuple[LockedExecutor, ...]
+    runtime: LockedZephyrRuntime | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -426,6 +444,7 @@ class DeploymentLock:
     utilization: dict[str, float]
     stack_bytes: dict[str, int]
     static_ram_bytes: dict[str, int]
+    runtime_ram_bytes: dict[str, int]
     flash_bytes: dict[str, int]
     content_hash: str
     source: Path
@@ -736,6 +755,7 @@ def load_deployment_lock(path: str | Path) -> DeploymentLock:
             item["id"],
             item["from"],
             item["to"],
+            item["kind"],
             item["type"],
             item["schema_hash"],
             item["schema_input_digest"],
@@ -768,6 +788,7 @@ def load_deployment_lock(path: str | Path) -> DeploymentLock:
                 )
                 for domain, executor in sorted(item.get("executors", {}).items())
             ),
+            LockedZephyrRuntime(**item["runtime"]) if "runtime" in item else None,
         )
         for name, item in sorted(doc["nodes"].items())
     )
@@ -862,6 +883,7 @@ def load_deployment_lock(path: str | Path) -> DeploymentLock:
         {name: float(value) for name, value in doc.get("utilization", {}).items()},
         {name: int(value) for name, value in doc.get("stack_bytes", {}).items()},
         {name: int(value) for name, value in doc.get("static_ram_bytes", {}).items()},
+        {name: int(value) for name, value in doc.get("runtime_ram_bytes", {}).items()},
         {name: int(value) for name, value in doc.get("flash_bytes", {}).items()},
         doc["content_hash"],
         source,

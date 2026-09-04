@@ -45,9 +45,6 @@ class StaticHardwareManager final : public HardwareManager, public Registry {
 
   Status Resolve(std::string_view name, std::string_view type, void*& device) noexcept override {
     device = nullptr;
-    if (!sealed_) {
-      return Status::kInvalidState;
-    }
     for (std::size_t index = 0; index < size_; ++index) {
       if (devices_[index].name != name) {
         continue;

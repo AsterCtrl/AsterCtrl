@@ -51,7 +51,10 @@ Executor policies are declared below each node's ``executors`` map. The key is
 an Application domain. ``serial`` is portable across Linux and Zephyr;
 ``worker_pool`` is a Linux-only policy. Optional ``workers``, ``priority``,
 ``stack_bytes`` and ``queue_depth`` values must satisfy every task placed in the
-domain and become immutable lock data.
+domain and become immutable lock data. Zephyr v0.2 accepts one enabled executor
+domain per node. Resolution also checks priority, stack, queue, Module,
+Channel, subscriber, RPC, route, message and Hardware capacities against the
+generated Kconfig ranges before emitting a build.
 
 .. code-block:: shell
 
