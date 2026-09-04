@@ -143,6 +143,13 @@ class ThreadExecutor final : public Executor {
   }
 
   void Shutdown() noexcept {
+    // Static Runtime owners are destroyed after native_sim has begun kernel
+    // teardown. A lifecycle-complete executor must return without consulting
+    // kernel thread state in that phase. Lifecycle entry points are serialized
+    // by the node supervisor.
+    if (state_ == State::kStopped || state_ == State::kFailed) {
+      return;
+    }
     if (k_is_in_isr() || (thread_id_ != nullptr && k_current_get() == thread_id_)) {
       k_panic();
       return;
