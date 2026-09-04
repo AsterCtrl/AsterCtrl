@@ -470,6 +470,8 @@ def _emit_zephyr(
             vid, pid = identifiers.pop()
             config.extend(
                 (
+                    f"CONFIG_CDC_ACM_SERIAL_VID=0x{vid:04X}",
+                    f"CONFIG_CDC_ACM_SERIAL_PID=0x{pid:04X}",
                     f"CONFIG_ASTERCTRL_USB_VID=0x{vid:04X}",
                     f"CONFIG_ASTERCTRL_USB_PID=0x{pid:04X}",
                 )

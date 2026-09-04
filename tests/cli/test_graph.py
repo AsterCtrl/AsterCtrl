@@ -302,6 +302,8 @@ def test_zephyr_usb_emitter_selects_new_stack_and_product_ids(tmp_path: Path) ->
     overlay = (output / "nodes/sensor-node/aster.generated.overlay").read_text()
     assert "CONFIG_USB_DEVICE_STACK_NEXT=y" in config
     assert "CONFIG_USBD_CDC_ACM_CLASS=y" in config
+    assert "CONFIG_CDC_ACM_SERIAL_VID=0xCAFE" in config
+    assert "CONFIG_CDC_ACM_SERIAL_PID=0x4001" in config
     assert "CONFIG_ASTERCTRL_USB_VID=0xCAFE" in config
     assert "CONFIG_ASTERCTRL_USB_PID=0x4001" in config
     assert "aster-bus = &cdc_acm_uart0;" in overlay
