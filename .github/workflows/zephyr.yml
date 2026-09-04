@@ -146,7 +146,8 @@ jobs:
             cp build/$board/zephyr/zephyr.map build/artifacts/$board/
             cp build/$board/zephyr/zephyr.hex build/artifacts/$board/
             cp build/$board/zephyr/zephyr.bin build/artifacts/$board/
-            arm-zephyr-eabi-size build/$board/zephyr/zephyr.elf > build/artifacts/$board/size.txt
+            python3 asterctrl/scripts/ci/check_zephyr_size.py \
+              build/$board/zephyr/zephyr.elf > build/artifacts/$board/size.txt
           done
           for example in generated-can generated-usb; do
             mkdir -p build/artifacts/$example
@@ -154,7 +155,8 @@ jobs:
             cp build/$example/zephyr/zephyr.map build/artifacts/$example/
             cp build/$example/zephyr/zephyr.hex build/artifacts/$example/
             cp build/$example/zephyr/zephyr.bin build/artifacts/$example/
-            arm-zephyr-eabi-size build/$example/zephyr/zephyr.elf > build/artifacts/$example/size.txt
+            python3 asterctrl/scripts/ci/check_zephyr_size.py \
+              build/$example/zephyr/zephyr.elf > build/artifacts/$example/size.txt
           done
       - name: Upload compile-only firmware
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

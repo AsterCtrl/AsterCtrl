@@ -214,7 +214,8 @@ jobs:
             cp build/$image/zephyr/zephyr.elf "build/package/$package/$image/"
             cp build/$image/zephyr/zephyr.hex "build/package/$package/$image/"
             cp build/$image/zephyr/zephyr.bin "build/package/$package/$image/"
-            arm-zephyr-eabi-size build/$image/zephyr/zephyr.elf > "build/package/$package/$image/size.txt"
+            python3 asterctrl/scripts/ci/check_zephyr_size.py \
+              build/$image/zephyr/zephyr.elf > "build/package/$package/$image/size.txt"
           done
           west manifest --freeze --active-only > "build/package/$package/west-frozen.yml"
           tar -C build/package -czf "build/$package.tar.gz" "$package"
