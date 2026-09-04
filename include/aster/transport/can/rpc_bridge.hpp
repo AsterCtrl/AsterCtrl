@@ -340,6 +340,20 @@ class CanRpcClient final : public RpcBackend {
     return poll_status;
   }
 
+  void ResetPeer(const ExecutionContext& caller) noexcept {
+    request_sender_ = {};
+    response_receiver_.ResetPeerHistory();
+    if (!pending_) {
+      return;
+    }
+    const auto completion = completion_;
+    auto* const completion_state = completion_state_;
+    const auto info = call_info_;
+    ClearPending();
+    ++stats_.completed;
+    completion(completion_state, Status::kUnavailable, {}, info, caller);
+  }
+
   [[nodiscard]] const RpcClientTransportStats& stats() const noexcept { return stats_; }
   [[nodiscard]] const ReliableSenderStats& reliable_stats() const noexcept {
     return request_sender_.stats();
@@ -519,6 +533,12 @@ class CanRpcServer {
     return IsOk(status) ? PumpResponse(caller) : status;
   }
 
+  void ResetPeer(const ExecutionContext&) noexcept {
+    request_receiver_.ResetPeerHistory();
+    response_sender_ = {};
+    drop_active_response_ = active_;
+  }
+
   [[nodiscard]] const RpcServerTransportStats& stats() const noexcept { return stats_; }
   [[nodiscard]] const ReliableSenderStats& reliable_stats() const noexcept {
     return response_sender_.stats();
@@ -533,6 +553,10 @@ class CanRpcServer {
                        const RpcCallInfo&, const ExecutionContext& context) noexcept {
     auto& self = *static_cast<CanRpcServer*>(state);
     self.active_ = false;
+    if (self.drop_active_response_) {
+      self.drop_active_response_ = false;
+      return;
+    }
     if (!IsOk(self.SendResponse(status, response, context))) {
       ++self.stats_.send_failures;
     }
@@ -592,6 +616,7 @@ class CanRpcServer {
   RpcServerTransportStats stats_{};
   bool active_{};
   bool bound_{};
+  bool drop_active_response_{};
 };
 
 }  // namespace aster::transport::can

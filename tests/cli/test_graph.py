@@ -286,6 +286,49 @@ def test_zephyr_capacities_include_unconnected_declared_ports(tmp_path: Path) ->
     assert "CONFIG_ASTERCTRL_MAX_SUBSCRIBERS_PER_CHANNEL=2" in config
 
 
+def test_can_emitters_wire_bounded_rpc_client_and_server(tmp_path: Path) -> None:
+    workspace, application, _, deployment = create_workspace(tmp_path)
+    (tmp_path / "proto/state.proto").write_text(
+        'syntax = "proto3";\n'
+        "package test.v1;\n"
+        "message Request { string command = 1; }\n"
+        "message Response { bytes payload = 1; }\n"
+        "service Control { rpc Exchange(Request) returns (Response); }\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "proto/bounds.yaml").write_text(
+        "fields:\n"
+        "  test.v1.Request.command: {max_size: 16}\n"
+        "  test.v1.Response.payload: {max_size: 40}\n",
+        encoding="utf-8",
+    )
+    sensor_path = tmp_path / "sensors/module.yaml"
+    sensor = yaml.safe_load(sensor_path.read_text(encoding="utf-8"))
+    sensor["spec"]["ports"][0].update({"kind": "rpc_client", "type": "test.v1.Control.Exchange"})
+    sensor_path.write_text(yaml.safe_dump(sensor, sort_keys=False), encoding="utf-8")
+    control_path = tmp_path / "control/module.yaml"
+    control = yaml.safe_load(control_path.read_text(encoding="utf-8"))
+    control["spec"]["ports"][0].update({"kind": "rpc_server", "type": "test.v1.Control.Exchange"})
+    control_path.write_text(yaml.safe_dump(control, sort_keys=False), encoding="utf-8")
+    app = yaml.safe_load(application.read_text(encoding="utf-8"))
+    del app["spec"]["connections"][0]["max_size"]
+    application.write_text(yaml.safe_dump(app, sort_keys=False), encoding="utf-8")
+
+    output = tmp_path / "generated-rpc"
+    emit_deployment(workspace, deployment, output, release=True)
+
+    zephyr = (output / "nodes/sensor-node/composition.generated.hpp").read_text()
+    linux = (output / "nodes/controller-node/composition.generated.hpp").read_text()
+    assert '#include "../../types/state.pb.hpp"' in zephyr
+    assert "CanRpcClient<::test::v1::Control::Exchange>" in zephyr
+    assert ".AddRpcClient(" in zephyr
+    assert "runtime.RegisterRemoteRpc(" in zephyr
+    assert "CanRpcServer<::test::v1::Control::Exchange>" in linux
+    assert ".AddRpcServer(" in linux
+    assert "kWiredExternalRouteCount = 1U" in zephyr
+    assert "kWiredExternalRouteCount = 1U" in linux
+
+
 @pytest.mark.parametrize(
     ("shared_declaration", "field_declaration", "expected_type", "bounds_document"),
     [

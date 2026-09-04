@@ -148,6 +148,7 @@ if(ASTER_BUILD_TESTS)
   aster_add_test(aster_local_channel_test
                  tests/runtime/local_channel_test.cpp aster::core)
   aster_add_test(aster_local_rpc_test tests/runtime/local_rpc_test.cpp aster::core)
+  aster_add_test(aster_rpc_router_test tests/runtime/rpc_router_test.cpp aster::core)
   aster_add_test(aster_runtime_lifecycle_test
                  tests/runtime/runtime_lifecycle_test.cpp aster::core)
   aster_add_test(aster_portable_pubsub_test

@@ -314,6 +314,60 @@ void RpcHonorsTheWireDeadlineAndIgnoresALateResponse() {
   assert(server_bridge.stats().responses == 1);
 }
 
+void RpcPeerResetCancelsAndDropsTheOldSession() {
+  ManualExecutor server_executor;
+  aster::LocalRpc<1, 8, 4, 1> server_rpc{aster::ExecutorRef(server_executor)};
+  aster::RpcServer<test::AddService> service;
+  Clock clock;
+  const aster::ExecutionContext client_context("can-client", aster::ExecutionKind::kThread,
+                                               clock.now_ns);
+  const aster::ExecutionContext server_context("can-server", aster::ExecutionKind::kThread,
+                                               clock.now_ns);
+  Bus bus;
+  RpcClientBridge client_bridge(21, aster::transport::can::CanPriority::kBackground,
+                                {Bus::WriteClient, &bus}, {Clock::Read, &clock});
+  RpcServerBridge server_bridge(21, aster::transport::can::CanPriority::kBackground,
+                                {Bus::WriteServer, &bus}, {Clock::Read, &clock});
+  bus = {&client_bridge, &server_bridge, &clock, &client_context, &server_context};
+  aster::RpcClient<test::AddService> client;
+  aster::RpcCompletion<test::AddService> abandoned;
+  aster::RpcCompletion<test::AddService> recovered;
+  CompletionResult abandoned_result;
+  CompletionResult recovered_result;
+
+  assert(service.Bind(aster::RpcRef(server_rpc), Add, nullptr) == aster::Status::kOk);
+  assert(server_bridge.Bind(aster::RpcRef(server_rpc)) == aster::Status::kOk);
+  assert(client.Bind(aster::RpcRef(client_bridge)) == aster::Status::kOk);
+  assert(server_rpc.Seal() == aster::Status::kOk);
+  assert(client_bridge.Seal() == aster::Status::kOk);
+
+  assert(client.CallAsync({20, 22}, 2'000, abandoned, Complete, &abandoned_result,
+                          client_context) == aster::Status::kOk);
+  bus.Pump();
+  assert(server_executor.pending() == 1);
+
+  client_bridge.ResetPeer(client_context);
+  server_bridge.ResetPeer(server_context);
+  assert(abandoned_result.called);
+  assert(abandoned_result.status == aster::Status::kUnavailable);
+  assert(!abandoned.pending());
+
+  server_executor.RunNext(clock.now_ns);
+  assert(bus.server_to_client_size == 0);
+  assert(server_bridge.stats().responses == 0);
+
+  assert(client.CallAsync({19, 23}, 2'000, recovered, Complete, &recovered_result,
+                          client_context) == aster::Status::kOk);
+  bus.Pump();
+  assert(server_executor.pending() == 1);
+  server_executor.RunNext(clock.now_ns);
+  bus.Pump();
+  assert(recovered_result.called);
+  assert(recovered_result.status == aster::Status::kOk);
+  assert(recovered_result.sum == 42);
+  assert(server_bridge.stats().responses == 1);
+}
+
 }  // namespace
 
 int main() {
@@ -322,6 +376,7 @@ int main() {
   RpcUsesTheSameAsyncInterfaceAcrossCan();
   RpcRetriesAndBoundsPendingCalls();
   RpcHonorsTheWireDeadlineAndIgnoresALateResponse();
+  RpcPeerResetCancelsAndDropsTheOldSession();
   assert(aster_test::AllocationCount() == allocations);
   return 0;
 }

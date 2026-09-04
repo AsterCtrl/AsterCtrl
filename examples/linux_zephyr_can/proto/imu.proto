@@ -7,3 +7,16 @@ message ImuState {
   repeated float quaternion = 2;
   bytes status = 3;
 }
+
+message CalibrationRequest {
+  uint32 sensor_id = 1;
+}
+
+message CalibrationResponse {
+  uint32 revision = 1;
+  bool valid = 2;
+}
+
+service Sensor {
+  rpc ReadCalibration(CalibrationRequest) returns (CalibrationResponse);
+}

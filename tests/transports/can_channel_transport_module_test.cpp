@@ -9,7 +9,9 @@
 #include "aster/channel.hpp"
 #include "aster/core_ref.hpp"
 #include "aster/executor.hpp"
+#include "aster/rpc_router.hpp"
 #include "aster/transport/can/channel_transport_module.hpp"
+#include "test_types.hpp"
 
 namespace {
 
@@ -180,12 +182,33 @@ aster::Status Receive(void* state, std::span<const std::byte> bytes, const aster
 }
 
 aster::CoreRef Core(QueuedExecutor& executor, aster::LocalChannel<1, 1, 8>& channel,
-                    ManualClock& clock) {
+                    ManualClock& clock, aster::RpcRef rpc = {}) {
   auto handles = aster::CoreHandles{};
   handles.executor = aster::ExecutorRef(executor);
   handles.channel = aster::ChannelRef(channel);
+  handles.rpc = rpc;
   handles.clock = aster::ClockRef(clock);
   return aster::CoreRef(handles);
+}
+
+aster::Status Add(void*, const test::AddRequest& request, test::AddResponse& response,
+                  const aster::RpcCallInfo&, const aster::ExecutionContext&) noexcept {
+  response.sum = request.left + request.right;
+  return aster::Status::kOk;
+}
+
+struct RpcResult {
+  bool called{};
+  aster::Status status{aster::Status::kInternal};
+  std::uint32_t sum{};
+};
+
+void Complete(void* state, aster::Status status, const test::AddResponse& response,
+              const aster::RpcCallInfo&, const aster::ExecutionContext&) noexcept {
+  auto& result = *static_cast<RpcResult*>(state);
+  result.called = true;
+  result.status = status;
+  result.sum = response.sum;
 }
 
 void HandshakesAndRoutesAReliableChannel() {
@@ -240,9 +263,76 @@ void HandshakesAndRoutesAReliableChannel() {
   destination.Shutdown();
 }
 
+void HandshakesAndRoutesRpcThroughTheNodeRouter() {
+  ManualClock clock;
+  QueuedExecutor client_executor;
+  QueuedExecutor server_executor;
+  aster::LocalChannel<1, 1, 8> client_channel;
+  aster::LocalChannel<1, 1, 8> server_channel;
+  aster::LocalRpc<1, 8, 4, 1> client_local_rpc{aster::ExecutorRef(client_executor)};
+  aster::LocalRpc<1, 8, 4, 1> server_local_rpc{aster::ExecutorRef(server_executor)};
+  aster::RpcRouter<1> client_router(client_local_rpc);
+  aster::RpcRouter<1> server_router(server_local_rpc);
+  TestAdapter client_adapter;
+  TestAdapter server_adapter;
+  client_adapter.Connect(server_adapter);
+  server_adapter.Connect(client_adapter);
+
+  using ClientModule = aster::transport::can::CanChannelTransportModule<TestAdapter, 0, 0, 8, 1, 0>;
+  using ServerModule = aster::transport::can::CanChannelTransportModule<TestAdapter, 0, 0, 8, 0, 1>;
+  ClientModule client_transport("can0", client_adapter, Control(1, 2, true), 1'000'000);
+  ServerModule server_transport("can0", server_adapter, Control(2, 1, false), 1'000'000);
+  aster::transport::can::CanRpcClient<test::AddService> client_bridge(
+      18, aster::transport::can::CanPriority::kBackground, client_transport.application_writer(),
+      client_transport.network_clock());
+  aster::transport::can::CanRpcServer<test::AddService> server_bridge(
+      18, aster::transport::can::CanPriority::kBackground, server_transport.application_writer(),
+      server_transport.network_clock());
+  aster::RpcClient<test::AddService> client;
+  aster::RpcCompletion<test::AddService> completion;
+  aster::RpcServer<test::AddService> service;
+  RpcResult result;
+  const auto descriptor = aster::ServiceTypeSupport<test::AddService>::descriptor();
+
+  assert(client_transport.AddRpcClient(18, client_bridge) == aster::Status::kOk);
+  assert(server_transport.AddRpcServer(18, server_bridge) == aster::Status::kOk);
+  assert(client_router.AddRemoteClient(descriptor, client_bridge) == aster::Status::kOk);
+  assert(client_transport.Initialize(Core(client_executor, client_channel, clock,
+                                          aster::RpcRef(client_router))) == aster::Status::kOk);
+  assert(server_transport.Initialize(Core(server_executor, server_channel, clock,
+                                          aster::RpcRef(server_router))) == aster::Status::kOk);
+  assert(client.Bind(aster::RpcRef(client_router)) == aster::Status::kOk);
+  assert(service.Bind(aster::RpcRef(server_router), Add, nullptr) == aster::Status::kOk);
+  assert(client_router.Seal() == aster::Status::kOk);
+  assert(server_router.Seal() == aster::Status::kOk);
+  assert(client_transport.Start() == aster::Status::kOk);
+  assert(server_transport.Start() == aster::Status::kOk);
+
+  for (std::size_t iteration = 0; iteration < 6; ++iteration) {
+    client_executor.RunReady(clock);
+    server_executor.RunReady(clock);
+    clock.now_ns += 1'000'000;
+  }
+  assert(client_transport.control().application_enabled());
+  assert(server_transport.control().application_enabled());
+
+  const aster::ExecutionContext caller("control", aster::ExecutionKind::kThread, clock.now_ns);
+  assert(client.CallAsync({20, 22}, clock.now_ns + 100'000'000, completion, Complete, &result,
+                          caller) == aster::Status::kOk);
+  server_executor.RunReady(clock);
+  client_executor.RunReady(clock);
+  assert(result.called);
+  assert(result.status == aster::Status::kOk);
+  assert(result.sum == 42);
+
+  client_transport.Shutdown();
+  server_transport.Shutdown();
+}
+
 }  // namespace
 
 int main() {
   HandshakesAndRoutesAReliableChannel();
+  HandshakesAndRoutesRpcThroughTheNodeRouter();
   return 0;
 }

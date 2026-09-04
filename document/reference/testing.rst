@@ -11,7 +11,8 @@ Tests are arranged by contract rather than by operating system alone:
   truncation, illegal wire types, bounds and malformed input. Every pull request
   also runs the generated decoder under LLVM libFuzzer with ASan and UBSan.
 * Transport tests cover Local dispatch, CAN fragmentation/loss/reorder/restart,
-  reliable Channel acknowledgement/retry, SocketCAN Adapter lifecycle on
+  reliable Channel acknowledgement/retry, generated CAN RPC routing and stale
+  completion suppression after peer restart, SocketCAN Adapter lifecycle on
   ``vcan`` and USB COBS/CRC framing through a pseudo-TTY. The example
   gate also starts the generated Linux USB node on a temporary pseudo-TTY,
   observes a complete outbound frame, delivers ``SIGTERM`` and requires a clean

@@ -38,6 +38,11 @@ Implemented
   storage and Transport polling slots now participate in the Lock's RAM and
   executor budgets. Unit tests inject loss and duplicates, while Linux CI
   exercises the SocketCAN Adapter lifecycle through ``vcan``.
+* Added generated CAN RPC composition without changing the Application Module
+  Interface. A bounded node router selects local or remote clients by typed
+  service descriptor, while the CAN link owner binds server bridges to the
+  local backend and handles peer-restart cleanup. The resolver rejects USB RPC
+  and ambiguous multi-destination remote services in v0.2.
 * Replaced the shallow packaged-directory SBOM with a deterministic inventory
   of every release asset, its byte size and SHA-256 digest.
 * Published ``dev_c`` and ``mc02`` board definitions without the former prefix
@@ -50,8 +55,7 @@ PIL, UDP and ecosystem bridges move to v0.3. The alpha is compile-only. The
 final v0.2.0 tag and legacy-repository archive remain blocked until both boards
 pass physical smoke tests. USB device enumeration may remain an explicitly
 documented unverified item, but its protocol and pseudo-TTY tests must pass.
-Generated CAN Channel nodes and both generated USB endpoints now start their
-resolved Runtime and transport infrastructure. Generated CAN RPC composition,
-physical CAN data-link evidence and both-board smoke results remain open, and
-the pseudo-TTY gate is not presented as a physical-enumeration or cross-device
-demonstration.
+Generated CAN Channel/RPC nodes and both generated USB Channel endpoints now
+start their resolved Runtime and transport infrastructure. Physical CAN
+data-link evidence and both-board smoke results remain open, and the pseudo-TTY
+gate is not presented as a physical-enumeration or cross-device demonstration.

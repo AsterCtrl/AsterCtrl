@@ -7,6 +7,7 @@
 #include "aster/platform/linux/runtime_services.hpp"
 #include "aster/platform/linux/supervisor.hpp"
 #include "aster/rpc.hpp"
+#include "aster/rpc_router.hpp"
 #include "aster/static_hardware.hpp"
 #include "aster/status.hpp"
 #include "aster/transport/peer_registry.hpp"
@@ -28,7 +29,8 @@ class StaticNodeRuntime final {
 
   StaticNodeRuntime(transport::DeploymentId deployment_id, std::string_view executor_name) noexcept
       : executor_(executor_name, clock_),
-        rpc_(ExecutorRef(executor_)),
+        local_rpc_(ExecutorRef(executor_)),
+        rpc_(local_rpc_),
         core_(CoreHandles{
             .configurator = {},
             .logger = LoggerRef(logger_),
@@ -69,6 +71,15 @@ class StaticNodeRuntime final {
       return Status::kInvalidState;
     }
     const auto status = supervisor_.AddRegistry(registry);
+    Record(status);
+    return status;
+  }
+
+  Status RegisterRemoteRpc(const ServiceDescriptor& descriptor, RpcBackend& backend) noexcept {
+    if (finalized_ || !IsOk(setup_status_)) {
+      return Status::kInvalidState;
+    }
+    const auto status = rpc_.AddRemoteClient(descriptor, backend);
     Record(status);
     return status;
   }
@@ -133,7 +144,8 @@ class StaticNodeRuntime final {
   SystemAllocator allocator_;
   ThreadExecutor<ExecutorQueueDepth> executor_;
   LocalChannel<MaxTopics, MaxSubscribersPerTopic, MaximumMessageSize> channel_;
-  LocalRpc<MaxRpcServices, MaximumMessageSize, MaximumMessageSize, MaxPendingRpc> rpc_;
+  LocalRpc<MaxRpcServices, MaximumMessageSize, MaximumMessageSize, MaxPendingRpc> local_rpc_;
+  RpcRouter<MaxRpcServices> rpc_;
   StaticHardwareManager<MaxHardwareCapabilities> hardware_;
   CoreRef core_;
   Composition composition_;

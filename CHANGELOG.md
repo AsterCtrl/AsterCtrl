@@ -18,6 +18,9 @@ the project follows Semantic Versioning.
 - Generated lifecycle-managed CAN/SocketCAN Channel wiring with bounded
   best-effort and reliable paths, handshake/time-sync gating, retry and peer
   restart recovery.
+- Generated CAN RPC client/server wiring through a node-level RPC router, with
+  bounded request/response state, peer-restart recovery and typed service
+  descriptors shared by Linux and Zephyr.
 - SocketCAN Adapter lifecycle coverage on Linux ``vcan`` and explicit CAN
   transport state in the Zephyr RAM budget.
 

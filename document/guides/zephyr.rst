@@ -30,6 +30,14 @@ and QEMU and compile-links ``dev_c/stm32f407xx`` and ``mc02/stm32h723xx``.
 Compile success is not a substitute for the console, clock, CAN loopback, UART,
 SPI and watchdog tests required on both physical boards before v0.2.0.
 
+The boards repository provides ``samples/qualification`` for those six checks.
+Its console output has machine-readable ``ASTERCTRL_HW_SMOKE`` markers, and
+``scripts/record_hardware_smoke.py`` binds a passing log to the board name,
+operator, UTC time, repository revision and exact firmware/log SHA-256 values.
+The recorder deliberately refuses incomplete logs and existing output files.
+The UART marker proves direct console TX; connector RX and an external CAN
+transceiver still need a wired fixture when those signal paths are in scope.
+
 Board definitions are maintained in the separate public
 ``AsterCtrl/asterctrl-boards`` repository. Their public names intentionally have
 no institutional prefix.

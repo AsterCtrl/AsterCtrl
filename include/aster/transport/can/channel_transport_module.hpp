@@ -12,6 +12,7 @@
 #include "aster/transport/can/channel_bridge.hpp"
 #include "aster/transport/can/link_control.hpp"
 #include "aster/transport/can/reliable_channel_bridge.hpp"
+#include "aster/transport/can/rpc_bridge.hpp"
 
 namespace aster::transport::can {
 
@@ -29,10 +30,11 @@ struct CanChannelTransportModuleStats {
 };
 
 template <typename Adapter, std::size_t MaxEgressRoutes, std::size_t MaxIngressRoutes,
-          std::size_t MaximumMessageSize>
+          std::size_t MaximumMessageSize, std::size_t MaxRpcClients = 0,
+          std::size_t MaxRpcServers = 0>
 class CanChannelTransportModule final : public Module {
  public:
-  static_assert(MaxEgressRoutes + MaxIngressRoutes > 0);
+  static_assert(MaxEgressRoutes + MaxIngressRoutes + MaxRpcClients + MaxRpcServers > 0);
   static_assert(MaximumMessageSize > 0);
   static_assert(MaximumMessageSize + 2U <= 96);
 
@@ -81,6 +83,52 @@ class CanChannelTransportModule final : public Module {
     return Status::kOk;
   }
 
+  template <ServiceType Service>
+  Status AddRpcClient(std::uint16_t route_id, CanRpcClient<Service>& client) noexcept {
+    if (configuration_sealed_ || !ValidRouteId(route_id)) {
+      return configuration_sealed_ ? Status::kInvalidState : Status::kInvalidArgument;
+    }
+    if (HasRoute(route_id)) {
+      return Status::kAlreadyExists;
+    }
+    if (rpc_client_count_ == rpc_clients_.size()) {
+      return Status::kCapacityExceeded;
+    }
+    rpc_clients_[rpc_client_count_++] = {route_id,
+                                         &client,
+                                         AcceptRpcClient<Service>,
+                                         PollRpcClient<Service>,
+                                         ResetRpcClient<Service>,
+                                         nullptr};
+    return Status::kOk;
+  }
+
+  template <ServiceType Service>
+  Status AddRpcServer(std::uint16_t route_id, CanRpcServer<Service>& server) noexcept {
+    if (configuration_sealed_ || !ValidRouteId(route_id)) {
+      return configuration_sealed_ ? Status::kInvalidState : Status::kInvalidArgument;
+    }
+    if (HasRoute(route_id)) {
+      return Status::kAlreadyExists;
+    }
+    if (rpc_server_count_ == rpc_servers_.size()) {
+      return Status::kCapacityExceeded;
+    }
+    rpc_servers_[rpc_server_count_++] = {route_id,
+                                         &server,
+                                         AcceptRpcServer<Service>,
+                                         PollRpcServer<Service>,
+                                         ResetRpcServer<Service>,
+                                         BindRpcServer<Service>};
+    return Status::kOk;
+  }
+
+  [[nodiscard]] CanFrameWriter application_writer() noexcept {
+    return control_.application_writer();
+  }
+
+  [[nodiscard]] CanClockReader network_clock() noexcept { return {ReadNetworkClock, this}; }
+
   [[nodiscard]] ModuleInfo Info() const noexcept override {
     return {name_, "aster.transport.can.ChannelTransportModule", "asterctrl", {0, 2, 0}};
   }
@@ -93,9 +141,12 @@ class CanChannelTransportModule final : public Module {
     executor_ = core.executor();
     clock_ = core.clock();
     const auto channel = core.channel();
+    const auto rpc = core.rpc();
     if (name_.empty() || poll_interval_ns_ == 0 || retry_timeout_ns_ == 0 ||
-        reassembly_timeout_ns_ == 0 || egress_count_ + ingress_count_ == 0 || !executor_ ||
-        !clock_ || !channel) {
+        reassembly_timeout_ns_ == 0 ||
+        egress_count_ + ingress_count_ + rpc_client_count_ + rpc_server_count_ == 0 || !executor_ ||
+        !clock_ || ((egress_count_ + ingress_count_ != 0) && !channel) ||
+        ((rpc_client_count_ + rpc_server_count_ != 0) && !rpc)) {
       return Status::kInvalidArgument;
     }
 
@@ -128,6 +179,12 @@ class CanChannelTransportModule final : public Module {
         ingress_[index].fast.emplace(config.route_id, config.freshness);
         status = ingress_[index].fast->Bind(channel, config.descriptor);
       }
+      if (!IsOk(status)) {
+        return status;
+      }
+    }
+    for (std::size_t index = 0; index < rpc_server_count_; ++index) {
+      const auto status = rpc_servers_[index].bind(rpc_servers_[index].state, rpc);
       if (!IsOk(status)) {
         return status;
       }
@@ -205,10 +262,23 @@ class CanChannelTransportModule final : public Module {
     std::optional<ReliableChannelIngress<MaximumMessageSize>> reliable;
   };
 
+  struct RpcRoute {
+    std::uint16_t route_id{};
+    void* state{};
+    Status (*accept)(void*, const CanFrame&, std::uint64_t, const ExecutionContext&) noexcept {};
+    Status (*poll)(void*, std::uint64_t, const ExecutionContext&) noexcept {};
+    void (*reset)(void*, const ExecutionContext&) noexcept {};
+    Status (*bind)(void*, RpcRef) noexcept {};
+  };
+
+  static constexpr bool ValidRouteId(std::uint16_t route_id) noexcept {
+    return route_id >= kFirstApplicationRouteId && route_id <= kMaximumRouteId;
+  }
+
   static constexpr bool Valid(std::uint16_t route_id,
                               const ChannelDescriptor& descriptor) noexcept {
-    return route_id >= kFirstApplicationRouteId && route_id <= kMaximumRouteId &&
-           !descriptor.name.empty() && !descriptor.message_type.name.empty() &&
+    return ValidRouteId(route_id) && !descriptor.name.empty() &&
+           !descriptor.message_type.name.empty() &&
            descriptor.message_type.max_serialized_size != 0 &&
            descriptor.message_type.max_serialized_size <= MaximumMessageSize;
   }
@@ -224,11 +294,65 @@ class CanChannelTransportModule final : public Module {
         return true;
       }
     }
+    for (std::size_t index = 0; index < rpc_client_count_; ++index) {
+      if (rpc_clients_[index].route_id == route_id) {
+        return true;
+      }
+    }
+    for (std::size_t index = 0; index < rpc_server_count_; ++index) {
+      if (rpc_servers_[index].route_id == route_id) {
+        return true;
+      }
+    }
     return false;
   }
 
   static std::uint64_t ReadClock(void* state) noexcept {
     return static_cast<CanChannelTransportModule*>(state)->clock_.NowNs();
+  }
+
+  static std::uint64_t ReadNetworkClock(void* state) noexcept {
+    auto& self = *static_cast<CanChannelTransportModule*>(state);
+    return self.control_.ToNetworkTime(self.clock_.NowNs());
+  }
+
+  template <ServiceType Service>
+  static Status AcceptRpcClient(void* state, const CanFrame& frame, std::uint64_t receive_time_ns,
+                                const ExecutionContext& caller) noexcept {
+    return static_cast<CanRpcClient<Service>*>(state)->Accept(frame, receive_time_ns, caller);
+  }
+
+  template <ServiceType Service>
+  static Status AcceptRpcServer(void* state, const CanFrame& frame, std::uint64_t receive_time_ns,
+                                const ExecutionContext& caller) noexcept {
+    return static_cast<CanRpcServer<Service>*>(state)->Accept(frame, receive_time_ns, caller);
+  }
+
+  template <ServiceType Service>
+  static Status PollRpcClient(void* state, std::uint64_t now_ns,
+                              const ExecutionContext& caller) noexcept {
+    return static_cast<CanRpcClient<Service>*>(state)->Poll(now_ns, caller);
+  }
+
+  template <ServiceType Service>
+  static Status PollRpcServer(void* state, std::uint64_t now_ns,
+                              const ExecutionContext& caller) noexcept {
+    return static_cast<CanRpcServer<Service>*>(state)->Poll(now_ns, caller);
+  }
+
+  template <ServiceType Service>
+  static void ResetRpcClient(void* state, const ExecutionContext& caller) noexcept {
+    static_cast<CanRpcClient<Service>*>(state)->ResetPeer(caller);
+  }
+
+  template <ServiceType Service>
+  static void ResetRpcServer(void* state, const ExecutionContext& caller) noexcept {
+    static_cast<CanRpcServer<Service>*>(state)->ResetPeer(caller);
+  }
+
+  template <ServiceType Service>
+  static Status BindRpcServer(void* state, RpcRef rpc) noexcept {
+    return static_cast<CanRpcServer<Service>*>(state)->Bind(rpc);
   }
 
   static Status Receive(void* state, const CanFrame& frame, std::uint64_t receive_time_ns,
@@ -262,6 +386,18 @@ class CanChannelTransportModule final : public Module {
                  ? ingress_[index].reliable->Accept(frame, receive_network_time_ns, caller)
                  : ingress_[index].fast->Accept(frame, receive_network_time_ns, caller);
     }
+    for (std::size_t index = 0; index < rpc_client_count_; ++index) {
+      if (rpc_clients_[index].route_id == id->route_id) {
+        return rpc_clients_[index].accept(rpc_clients_[index].state, frame, receive_network_time_ns,
+                                          caller);
+      }
+    }
+    for (std::size_t index = 0; index < rpc_server_count_; ++index) {
+      if (rpc_servers_[index].route_id == id->route_id) {
+        return rpc_servers_[index].accept(rpc_servers_[index].state, frame, receive_network_time_ns,
+                                          caller);
+      }
+    }
     return Status::kUnavailable;
   }
 
@@ -282,7 +418,7 @@ class CanChannelTransportModule final : public Module {
     const auto peer_restarts = control_.stats().peer_restarts;
     if (peer_restarts != observed_peer_restarts_) {
       observed_peer_restarts_ = peer_restarts;
-      ResetPeerRoutes();
+      ResetPeerRoutes(caller);
       ++stats_.peer_resets;
     }
 
@@ -298,6 +434,12 @@ class CanChannelTransportModule final : public Module {
       } else {
         ingress_[index].fast->freshness().Poll(network_now_ns);
       }
+    }
+    for (std::size_t index = 0; index < rpc_client_count_; ++index) {
+      RecordPoll(rpc_clients_[index].poll(rpc_clients_[index].state, network_now_ns, caller));
+    }
+    for (std::size_t index = 0; index < rpc_server_count_; ++index) {
+      RecordPoll(rpc_servers_[index].poll(rpc_servers_[index].state, network_now_ns, caller));
     }
     ++stats_.polls;
 
@@ -320,7 +462,7 @@ class CanChannelTransportModule final : public Module {
     }
   }
 
-  void ResetPeerRoutes() noexcept {
+  void ResetPeerRoutes(const ExecutionContext& caller) noexcept {
     for (std::size_t index = 0; index < egress_count_; ++index) {
       if (egress_[index].reliable.has_value()) {
         egress_[index].reliable->ResetPeer();
@@ -332,6 +474,12 @@ class CanChannelTransportModule final : public Module {
       } else {
         ingress_[index].fast->ResetPeer();
       }
+    }
+    for (std::size_t index = 0; index < rpc_client_count_; ++index) {
+      rpc_clients_[index].reset(rpc_clients_[index].state, caller);
+    }
+    for (std::size_t index = 0; index < rpc_server_count_; ++index) {
+      rpc_servers_[index].reset(rpc_servers_[index].state, caller);
     }
   }
 
@@ -353,8 +501,12 @@ class CanChannelTransportModule final : public Module {
   std::array<IngressConfig, MaxIngressRoutes> ingress_config_{};
   std::array<EgressRoute, MaxEgressRoutes> egress_{};
   std::array<IngressRoute, MaxIngressRoutes> ingress_{};
+  std::array<RpcRoute, MaxRpcClients> rpc_clients_{};
+  std::array<RpcRoute, MaxRpcServers> rpc_servers_{};
   std::size_t egress_count_{};
   std::size_t ingress_count_{};
+  std::size_t rpc_client_count_{};
+  std::size_t rpc_server_count_{};
   std::uint32_t observed_peer_restarts_{};
   bool configuration_sealed_{};
   bool initialized_{};

@@ -1110,6 +1110,24 @@ def resolve_deployment(
                 "max_rate_hz": connection["max_rate_hz"],
             }
         )
+    outgoing_rpc: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for route in routes:
+        if route["kind"] != "rpc":
+            continue
+        outgoing_rpc.setdefault((route["source_node"], route["type"]), []).append(route)
+        if route["transport"] != "local" and (transport_by_name[route["transport"]].type != "can"):
+            raise GraphError(
+                f"v0.2 built-in external RPC route {route['from']} -> {route['to']} requires CAN"
+            )
+    for (source_node, service), service_routes in sorted(outgoing_rpc.items()):
+        if (
+            any(route["transport"] != "local" for route in service_routes)
+            and len(service_routes) > 1
+        ):
+            raise GraphError(
+                f"remote RPC service {service!r} is ambiguous on node {source_node!r}; "
+                "v0.2 requires one destination per remote service"
+            )
     for name, used in utilization.items():
         limit = deployment.transport_budgets.get(name, 0.8)
         if used > limit:

@@ -19,6 +19,36 @@ def _save(path: Path, document: dict) -> None:
     path.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
 
 
+def _configure_rpc_workspace(root: Path, application: Path) -> None:
+    (root / "proto/state.proto").write_text(
+        'syntax = "proto3";\n'
+        "package test.v1;\n"
+        "message Request { string command = 1; }\n"
+        "message Response { bytes payload = 1; }\n"
+        "service Control { rpc Exchange(Request) returns (Response); }\n",
+        encoding="utf-8",
+    )
+    (root / "proto/bounds.yaml").write_text(
+        "fields:\n"
+        "  test.v1.Request.command: {max_size: 16}\n"
+        "  test.v1.Response.payload: {max_size: 40}\n",
+        encoding="utf-8",
+    )
+    sensor = _load(root / "sensors/module.yaml")
+    sensor["spec"]["ports"][0].update(
+        {"kind": "rpc_client", "type": "test.v1.Control.Exchange"}
+    )
+    _save(root / "sensors/module.yaml", sensor)
+    control = _load(root / "control/module.yaml")
+    control["spec"]["ports"][0].update(
+        {"kind": "rpc_server", "type": "test.v1.Control.Exchange"}
+    )
+    _save(root / "control/module.yaml", control)
+    app = _load(application)
+    del app["spec"]["connections"][0]["max_size"]
+    _save(application, app)
+
+
 def test_rejects_startup_cycle(tmp_path: Path) -> None:
     workspace, application, _, _ = create_workspace(tmp_path)
     document = _load(application)
@@ -677,29 +707,7 @@ def test_release_derives_schema_contract_without_declared_hash(tmp_path: Path) -
 
 def test_release_derives_rpc_capacity_from_request_and_response(tmp_path: Path) -> None:
     workspace, application, _, deployment = create_workspace(tmp_path)
-    (tmp_path / "proto/state.proto").write_text(
-        'syntax = "proto3";\n'
-        "package test.v1;\n"
-        "message Request { string command = 1; }\n"
-        "message Response { bytes payload = 1; }\n"
-        "service Control { rpc Exchange(Request) returns (Response); }\n",
-        encoding="utf-8",
-    )
-    (tmp_path / "proto/bounds.yaml").write_text(
-        "fields:\n"
-        "  test.v1.Request.command: {max_size: 16}\n"
-        "  test.v1.Response.payload: {max_size: 40}\n",
-        encoding="utf-8",
-    )
-    sensor = _load(tmp_path / "sensors/module.yaml")
-    sensor["spec"]["ports"][0].update({"kind": "rpc_client", "type": "test.v1.Control.Exchange"})
-    _save(tmp_path / "sensors/module.yaml", sensor)
-    control = _load(tmp_path / "control/module.yaml")
-    control["spec"]["ports"][0].update({"kind": "rpc_server", "type": "test.v1.Control.Exchange"})
-    _save(tmp_path / "control/module.yaml", control)
-    app = _load(application)
-    del app["spec"]["connections"][0]["max_size"]
-    _save(application, app)
+    _configure_rpc_workspace(tmp_path, application)
 
     graph = compile_application(workspace, application, release=True)
     lock = resolve_deployment(workspace, deployment, release=True)
@@ -707,6 +715,55 @@ def test_release_derives_rpc_capacity_from_request_and_response(tmp_path: Path) 
     assert graph["connections"][0]["kind"] == "rpc"
     assert graph["connections"][0]["max_encoded_size"] == 42
     assert lock["routes"][0]["max_size"] == 42
+
+
+def test_rejects_ambiguous_remote_rpc_service(tmp_path: Path) -> None:
+    workspace, application, _, deployment = create_workspace(tmp_path)
+    _configure_rpc_workspace(tmp_path, application)
+    app = _load(application)
+    app["spec"]["instances"]["controller2"] = {"module": "control/controller"}
+    app["spec"]["connections"].append(
+        {
+            "from": "imu.state",
+            "to": "controller2.state",
+            "qos": "reliable",
+            "max_rate_hz": 100,
+        }
+    )
+    _save(application, app)
+    deploy = _load(deployment)
+    deploy["spec"]["nodes"]["controller-node"]["instances"].append("controller2")
+    _save(deployment, deploy)
+
+    with pytest.raises(GraphError, match="remote RPC service.*ambiguous"):
+        resolve_deployment(workspace, deployment, release=True)
+
+
+def test_rejects_external_rpc_over_usb(tmp_path: Path) -> None:
+    workspace, application, _, deployment = create_workspace(tmp_path)
+    _configure_rpc_workspace(tmp_path, application)
+    deploy = _load(deployment)
+    deploy["spec"]["transports"]["can0"] = {
+        "type": "usb_cdc",
+        "hosts": ["mcu", "soc"],
+        "mtu": 64,
+        "resource": "bus",
+        "options": {"vid": 0x1209, "pid": 0xA5C0},
+    }
+    _save(deployment, deploy)
+    for name, backend, device in (
+        ("dev_c.hardware.yaml", "devicetree", "zephyr_udc0"),
+        ("linux.hardware.yaml", "tty", "/dev/ttyACM0"),
+    ):
+        hardware_path = tmp_path / name
+        hardware = _load(hardware_path)
+        hardware["spec"]["resources"]["bus"].update(
+            {"kind": "usb_cdc", "backend": backend, "device": device}
+        )
+        _save(hardware_path, hardware)
+
+    with pytest.raises(GraphError, match="external RPC route.*requires CAN"):
+        resolve_deployment(workspace, deployment, release=True)
 
 
 def test_bounds_change_schema_hash_and_deployment_id(tmp_path: Path) -> None:

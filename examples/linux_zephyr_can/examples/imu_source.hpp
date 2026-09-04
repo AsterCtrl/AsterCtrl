@@ -8,6 +8,7 @@
 #include "aster/channel.hpp"
 #include "aster/executor.hpp"
 #include "aster/module.hpp"
+#include "aster/rpc.hpp"
 #include "imu.pb.hpp"
 
 namespace examples {
@@ -24,7 +25,11 @@ class ImuSource final : public aster::Module {
     if (!clock_ || !executor_) {
       return aster::Status::kUnavailable;
     }
-    return publisher_.Bind(core.channel(), "state");
+    auto status = publisher_.Bind(core.channel(), "state");
+    if (!aster::IsOk(status)) {
+      return status;
+    }
+    return calibration_.Bind(core.rpc(), HandleCalibration, this);
   }
 
   aster::Status Start() noexcept override {
@@ -45,6 +50,15 @@ class ImuSource final : public aster::Module {
     static_cast<ImuSource*>(state)->PublishOnce(caller);
   }
 
+  static aster::Status HandleCalibration(
+      void*, const aster::examples::can::v1::CalibrationRequest& request,
+      aster::examples::can::v1::CalibrationResponse& response, const aster::RpcCallInfo&,
+      const aster::ExecutionContext&) noexcept {
+    response.revision = request.sensor_id + 1U;
+    response.valid = true;
+    return aster::Status::kOk;
+  }
+
   void PublishOnce(const aster::ExecutionContext& caller) noexcept {
     if (!running_) {
       return;
@@ -59,6 +73,7 @@ class ImuSource final : public aster::Module {
   }
 
   aster::Publisher<aster::examples::can::v1::ImuState> publisher_;
+  aster::RpcServer<aster::examples::can::v1::Sensor::ReadCalibration> calibration_;
   aster::ClockRef clock_;
   aster::ExecutorRef executor_;
   bool running_{};

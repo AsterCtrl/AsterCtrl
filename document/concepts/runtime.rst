@@ -16,6 +16,14 @@ Logger, Executor, Channel, RPC, Parameter, Clock, Allocator and HardwareManager
 handles from ``CoreRef`` and registers its endpoints. Once all Modules
 initialize, the Runtime seals every Registry before calling ``Start``.
 
+Each node exposes one RPC Interface to Application Modules. A bounded RPC
+router keeps local servers and local clients on the in-process backend while
+directing a generated remote client to its Transport backend by the exact
+service descriptor. Transport selection therefore remains a deployment concern:
+the same Module calls ``core.rpc()`` in a local simulation or a CAN deployment.
+The resolver rejects an ambiguous graph with two remote destinations for the
+same service on one source node.
+
 The lifecycle is load, initialize, seal, start, run and reverse-order shutdown.
 An initialization, seal or start failure triggers reverse-order cleanup of all
 initialized Modules. ``Status`` values have stable numeric categories for

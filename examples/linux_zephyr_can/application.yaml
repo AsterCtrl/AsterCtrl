@@ -14,6 +14,10 @@ spec:
       qos: reliable
       max_rate_hz: 100
       max_size: 64
+    - from: controller.calibration
+      to: imu.calibration
+      qos: reliable
+      max_rate_hz: 10
   domains:
     - name: control
       time: monotonic

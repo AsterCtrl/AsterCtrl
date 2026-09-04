@@ -70,6 +70,13 @@ def _channel_descriptor(route: dict[str, Any], endpoint: str) -> str:
     )
 
 
+def _service_type(route: dict[str, Any]) -> str:
+    segments = str(route["type"]).split(".")
+    if not segments or any(re.fullmatch(r"[A-Za-z_]\w*", item) is None for item in segments):
+        raise ValueError(f"invalid RPC service type {route['type']!r}")
+    return "::" + "::".join(segments)
+
+
 def _cpp_byte_array(value: bytes) -> str:
     return "{" + ", ".join(f"std::byte{{0x{byte:02x}}}" for byte in value) + "}"
 
@@ -87,11 +94,25 @@ def _can_transport_wiring(
     deployment_id: str,
     time_authorities: set[str],
 ) -> tuple[str, str, int]:
-    if any(route["kind"] != "channel" for route in selected):
-        return "", "", 0
-    egress = [route for route in selected if route["source_node"] == node_name]
-    ingress = [route for route in selected if route["destination_node"] == node_name]
-    if not egress and not ingress:
+    channel_egress = [
+        route
+        for route in selected
+        if route["kind"] == "channel" and route["source_node"] == node_name
+    ]
+    channel_ingress = [
+        route
+        for route in selected
+        if route["kind"] == "channel" and route["destination_node"] == node_name
+    ]
+    rpc_clients = [
+        route for route in selected if route["kind"] == "rpc" and route["source_node"] == node_name
+    ]
+    rpc_servers = [
+        route
+        for route in selected
+        if route["kind"] == "rpc" and route["destination_node"] == node_name
+    ]
+    if not channel_egress and not channel_ingress and not rpc_clients and not rpc_servers:
         return "", "", 0
 
     peer_nodes = {
@@ -176,15 +197,32 @@ def _can_transport_wiring(
         adapter_type = "::aster::transport::can::SocketCanAdapter"
     declarations.append(
         f"inline ::aster::transport::can::CanChannelTransportModule<\n"
-        f"    {adapter_type}, {len(egress)}U, {len(ingress)}U, {maximum_message_size}U>\n"
+        f"    {adapter_type}, {len(channel_egress)}U, {len(channel_ingress)}U, "
+        f"{maximum_message_size}U, {len(rpc_clients)}U, {len(rpc_servers)}U>\n"
         f"    module_{identifier}({_cpp_string(transport_name)}, adapter_{identifier},\n"
         f"                        control_{identifier}, {poll_interval_ns}ULL,\n"
         f"                        {retry_timeout_ns}ULL, {maximum_retries}U,\n"
         f"                        {reassembly_timeout_ns}ULL);"
     )
+    for route in rpc_clients:
+        bridge = f"rpc_client_{identifier}_{route['id']}"
+        declarations.append(
+            f"inline ::aster::transport::can::CanRpcClient<{_service_type(route)}> {bridge}(\n"
+            f"    {route['id']}U, ::aster::transport::can::CanPriority::kBackground,\n"
+            f"    module_{identifier}.application_writer(), module_{identifier}.network_clock(),\n"
+            f"    {retry_timeout_ns}ULL, {maximum_retries}U);"
+        )
+    for route in rpc_servers:
+        bridge = f"rpc_server_{identifier}_{route['id']}"
+        declarations.append(
+            f"inline ::aster::transport::can::CanRpcServer<{_service_type(route)}> {bridge}(\n"
+            f"    {route['id']}U, ::aster::transport::can::CanPriority::kBackground,\n"
+            f"    module_{identifier}.application_writer(), module_{identifier}.network_clock(),\n"
+            f"    {retry_timeout_ns}ULL, {maximum_retries}U);"
+        )
 
     registrations: list[str] = []
-    for route in egress:
+    for route in channel_egress:
         reliability = (
             "::aster::transport::can::ChannelReliability::kReliable"
             if route["qos"] == "reliable"
@@ -200,7 +238,7 @@ def _can_transport_wiring(
             f"    return status_{identifier};\n"
             "  }"
         )
-    for route in ingress:
+    for route in channel_ingress:
         reliability = (
             "::aster::transport::can::ChannelReliability::kReliable"
             if route["qos"] == "reliable"
@@ -210,6 +248,32 @@ def _can_transport_wiring(
         registrations.append(
             f"  {declaration} status_{identifier} = detail::module_{identifier}.AddIngress(\n"
             f"      {route['id']}U, {_channel_descriptor(route, 'to')}, {reliability});\n"
+            f"  if (!::aster::IsOk(status_{identifier})) {{\n"
+            f"    return status_{identifier};\n"
+            "  }"
+        )
+    for route in rpc_clients:
+        bridge = f"rpc_client_{identifier}_{route['id']}"
+        declaration = "auto" if not registrations else ""
+        service = _service_type(route)
+        registrations.append(
+            f"  {declaration} status_{identifier} = detail::module_{identifier}.AddRpcClient(\n"
+            f"      {route['id']}U, detail::{bridge});\n"
+            f"  if (!::aster::IsOk(status_{identifier})) {{\n"
+            f"    return status_{identifier};\n"
+            "  }\n"
+            f"  status_{identifier} = runtime.RegisterRemoteRpc(\n"
+            f"      ::aster::ServiceTypeSupport<{service}>::descriptor(), detail::{bridge});\n"
+            f"  if (!::aster::IsOk(status_{identifier})) {{\n"
+            f"    return status_{identifier};\n"
+            "  }"
+        )
+    for route in rpc_servers:
+        bridge = f"rpc_server_{identifier}_{route['id']}"
+        declaration = "auto" if not registrations else ""
+        registrations.append(
+            f"  {declaration} status_{identifier} = detail::module_{identifier}.AddRpcServer(\n"
+            f"      {route['id']}U, detail::{bridge});\n"
             f"  if (!::aster::IsOk(status_{identifier})) {{\n"
             f"    return status_{identifier};\n"
             "  }"
@@ -497,6 +561,7 @@ def _composition(
     deployment_id: str,
     time_authorities: set[str],
     artifact_input_digest: str,
+    type_headers: tuple[str, ...],
 ) -> str:
     instance_rows = ",\n".join(
         "  {"
@@ -646,6 +711,7 @@ def _composition(
         for index, item in enumerate(instances)
     )
     config_initializer_list = f"\n      : {config_initializers}" if config_initializers else ""
+    type_includes = "\n".join(f'#include "../../types/{header}"' for header in type_headers)
     configured_cores = "\n".join(
         f"    module_slots[{index}].core = WithInstanceConfigurator("
         f"core, config_{_identifier(str(item['name']), index)});"
@@ -666,6 +732,7 @@ def _composition(
 #include "aster/module.hpp"
 #include "aster/registry.hpp"
 #include "aster/transport/peer_registry.hpp"
+{type_includes}
 #if defined(__ZEPHYR__)
 #include <zephyr/device.h>
 #include <zephyr/devicetree.h>
@@ -1099,7 +1166,8 @@ def emit_deployment(
     }
     time_authorities.discard(None)
     _write(output_root / "deployment.lock.yaml", dump_yaml(lock))
-    _generate_bounded_types(workspace, output_root)
+    generated_types = _generate_bounded_types(workspace, output_root)
+    type_headers = tuple(path.name for path in generated_types)
     for node_name, node in sorted(lock["nodes"].items()):
         host_name = node["host"]
         host = hosts[host_name]
@@ -1159,6 +1227,7 @@ def emit_deployment(
             lock["deployment_id"],
             time_authorities,
             lock["artifacts"][node_name]["input_digest"],
+            type_headers,
         )
         if host.os == "zephyr":
             if hardware is None:

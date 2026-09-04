@@ -37,16 +37,20 @@ CAN and SocketCAN
   Each endpoint uses the same logical Deployment resource name. Its Zephyr
   Hardware Profile maps to a Devicetree node label, while its Linux profile maps
   to a ``socketcan`` interface such as ``can0`` or ``vcan0``.
-  The generator constructs a ``CanChannelTransportModule`` as infrastructure,
+  The generator constructs a ``CanChannelTransportModule`` as the link owner,
   ahead of Application Modules. It binds resolved Channel routes to either the
-  best-effort bridge or the reliable sender/receiver, owns Adapter lifecycle,
-  and polls handshake, heartbeat, time synchronization, retries and
-  reassembly from the bounded executor queue. Application frames remain gated
-  until the peer's Deployment and Schema hashes match and the clock is
-  synchronized. v0.2 therefore requires exactly one synchronized authority and
-  supports one peer per CAN node; the resolver rejects other layouts before
-  code generation. The generated fixed storage and one polling slot per
-  external Transport are included in the Runtime resource budget.
+  best-effort bridge or the reliable sender/receiver, binds RPC servers to the
+  node's local RPC backend, and exposes generated RPC clients through the
+  node-level RPC router. The Module owns Adapter lifecycle and polls handshake,
+  heartbeat, time synchronization, retries and reassembly from the bounded
+  executor queue. Application frames remain gated until the peer's Deployment
+  and Schema hashes match and the clock is synchronized. v0.2 therefore
+  requires exactly one synchronized authority and supports one peer per CAN
+  node; the resolver rejects other layouts before code generation. A source
+  node may have only one remote destination for a given RPC service, because
+  the portable RPC Interface selects by service descriptor rather than physical
+  destination. The generated fixed storage and one polling slot per external
+  Transport are included in the Runtime resource budget.
   On Zephyr, ``CanDeviceAdapter`` owns controller start/stop and one standard-ID
   RX filter. Its driver callback only copies a frame and timestamp into a
   bounded ``k_msgq``; ``Poll`` performs protocol dispatch later in executor
@@ -67,9 +71,12 @@ CAN and SocketCAN
   Admission is atomic only against an initially empty FIFO; a busy link may
   reject a later fragment with bounded backpressure. CAN FD remains a future
   Transport implementation and is rejected by the v0.2 resolver.
-  CAN RPC wire primitives remain independently tested, but generated CAN RPC
-  route composition is still release work; ``kRequiresTransportWiring`` keeps
-  such a Node from starting silently.
+  Generated CAN RPC uses the same bounded, reliable link and peer-reset signal
+  as Channel traffic. An outstanding client call completes as unavailable when
+  the peer restarts, and a server drops a stale in-flight completion instead of
+  replying into the new peer session. External RPC over the built-in v0.2
+  Transports is supported only on CAN; the resolver rejects USB RPC instead of
+  emitting an incomplete node.
 
 USB CDC ACM
   The same COBS and CRC32C framing runs over a Zephyr CDC ACM byte stream and a

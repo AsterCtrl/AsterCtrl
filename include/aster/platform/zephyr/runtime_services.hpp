@@ -14,6 +14,7 @@
 #include "aster/channel.hpp"
 #include "aster/core_ref.hpp"
 #include "aster/rpc.hpp"
+#include "aster/rpc_router.hpp"
 #include "aster/runtime.hpp"
 #include "aster/static_hardware.hpp"
 
@@ -287,7 +288,8 @@ class StaticNodeRuntime final {
   StaticNodeRuntime(k_thread_stack_t* executor_stack, std::size_t executor_stack_size,
                     std::string_view executor_name, int executor_priority) noexcept
       : executor_(executor_name, clock_, executor_stack, executor_stack_size, executor_priority),
-        rpc_(ExecutorRef(executor_)),
+        local_rpc_(ExecutorRef(executor_)),
+        rpc_(local_rpc_),
         core_(CoreHandles{
             .configurator = {},
             .logger = LoggerRef(logger_),
@@ -344,6 +346,15 @@ class StaticNodeRuntime final {
       return Status::kInvalidState;
     }
     return AddRegistrySlot(registry);
+  }
+
+  Status RegisterRemoteRpc(const ServiceDescriptor& descriptor, RpcBackend& backend) noexcept {
+    if (runtime_.has_value() || !IsOk(setup_status_)) {
+      return Status::kInvalidState;
+    }
+    const auto status = rpc_.AddRemoteClient(descriptor, backend);
+    Record(status);
+    return status;
   }
 
   Status RegisterHardware(std::string_view name, std::string_view type, void* device) noexcept {
@@ -452,7 +463,8 @@ class StaticNodeRuntime final {
   PrintkLogger logger_;
   ThreadExecutor<ExecutorQueueDepth> executor_;
   LocalChannel<MaxTopics, MaxSubscribersPerTopic, MaximumMessageSize> channel_;
-  LocalRpc<MaxRpcServices, MaximumMessageSize, MaximumMessageSize, MaxPendingRpc> rpc_;
+  LocalRpc<MaxRpcServices, MaximumMessageSize, MaximumMessageSize, MaxPendingRpc> local_rpc_;
+  RpcRouter<MaxRpcServices> rpc_;
   FixedArenaAllocator<ArenaBytes> allocator_;
   StaticHardwareManager<MaxHardwareCapabilities> hardware_;
   CoreRef core_;
