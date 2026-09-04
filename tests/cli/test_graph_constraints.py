@@ -35,14 +35,10 @@ def _configure_rpc_workspace(root: Path, application: Path) -> None:
         encoding="utf-8",
     )
     sensor = _load(root / "sensors/module.yaml")
-    sensor["spec"]["ports"][0].update(
-        {"kind": "rpc_client", "type": "test.v1.Control.Exchange"}
-    )
+    sensor["spec"]["ports"][0].update({"kind": "rpc_client", "type": "test.v1.Control.Exchange"})
     _save(root / "sensors/module.yaml", sensor)
     control = _load(root / "control/module.yaml")
-    control["spec"]["ports"][0].update(
-        {"kind": "rpc_server", "type": "test.v1.Control.Exchange"}
-    )
+    control["spec"]["ports"][0].update({"kind": "rpc_server", "type": "test.v1.Control.Exchange"})
     _save(root / "control/module.yaml", control)
     app = _load(application)
     del app["spec"]["connections"][0]["max_size"]
