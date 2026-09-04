@@ -102,29 +102,81 @@ class ThreadExecutor final : public Executor {
                  std::size_t stack_size, int priority) noexcept
       : name_(name), clock_(clock), stack_(stack), stack_size_(stack_size), priority_(priority) {
     k_msgq_init(&queue_, queue_storage_.data(), sizeof(Entry), Capacity);
+    k_sem_init(&run_gate_, 0, 1);
+    k_sem_init(&delay_gate_, 0, 1);
   }
 
-  Status Start() noexcept {
-    if (running_ || name_.empty() || stack_ == nullptr || stack_size_ == 0) {
+  Status Prepare() noexcept {
+    if (name_.empty() || stack_ == nullptr || stack_size_ == 0) {
       return Status::kInvalidState;
     }
-    running_ = true;
+
+    auto key = k_spin_lock(&state_lock_);
+    if (state_ != State::kConstructed) {
+      k_spin_unlock(&state_lock_, key);
+      return Status::kInvalidState;
+    }
+    state_ = State::kPrepared;
+    k_spin_unlock(&state_lock_, key);
+
     thread_id_ = k_thread_create(&thread_, stack_, stack_size_, EntryPoint, this, nullptr, nullptr,
                                  priority_, 0, K_NO_WAIT);
     if (thread_id_ == nullptr) {
-      running_ = false;
+      key = k_spin_lock(&state_lock_);
+      state_ = State::kFailed;
+      k_spin_unlock(&state_lock_, key);
       return Status::kUnavailable;
     }
     return Status::kOk;
   }
 
-  void Shutdown() noexcept {
-    if (running_) {
-      k_thread_abort(thread_id_);
-      thread_id_ = nullptr;
-      running_ = false;
-      k_msgq_purge(&queue_);
+  Status Activate() noexcept {
+    const auto key = k_spin_lock(&state_lock_);
+    if (state_ != State::kPrepared) {
+      k_spin_unlock(&state_lock_, key);
+      return Status::kInvalidState;
     }
+    state_ = State::kRunning;
+    k_spin_unlock(&state_lock_, key);
+    k_sem_give(&run_gate_);
+    return Status::kOk;
+  }
+
+  void Shutdown() noexcept {
+    if (k_is_in_isr() || (thread_id_ != nullptr && k_current_get() == thread_id_)) {
+      k_panic();
+      return;
+    }
+    auto key = k_spin_lock(&state_lock_);
+    if (state_ == State::kStopped || state_ == State::kFailed || state_ == State::kQuiescing) {
+      k_spin_unlock(&state_lock_, key);
+      return;
+    }
+    if (state_ == State::kConstructed) {
+      state_ = State::kStopped;
+      k_spin_unlock(&state_lock_, key);
+      return;
+    }
+    state_ = State::kQuiescing;
+    k_spin_unlock(&state_lock_, key);
+
+    k_msgq_purge(&queue_);
+    const Entry stop{};
+    static_cast<void>(k_msgq_put(&queue_, &stop, K_NO_WAIT));
+    k_sem_give(&run_gate_);
+    k_sem_give(&delay_gate_);
+    if (thread_id_ != nullptr) {
+      if (k_thread_join(thread_id_, K_FOREVER) != 0) {
+        k_panic();
+        return;
+      }
+      thread_id_ = nullptr;
+    }
+    k_msgq_purge(&queue_);
+
+    key = k_spin_lock(&state_lock_);
+    state_ = State::kStopped;
+    k_spin_unlock(&state_lock_, key);
   }
 
   [[nodiscard]] std::string_view Name() const noexcept override { return name_; }
@@ -135,14 +187,32 @@ class ThreadExecutor final : public Executor {
 
   Status TryPostAt(std::uint64_t timestamp_ns, WorkItem work,
                    const ExecutionContext&) noexcept override {
-    if (!running_ || !work) {
-      return running_ ? Status::kInvalidArgument : Status::kInvalidState;
+    if (!work) {
+      return Status::kInvalidArgument;
+    }
+
+    const auto key = k_spin_lock(&state_lock_);
+    if (state_ != State::kPrepared && state_ != State::kRunning) {
+      k_spin_unlock(&state_lock_, key);
+      return Status::kInvalidState;
     }
     const Entry entry{timestamp_ns, work};
-    return k_msgq_put(&queue_, &entry, K_NO_WAIT) == 0 ? Status::kOk : Status::kCapacityExceeded;
+    const auto status =
+        k_msgq_put(&queue_, &entry, K_NO_WAIT) == 0 ? Status::kOk : Status::kCapacityExceeded;
+    k_spin_unlock(&state_lock_, key);
+    return status;
   }
 
  private:
+  enum class State : std::uint8_t {
+    kConstructed,
+    kPrepared,
+    kRunning,
+    kQuiescing,
+    kStopped,
+    kFailed,
+  };
+
   struct Entry {
     std::uint64_t timestamp_ns{};
     WorkItem work{};
@@ -152,16 +222,32 @@ class ThreadExecutor final : public Executor {
     static_cast<ThreadExecutor*>(self)->Run();
   }
 
+  [[nodiscard]] bool IsRunning() noexcept {
+    const auto key = k_spin_lock(&state_lock_);
+    const auto running = state_ == State::kRunning;
+    k_spin_unlock(&state_lock_, key);
+    return running;
+  }
+
   void Run() noexcept {
+    static_cast<void>(k_sem_take(&run_gate_, K_FOREVER));
     while (true) {
       Entry entry;
       if (k_msgq_get(&queue_, &entry, K_FOREVER) != 0) {
         continue;
       }
+      if (!entry.work || !IsRunning()) {
+        return;
+      }
       const auto now = clock_.NowNs();
       if (entry.timestamp_ns > now) {
         const auto delay_ns = entry.timestamp_ns - now;
-        k_sleep(K_NSEC(delay_ns));
+        if (k_sem_take(&delay_gate_, K_NSEC(delay_ns)) == 0 || !IsRunning()) {
+          return;
+        }
+      }
+      if (!IsRunning()) {
+        return;
       }
       entry.work.Run(ExecutionContext(name_, ExecutionKind::kThread, clock_.NowNs()));
     }
@@ -174,9 +260,12 @@ class ThreadExecutor final : public Executor {
   int priority_{};
   struct k_thread thread_ {};
   k_tid_t thread_id_{};
+  struct k_spinlock state_lock_ {};
+  struct k_sem run_gate_ {};
+  struct k_sem delay_gate_ {};
   struct k_msgq queue_ {};
   alignas(4) std::array<char, Capacity * sizeof(Entry)> queue_storage_{};
-  bool running_{};
+  State state_{State::kConstructed};
 };
 
 template <typename Composition, std::size_t MaxModules, std::size_t MaxTopics,
@@ -250,6 +339,15 @@ class StaticNodeRuntime final {
     return AddRegistrySlot(registry);
   }
 
+  Status RegisterHardware(std::string_view name, std::string_view type, void* device) noexcept {
+    if (runtime_.has_value() || !IsOk(setup_status_)) {
+      return Status::kInvalidState;
+    }
+    const auto status = hardware_.Register(name, type, device);
+    Record(status);
+    return status;
+  }
+
   Status Initialize() noexcept {
     if (!IsOk(setup_status_)) {
       return setup_status_;
@@ -257,13 +355,14 @@ class StaticNodeRuntime final {
     if (runtime_.has_value() || module_count_ == 0) {
       return runtime_.has_value() ? Status::kInvalidState : Status::kUnavailable;
     }
-    auto status = executor_.Start();
+    auto status = executor_.Prepare();
     if (!IsOk(status)) {
       setup_status_ = status;
       return status;
     }
     runtime_.emplace(std::span<ModuleSlot>(module_slots_).first(module_count_),
-                     std::span<RegistrySlot>(registry_slots_).first(registry_count_));
+                     std::span<RegistrySlot>(registry_slots_).first(registry_count_),
+                     RuntimeHooks{QuiesceExecutor, &executor_});
     status = runtime_->Initialize();
     if (!IsOk(status)) {
       executor_.Shutdown();
@@ -275,9 +374,12 @@ class StaticNodeRuntime final {
     if (!runtime_.has_value()) {
       return Status::kInvalidState;
     }
-    const auto status = runtime_->Start();
-    if (!IsOk(status) && runtime_->state() == RuntimeState::kFailed) {
-      executor_.Shutdown();
+    auto status = runtime_->Start();
+    if (IsOk(status)) {
+      status = executor_.Activate();
+      if (!IsOk(status)) {
+        runtime_->Shutdown();
+      }
     }
     return status;
   }
@@ -286,6 +388,8 @@ class StaticNodeRuntime final {
     if (runtime_.has_value()) {
       runtime_->Shutdown();
     }
+    // Runtime invokes the hook before stopping Modules. This second call also
+    // covers a StaticNodeRuntime that never reached Runtime construction.
     executor_.Shutdown();
     allocator_.Reset();
   }
@@ -301,6 +405,10 @@ class StaticNodeRuntime final {
 
  private:
   static constexpr std::size_t kMaximumRegistries = MaxModules + 3U;
+
+  static void QuiesceExecutor(void* executor) noexcept {
+    static_cast<ThreadExecutor<ExecutorQueueDepth>*>(executor)->Shutdown();
+  }
 
   Status AddModuleSlot(const ModuleSlot& slot) noexcept {
     if (slot.module == nullptr) {
@@ -354,9 +462,10 @@ class StaticNodeRuntime final {
 template <typename Composition>
 using ConfiguredStaticNodeRuntime =
     StaticNodeRuntime<Composition, CONFIG_ASTERCTRL_MAX_MODULES, CONFIG_ASTERCTRL_MAX_CHANNELS,
-                      CONFIG_ASTERCTRL_MAX_MODULES, CONFIG_ASTERCTRL_MAX_MESSAGE_BYTES,
-                      CONFIG_ASTERCTRL_MAX_RPC_SERVICES, CONFIG_ASTERCTRL_MAX_RPC_SERVICES,
-                      CONFIG_ASTERCTRL_ARENA_BYTES, CONFIG_ASTERCTRL_MAX_HARDWARE_CAPABILITIES,
+                      CONFIG_ASTERCTRL_MAX_SUBSCRIBERS_PER_CHANNEL,
+                      CONFIG_ASTERCTRL_MAX_MESSAGE_BYTES, CONFIG_ASTERCTRL_MAX_RPC_SERVICES,
+                      CONFIG_ASTERCTRL_MAX_RPC_SERVICES, CONFIG_ASTERCTRL_ARENA_BYTES,
+                      CONFIG_ASTERCTRL_MAX_HARDWARE_CAPABILITIES,
                       CONFIG_ASTERCTRL_EXECUTOR_QUEUE_DEPTH>;
 
 }  // namespace aster::platform::zephyr

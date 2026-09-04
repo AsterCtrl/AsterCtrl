@@ -124,6 +124,9 @@ void Runtime::Shutdown() noexcept {
 }
 
 void Runtime::ShutdownInitializedModules() noexcept {
+  if (initialized_module_count_ != 0 && hooks_.before_modules_shutdown != nullptr) {
+    hooks_.before_modules_shutdown(hooks_.state);
+  }
   while (initialized_module_count_ != 0) {
     modules_[--initialized_module_count_].module->Shutdown();
   }

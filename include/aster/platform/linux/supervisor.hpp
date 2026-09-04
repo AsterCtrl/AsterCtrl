@@ -21,6 +21,16 @@ enum class SupervisorState : std::uint8_t {
   kFailed,
 };
 
+struct ExecutorLifecycle {
+  using StatusHook = Status (*)(void*) noexcept;
+  using ShutdownHook = void (*)(void*) noexcept;
+
+  StatusHook prepare{};
+  StatusHook activate{};
+  ShutdownHook quiesce{};
+  void* state{};
+};
+
 struct GraphModuleView {
   std::size_t index{};
   ModuleInfo info;
@@ -30,7 +40,8 @@ using GraphVisitor = Status (*)(void*, const GraphModuleView&) noexcept;
 
 class Supervisor {
  public:
-  Supervisor(CoreRef default_core, transport::DeploymentId deployment_id) noexcept;
+  Supervisor(CoreRef default_core, transport::DeploymentId deployment_id,
+             ExecutorLifecycle executor = {}) noexcept;
   ~Supervisor();
 
   Supervisor(const Supervisor&) = delete;
@@ -55,6 +66,8 @@ class Supervisor {
   std::vector<RegistrySlot> registries_;
   std::vector<std::unique_ptr<PluginLoader>> plugins_;
   std::optional<Runtime> runtime_;
+  ExecutorLifecycle executor_;
+  bool executor_prepared_{};
   SupervisorState state_{SupervisorState::kComposing};
 };
 

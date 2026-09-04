@@ -4,6 +4,7 @@
 #include <condition_variable>
 #include <cstddef>
 #include <mutex>
+#include <thread>
 
 #include "aster/platform/linux/runtime_services.hpp"
 
@@ -37,7 +38,7 @@ void Record(void* state, const aster::ExecutionContext& context) noexcept {
 int main() {
   aster::platform::linux::SteadyClock clock;
   aster::platform::linux::ThreadExecutor<4> executor("worker", clock);
-  assert(executor.Start() == aster::Status::kOk);
+  assert(executor.Prepare() == aster::Status::kOk);
 
   Observation observation;
   TaskState delayed{&observation, 1};
@@ -46,6 +47,13 @@ int main() {
   assert(executor.TryPostAt(clock.NowNs() + 30'000'000, {Record, &delayed}, caller) ==
          aster::Status::kOk);
   assert(executor.TryPost({Record, &immediate}, caller) == aster::Status::kOk);
+
+  {
+    std::unique_lock lock(observation.mutex);
+    assert(!observation.ready.wait_for(lock, std::chrono::milliseconds(20),
+                                       [&] { return observation.count != 0; }));
+  }
+  assert(executor.Activate() == aster::Status::kOk);
 
   {
     std::unique_lock lock(observation.mutex);
@@ -60,6 +68,15 @@ int main() {
   assert(executor.TryPost({Record, &immediate}, interrupt) == aster::Status::kInvalidArgument);
   executor.Shutdown();
   assert(executor.state() == aster::platform::linux::ThreadExecutorState::kStopped);
+
+  aster::platform::linux::ThreadExecutor<1> cancelled("cancelled", clock);
+  Observation cancelled_observation;
+  TaskState cancelled_task{&cancelled_observation, 3};
+  assert(cancelled.Prepare() == aster::Status::kOk);
+  assert(cancelled.TryPost({Record, &cancelled_task}, caller) == aster::Status::kOk);
+  cancelled.Shutdown();
+  assert(cancelled_observation.count == 0);
+  assert(cancelled.state() == aster::platform::linux::ThreadExecutorState::kStopped);
 
   aster::platform::linux::SystemAllocator allocator;
   void* memory = allocator.Allocate(64, 64);

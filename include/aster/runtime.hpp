@@ -42,11 +42,21 @@ struct RuntimeFailure {
   Status status{Status::kOk};
 };
 
+struct RuntimeHooks {
+  using BeforeModulesShutdown = void (*)(void*) noexcept;
+
+  BeforeModulesShutdown before_modules_shutdown{};
+  void* state{};
+};
+
 class Runtime {
  public:
   explicit constexpr Runtime(std::span<ModuleSlot> modules) noexcept : modules_(modules) {}
   constexpr Runtime(std::span<ModuleSlot> modules, std::span<RegistrySlot> registries) noexcept
       : modules_(modules), registries_(registries) {}
+  constexpr Runtime(std::span<ModuleSlot> modules, std::span<RegistrySlot> registries,
+                    RuntimeHooks hooks) noexcept
+      : modules_(modules), registries_(registries), hooks_(hooks) {}
 
   Status Initialize() noexcept;
   Status Start() noexcept;
@@ -66,6 +76,7 @@ class Runtime {
   std::size_t initialized_module_count_{};
   RuntimeState state_{RuntimeState::kConstructed};
   std::optional<RuntimeFailure> failure_;
+  RuntimeHooks hooks_{};
 };
 
 }  // namespace aster

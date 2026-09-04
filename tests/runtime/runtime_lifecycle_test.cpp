@@ -14,6 +14,8 @@ struct EventLog {
   void Add(char value) noexcept { values[size++] = value; }
 };
 
+void RecordQuiesce(void* state) noexcept { static_cast<EventLog*>(state)->Add('Q'); }
+
 class RecordingModule final : public aster::Module {
  public:
   RecordingModule(std::string_view name, char id, EventLog& log,
@@ -70,16 +72,32 @@ int main() {
     RecordingRegistry registry(log);
     std::array<aster::ModuleSlot, 2> modules{{{&first, {}, "first"}, {&second, {}, "second"}}};
     std::array<aster::RegistrySlot, 1> registries{{{&registry}}};
-    aster::Runtime runtime(modules, registries);
+    aster::Runtime runtime(modules, registries, aster::RuntimeHooks{RecordQuiesce, &log});
     assert(runtime.Initialize() == aster::Status::kOk);
     assert(runtime.Start() == aster::Status::kOk);
     runtime.Shutdown();
-    const std::array<char, 7> expected{'I', 'J', 'R', 'T', 'U', 'T', 'S'};
+    const std::array<char, 8> expected{'I', 'J', 'R', 'T', 'U', 'Q', 'T', 'S'};
     assert(log.size == expected.size());
     for (std::size_t index = 0; index < expected.size(); ++index) {
       assert(log.values[index] == expected[index]);
     }
     assert(runtime.state() == aster::RuntimeState::kStopped);
+  }
+
+  {
+    EventLog log;
+    RecordingModule first("first", 'A', log);
+    RecordingModule second("second", 'B', log, aster::Status::kOk, aster::Status::kUnavailable);
+    std::array<aster::ModuleSlot, 2> modules{{{&first, {}, "first"}, {&second, {}, "second"}}};
+    aster::Runtime runtime(modules, {}, aster::RuntimeHooks{RecordQuiesce, &log});
+    assert(runtime.Initialize() == aster::Status::kOk);
+    assert(runtime.Start() == aster::Status::kUnavailable);
+    const std::array<char, 7> expected{'I', 'J', 'T', 'U', 'Q', 'T', 'S'};
+    assert(log.size == expected.size());
+    for (std::size_t index = 0; index < expected.size(); ++index) {
+      assert(log.values[index] == expected[index]);
+    }
+    assert(runtime.failure()->operation == aster::LifecycleOperation::kStart);
   }
 
   {

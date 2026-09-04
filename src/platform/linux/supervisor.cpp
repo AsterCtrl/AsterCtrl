@@ -5,8 +5,9 @@
 
 namespace aster::platform::linux {
 
-Supervisor::Supervisor(CoreRef default_core, transport::DeploymentId deployment_id) noexcept
-    : default_core_(default_core), deployment_id_(deployment_id) {}
+Supervisor::Supervisor(CoreRef default_core, transport::DeploymentId deployment_id,
+                       ExecutorLifecycle executor) noexcept
+    : default_core_(default_core), deployment_id_(deployment_id), executor_(executor) {}
 
 Supervisor::~Supervisor() { Shutdown(); }
 
@@ -70,10 +71,33 @@ Status Supervisor::Start(const transport::DeploymentId& deployment_id) noexcept 
   if (deployment_id != deployment_id_) {
     return Status::kVersionMismatch;
   }
-  runtime_.emplace(std::span<ModuleSlot>(modules_), std::span<RegistrySlot>(registries_));
+  const auto lifecycle_hooks = static_cast<unsigned>(executor_.prepare != nullptr) +
+                               static_cast<unsigned>(executor_.activate != nullptr) +
+                               static_cast<unsigned>(executor_.quiesce != nullptr);
+  if (lifecycle_hooks != 0U && lifecycle_hooks != 3U) {
+    return Status::kInvalidArgument;
+  }
+  if (executor_.prepare != nullptr) {
+    const auto status = executor_.prepare(executor_.state);
+    if (!IsOk(status)) {
+      state_ = SupervisorState::kFailed;
+      return status;
+    }
+    executor_prepared_ = true;
+  }
+  runtime_.emplace(std::span<ModuleSlot>(modules_), std::span<RegistrySlot>(registries_),
+                   RuntimeHooks{executor_.quiesce, executor_.state});
   auto status = runtime_->Initialize();
   if (IsOk(status)) {
     status = runtime_->Start();
+  }
+  if (IsOk(status) && executor_.activate != nullptr) {
+    status = executor_.activate(executor_.state);
+    if (!IsOk(status)) {
+      runtime_->Shutdown();
+    }
+  } else if (!IsOk(status) && executor_prepared_ && executor_.quiesce != nullptr) {
+    executor_.quiesce(executor_.state);
   }
   state_ = IsOk(status) ? SupervisorState::kRunning : SupervisorState::kFailed;
   return status;
@@ -82,7 +106,10 @@ Status Supervisor::Start(const transport::DeploymentId& deployment_id) noexcept 
 void Supervisor::Shutdown() noexcept {
   if (runtime_.has_value()) {
     runtime_->Shutdown();
+  } else if (executor_prepared_ && executor_.quiesce != nullptr) {
+    executor_.quiesce(executor_.state);
   }
+  executor_prepared_ = false;
   if (state_ != SupervisorState::kComposing) {
     state_ = SupervisorState::kStopped;
   }

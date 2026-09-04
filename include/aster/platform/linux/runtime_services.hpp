@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <exception>
 #include <mutex>
 #include <new>
 #include <string_view>
@@ -84,7 +85,9 @@ class SystemAllocator final : public Allocator {
 
 enum class ThreadExecutorState : std::uint8_t {
   kConstructed,
+  kPrepared,
   kRunning,
+  kQuiescing,
   kStopped,
   kFailed,
 };
@@ -100,12 +103,12 @@ class ThreadExecutor final : public Executor {
   ThreadExecutor(const ThreadExecutor&) = delete;
   ThreadExecutor& operator=(const ThreadExecutor&) = delete;
 
-  Status Start() noexcept {
+  Status Prepare() noexcept {
     const std::lock_guard lock(mutex_);
     if (state_ != ThreadExecutorState::kConstructed || name_.empty()) {
       return Status::kInvalidState;
     }
-    state_ = ThreadExecutorState::kRunning;
+    state_ = ThreadExecutorState::kPrepared;
     try {
       worker_ = std::thread([this] { Run(); });
     } catch (...) {
@@ -115,20 +118,51 @@ class ThreadExecutor final : public Executor {
     return Status::kOk;
   }
 
-  void Shutdown() noexcept {
+  Status Activate() noexcept {
     {
       const std::lock_guard lock(mutex_);
-      if (state_ != ThreadExecutorState::kRunning) {
+      if (state_ != ThreadExecutorState::kPrepared) {
+        return Status::kInvalidState;
+      }
+      state_ = ThreadExecutorState::kRunning;
+    }
+    ready_.notify_all();
+    return Status::kOk;
+  }
+
+  Status Start() noexcept {
+    auto status = Prepare();
+    if (IsOk(status)) {
+      status = Activate();
+      if (!IsOk(status)) {
+        Shutdown();
+      }
+    }
+    return status;
+  }
+
+  void Shutdown() noexcept {
+    if (worker_.joinable() && worker_.get_id() == std::this_thread::get_id()) {
+      std::terminate();
+    }
+    {
+      const std::lock_guard lock(mutex_);
+      if (state_ == ThreadExecutorState::kStopped || state_ == ThreadExecutorState::kQuiescing ||
+          state_ == ThreadExecutorState::kFailed) {
         return;
       }
-      stop_requested_ = true;
+      if (state_ == ThreadExecutorState::kConstructed) {
+        state_ = ThreadExecutorState::kStopped;
+        return;
+      }
+      state_ = ThreadExecutorState::kQuiescing;
+      size_ = 0;
     }
     ready_.notify_all();
     if (worker_.joinable()) {
       worker_.join();
     }
     const std::lock_guard lock(mutex_);
-    size_ = 0;
     state_ = ThreadExecutorState::kStopped;
   }
 
@@ -145,7 +179,7 @@ class ThreadExecutor final : public Executor {
     }
     {
       const std::lock_guard lock(mutex_);
-      if (state_ != ThreadExecutorState::kRunning) {
+      if (state_ != ThreadExecutorState::kPrepared && state_ != ThreadExecutorState::kRunning) {
         return Status::kInvalidState;
       }
       if (size_ == queue_.size()) {
@@ -183,9 +217,10 @@ class ThreadExecutor final : public Executor {
 
   void Run() noexcept {
     std::unique_lock lock(mutex_);
-    while (!stop_requested_) {
+    ready_.wait(lock, [this] { return state_ != ThreadExecutorState::kPrepared; });
+    while (state_ == ThreadExecutorState::kRunning) {
       if (size_ == 0) {
-        ready_.wait(lock, [this] { return stop_requested_ || size_ != 0; });
+        ready_.wait(lock, [this] { return state_ != ThreadExecutorState::kRunning || size_ != 0; });
         continue;
       }
       const auto index = NextIndex();
@@ -215,7 +250,6 @@ class ThreadExecutor final : public Executor {
   std::size_t size_{};
   std::uint64_t next_sequence_{};
   ThreadExecutorState state_{ThreadExecutorState::kConstructed};
-  bool stop_requested_{};
 };
 
 }  // namespace aster::platform::linux
