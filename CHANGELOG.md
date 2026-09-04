@@ -11,6 +11,10 @@ the project follows Semantic Versioning.
   generated Transport infrastructure.
 - Generated Zephyr USB CDC ACM Channel wiring with bounded polling and explicit
   framing-buffer memory accounting.
+- A generated Linux static-node owner that supplies per-Instance CoreRef values,
+  owns the Supervisor and Runtime services, and performs signal-driven shutdown.
+- Generated Linux TTY/USB CDC ACM Channel wiring plus a pseudo-TTY startup,
+  framing and shutdown acceptance test.
 
 ### Fixed
 

@@ -339,7 +339,7 @@ def test_deployment_codegen_rejects_overlapping_generated_contracts(
         emit_deployment(workspace, deployment, tmp_path / "generated")
 
 
-def test_zephyr_usb_emitter_selects_new_stack_and_product_ids(tmp_path: Path) -> None:
+def test_usb_emitters_wire_zephyr_and_linux_endpoints(tmp_path: Path) -> None:
     workspace, _, zephyr_hardware, deployment = create_workspace(tmp_path)
     zephyr = yaml.safe_load(zephyr_hardware.read_text(encoding="utf-8"))
     zephyr["spec"]["resources"]["bus"].update({"kind": "usb_cdc", "device": "cdc_acm_uart0"})
@@ -376,5 +376,13 @@ def test_zephyr_usb_emitter_selects_new_stack_and_product_ids(tmp_path: Path) ->
     assert "ChannelTransportModule<1U, 0U>" in composition
     assert ".AddEgress(" in composition
     assert "runtime.AddInfrastructureModule(" in composition
+    linux_composition = (output / "nodes/controller-node/composition.generated.hpp").read_text()
+    assert "kWiredExternalRouteCount = 1U" in linux_composition
+    assert "LinuxTtyStream" in linux_composition
+    assert "StreamTransport<32U>" in linux_composition
+    assert "ChannelTransportModule<0U, 1U>" in linux_composition
+    assert ".AddIngress(" in linux_composition
+    assert 'Open(\n      "/dev/ttyACM0", 115200U)' in linux_composition
+    assert "kDeploymentIdentity" in linux_composition
     lock = yaml.safe_load((output / "deployment.lock.yaml").read_text())
     assert lock["nodes"]["sensor-node"]["runtime"]["transport_storage_bytes"] == 1152

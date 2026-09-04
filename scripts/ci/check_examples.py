@@ -5,11 +5,16 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import os
+import pty
 import re
+import select
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 import yaml
@@ -123,6 +128,7 @@ def compile_typed_compositions(
                 "-Wall",
                 "-Wextra",
                 "-Werror",
+                "-DASTER_GENERATED_METADATA_ONLY=1",
                 "-fno-exceptions",
                 "-fno-rtti",
                 "-I",
@@ -161,6 +167,72 @@ def build_runnable_example(
     subprocess.run(command, check=True)
     subprocess.run(["cmake", "--build", str(build)], check=True)
     subprocess.run(["ctest", "--test-dir", str(build), "--output-on-failure"], check=True)
+
+
+def exercise_generated_usb_node(
+    root: Path, example: Path, output_root: Path, build_root: Path
+) -> None:
+    master, slave = pty.openpty()
+    try:
+        test_example = output_root / "linux_zephyr_usb_cdc-runtime"
+        shutil.copytree(example, test_example)
+        hardware_path = test_example / "linux.hardware.yaml"
+        hardware = yaml.safe_load(hardware_path.read_text(encoding="utf-8"))
+        hardware["spec"]["resources"]["usb_console"]["device"] = os.ttyname(slave)
+        hardware_path.write_text(yaml.safe_dump(hardware, sort_keys=False), encoding="utf-8")
+
+        generated = output_root / "linux_zephyr_usb_cdc-runtime-generated"
+        run(
+            "codegen",
+            test_example / "workspace.yaml",
+            test_example / "deployment.yaml",
+            generated,
+            "--release",
+            cwd=root,
+        )
+        build_runnable_example(example, root, generated, "gateway-node", build_root)
+
+        executable = build_root / "aster_generated_node"
+        process = subprocess.Popen(
+            [str(executable)],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        try:
+            deadline = time.monotonic() + 5
+            running_line = ""
+            while time.monotonic() < deadline and process.poll() is None:
+                ready, _, _ = select.select([process.stdout], [], [], 0.1)
+                if ready:
+                    running_line = process.stdout.readline()
+                    if "ASTERCTRL_GENERATED_NODE: RUNNING gateway-node" in running_line:
+                        break
+            if "ASTERCTRL_GENERATED_NODE: RUNNING gateway-node" not in running_line:
+                stdout, stderr = process.communicate(timeout=1)
+                raise RuntimeError(
+                    "generated Linux USB node did not start: "
+                    f"stdout={running_line + stdout!r} stderr={stderr!r}"
+                )
+
+            ready, _, _ = select.select([master], [], [], 2)
+            if not ready or b"\0" not in os.read(master, 4096):
+                raise RuntimeError("generated Linux USB node emitted no complete COBS frame")
+
+            process.send_signal(signal.SIGTERM)
+            stdout, stderr = process.communicate(timeout=5)
+            if process.returncode != 0:
+                raise RuntimeError(
+                    "generated Linux USB node did not stop cleanly: "
+                    f"stdout={stdout!r} stderr={stderr!r}"
+                )
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.wait(timeout=5)
+    finally:
+        os.close(slave)
+        os.close(master)
 
 
 def main() -> int:
@@ -276,6 +348,13 @@ def main() -> int:
                     generated[0],
                     runnable_node,
                     output_root / f"{output_name}-{runnable_node}-build",
+                )
+            if output_name == "linux_zephyr_usb_cdc":
+                exercise_generated_usb_node(
+                    root,
+                    example,
+                    output_root,
+                    output_root / "linux_zephyr_usb_cdc-runtime-build",
                 )
 
     print("all release locks, bounded schemas, typed compositions, and Linux examples passed")

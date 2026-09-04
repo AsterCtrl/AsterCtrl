@@ -563,6 +563,32 @@ def test_usb_cdc_requires_bounded_poll_interval(tmp_path: Path, poll_interval_us
         resolve_deployment(workspace, deployment)
 
 
+@pytest.mark.parametrize("baud_rate", (0, 38400, 115201, True))
+def test_usb_cdc_requires_supported_baud_rate(tmp_path: Path, baud_rate: int) -> None:
+    workspace, _, zephyr_hardware, deployment = create_workspace(tmp_path)
+    zephyr = _load(zephyr_hardware)
+    zephyr["spec"]["resources"]["bus"].update({"kind": "usb_cdc", "device": "cdc_acm_uart0"})
+    _save(zephyr_hardware, zephyr)
+    linux_hardware = tmp_path / "linux.hardware.yaml"
+    linux = _load(linux_hardware)
+    linux["spec"]["resources"]["bus"].update(
+        {"kind": "usb_cdc", "backend": "tty", "device": "/dev/ttyACM0"}
+    )
+    _save(linux_hardware, linux)
+    document = _load(deployment)
+    document["spec"]["transports"]["can0"].update(
+        {
+            "type": "usb_cdc",
+            "mtu": 64,
+            "options": {"vid": 0xCAFE, "pid": 0x4001, "baud_rate": baud_rate},
+        }
+    )
+    _save(deployment, document)
+
+    with pytest.raises((GraphError, ValidationError), match="baud_rate|options"):
+        resolve_deployment(workspace, deployment)
+
+
 def test_rejects_undeclared_plugin_transport(tmp_path: Path) -> None:
     workspace, _, _, deployment = create_workspace(tmp_path)
     document = _load(deployment)

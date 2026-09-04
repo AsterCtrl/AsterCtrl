@@ -143,9 +143,11 @@ void OwnsTransportLifecycleAndRoutesIngress() {
   TestTransport transport;
   aster::transport::ChannelTransportModule<0, 1> transport_module("usb0", transport, 10);
   SinkModule sink;
-  const aster::CoreRef core({.executor = aster::ExecutorRef(executor),
-                             .channel = aster::ChannelRef(channel),
-                             .clock = aster::ClockRef(clock)});
+  auto handles = aster::CoreHandles{};
+  handles.executor = aster::ExecutorRef(executor);
+  handles.channel = aster::ChannelRef(channel);
+  handles.clock = aster::ClockRef(clock);
+  const aster::CoreRef core(handles);
   std::array modules{aster::ModuleSlot{&transport_module, core, "usb0"},
                      aster::ModuleSlot{&sink, core, "sink"}};
   std::array registries{aster::RegistrySlot{&channel}};

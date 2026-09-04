@@ -61,6 +61,14 @@ def _endpoint_port(endpoint: str) -> str:
     return port
 
 
+def _channel_descriptor(route: dict[str, Any], endpoint: str) -> str:
+    return (
+        f"::aster::ChannelDescriptor{{{_cpp_string(_endpoint_port(route[endpoint]))}, "
+        f"{{{_cpp_string(route['type'])}, {_cpp_schema_hash(route['schema_hash'])}, "
+        f"{route['max_encoded_size']}U}}}}"
+    )
+
+
 def _zephyr_transport_wiring(
     node_name: str,
     routes: list[dict[str, Any]],
@@ -105,11 +113,7 @@ def _zephyr_transport_wiring(
             "  }"
         )
         for route in egress:
-            descriptor = (
-                f"::aster::ChannelDescriptor{{{_cpp_string(_endpoint_port(route['from']))}, "
-                f"{{{_cpp_string(route['type'])}, {_cpp_schema_hash(route['schema_hash'])}, "
-                f"{route['max_encoded_size']}U}}}}"
-            )
+            descriptor = _channel_descriptor(route, "from")
             registrations.append(
                 f"  status_{identifier} = detail::module_{identifier}.AddEgress(\n"
                 f"      {route['id']}U, {descriptor});\n"
@@ -118,11 +122,7 @@ def _zephyr_transport_wiring(
                 "  }"
             )
         for route in ingress:
-            descriptor = (
-                f"::aster::ChannelDescriptor{{{_cpp_string(_endpoint_port(route['to']))}, "
-                f"{{{_cpp_string(route['type'])}, {_cpp_schema_hash(route['schema_hash'])}, "
-                f"{route['max_encoded_size']}U}}}}"
-            )
+            descriptor = _channel_descriptor(route, "to")
             registrations.append(
                 f"  status_{identifier} = detail::module_{identifier}.AddIngress(\n"
                 f"      {route['id']}U, {descriptor});\n"
@@ -142,6 +142,78 @@ def _zephyr_transport_wiring(
     declarations_text = "\n\n".join(declarations)
     registrations_text = "\n".join(registrations)
     return declarations_text, registrations_text, wired_routes
+
+
+def _linux_transport_wiring(
+    node_name: str,
+    routes: list[dict[str, Any]],
+    hardware: dict[str, Any] | None,
+    transports: dict[str, Any],
+) -> tuple[str, str, int]:
+    declarations: list[str] = []
+    registrations: list[str] = []
+    wired_routes = 0
+    if hardware is None:
+        return "", "", 0
+
+    for index, (transport_name, transport) in enumerate(sorted(transports.items())):
+        selected = [route for route in routes if route["transport"] == transport_name]
+        if transport["type"] != "usb_cdc" or any(route["kind"] != "channel" for route in selected):
+            continue
+        egress = [route for route in selected if route["source_node"] == node_name]
+        ingress = [route for route in selected if route["destination_node"] == node_name]
+        if not egress and not ingress:
+            continue
+        resource_name = transport["resource"]
+        resource = hardware["resources"].get(resource_name)
+        if resource is None or resource["backend"] != "tty":
+            raise ValueError(f"Linux transport {transport_name!r} has no TTY resource")
+        identifier = re.sub(r"[^A-Za-z0-9_]", "_", transport_name)
+        identifier = f"transport_{identifier}_{index}"
+        maximum_payload = max(int(route["max_size"]) for route in selected)
+        poll_interval_ns = int(transport["options"].get("poll_interval_us", 1000)) * 1000
+        declarations.append(
+            f"inline ::aster::transport::usb::LinuxTtyStream stream_{identifier};\n"
+            f"inline ::aster::transport::usb::StreamTransport<{maximum_payload}U> "
+            f"link_{identifier}(stream_{identifier});\n"
+            f"inline ::aster::transport::ChannelTransportModule<{len(egress)}U, "
+            f"{len(ingress)}U> module_{identifier}(\n"
+            f"    {_cpp_string(transport_name)}, link_{identifier}, {poll_interval_ns}ULL);"
+        )
+        baud_rate = int(transport["options"].get("baud_rate", 115200))
+        registrations.append(
+            f"  auto status_{identifier} = detail::stream_{identifier}.Open(\n"
+            f"      {_cpp_string(resource['device'])}, {baud_rate}U);\n"
+            f"  if (!::aster::IsOk(status_{identifier})) {{\n"
+            f"    return status_{identifier};\n"
+            "  }"
+        )
+        for route in egress:
+            registrations.append(
+                f"  status_{identifier} = detail::module_{identifier}.AddEgress(\n"
+                f"      {route['id']}U, {_channel_descriptor(route, 'from')});\n"
+                f"  if (!::aster::IsOk(status_{identifier})) {{\n"
+                f"    return status_{identifier};\n"
+                "  }"
+            )
+        for route in ingress:
+            registrations.append(
+                f"  status_{identifier} = detail::module_{identifier}.AddIngress(\n"
+                f"      {route['id']}U, {_channel_descriptor(route, 'to')});\n"
+                f"  if (!::aster::IsOk(status_{identifier})) {{\n"
+                f"    return status_{identifier};\n"
+                "  }"
+            )
+        registrations.append(
+            f"  status_{identifier} = runtime.AddInfrastructureModule(\n"
+            f"      detail::module_{identifier}, {_cpp_string(f'transport.{transport_name}')});\n"
+            f"  if (!::aster::IsOk(status_{identifier})) {{\n"
+            f"    return status_{identifier};\n"
+            "  }"
+        )
+        wired_routes += len(selected)
+
+    return "\n\n".join(declarations), "\n".join(registrations), wired_routes
 
 
 def _generate_bounded_types(workspace: Any, output_root: Path) -> tuple[Path, ...]:
@@ -281,15 +353,40 @@ def _composition(
         for index, binding in enumerate(hardware_bindings)
     )
     external_route_count = sum(route["transport"] != "local" for route in routes)
-    wiring_declarations = ""
-    wiring_registrations = ""
+    zephyr_wiring_declarations = ""
+    zephyr_wiring_registrations = ""
+    linux_wiring_declarations = ""
+    linux_wiring_registrations = ""
     wired_external_route_count = 0
     if platform == "zephyr":
         (
-            wiring_declarations,
-            wiring_registrations,
+            zephyr_wiring_declarations,
+            zephyr_wiring_registrations,
             wired_external_route_count,
         ) = _zephyr_transport_wiring(node_name, routes, hardware, transports)
+    elif platform == "linux":
+        (
+            linux_wiring_declarations,
+            linux_wiring_registrations,
+            wired_external_route_count,
+        ) = _linux_transport_wiring(node_name, routes, hardware, transports)
+    channel_port_count = sum(
+        port["kind"] in {"publisher", "subscriber"}
+        for instance in instances
+        for port in instance["ports"]
+    )
+    subscriber_capacity = sum(
+        port["kind"] == "subscriber" for instance in instances for port in instance["ports"]
+    ) + sum(route["transport"] != "local" and route["source_node"] == node_name for route in routes)
+    rpc_port_count = sum(
+        port["kind"] in {"rpc_client", "rpc_server"}
+        for instance in instances
+        for port in instance["ports"]
+    )
+    runtime_message_size = max((int(route["max_size"]) for route in routes), default=256)
+    executor_queue_depth = max(
+        (int(executor["queue_depth"]) for executor in node["executors"].values()), default=16
+    )
     typed = bool(instances) and all(item["class_name"] and item["header"] for item in instances)
     if typed:
         class_pattern = re.compile(r"^(?:::)?[A-Za-z_]\w*(?:::[A-Za-z_]\w*)*$")
@@ -346,11 +443,16 @@ def _composition(
 #include <string_view>
 #include "aster/module.hpp"
 #include "aster/registry.hpp"
+#include "aster/transport/peer_registry.hpp"
 #if defined(__ZEPHYR__)
 #include <zephyr/device.h>
 #include <zephyr/devicetree.h>
 #include "aster/platform/zephyr/usb_cdc_acm.hpp"
 #include "aster/transport/channel_transport_module.hpp"
+#include "aster/transport/usb/stream_transport.hpp"
+#elif !defined(ASTER_GENERATED_METADATA_ONLY)
+#include "aster/transport/channel_transport_module.hpp"
+#include "aster/transport/usb/linux_tty.hpp"
 #include "aster/transport/usb/stream_transport.hpp"
 #endif
 
@@ -404,11 +506,20 @@ struct HardwareBindingDescriptor {{
 }};
 
 inline constexpr std::string_view kDeploymentId = {_cpp_string(deployment_id)};
+inline constexpr ::aster::transport::DeploymentId kDeploymentIdentity{{{{
+  {", ".join(f"std::byte{{0x{byte:02x}}}" for byte in bytes.fromhex(deployment_id))}
+}}}};
 inline constexpr std::string_view kArtifactInputDigest = {_cpp_string(artifact_input_digest)};
 inline constexpr std::size_t kExternalRouteCount = {external_route_count}U;
 inline constexpr std::size_t kWiredExternalRouteCount = {wired_external_route_count}U;
 inline constexpr bool kRequiresTransportWiring =
     kWiredExternalRouteCount != kExternalRouteCount;
+inline constexpr std::size_t kRuntimeChannelCapacity = {max(1, channel_port_count)}U;
+inline constexpr std::size_t kRuntimeSubscriberCapacity = {max(1, subscriber_capacity)}U;
+inline constexpr std::size_t kRuntimeRpcCapacity = {max(1, rpc_port_count)}U;
+inline constexpr std::size_t kRuntimeMaximumMessageSize = {runtime_message_size}U;
+inline constexpr std::size_t kRuntimeHardwareCapacity = {max(1, len(hardware_bindings))}U;
+inline constexpr std::size_t kRuntimeExecutorQueueDepth = {executor_queue_depth}U;
 inline constexpr std::array<NodeDescriptor, 1> kNodes{{{{
   {{{node["id"]}U, {_cpp_string(node_name)}, {_cpp_string(host_name)}}}
 }}}};
@@ -431,7 +542,11 @@ inline constexpr std::array<HardwareBindingDescriptor,
 
 #if defined(__ZEPHYR__)
 namespace detail {{
-{wiring_declarations}
+{zephyr_wiring_declarations}
+}}  // namespace detail
+#elif !defined(ASTER_GENERATED_METADATA_ONLY)
+namespace detail {{
+{linux_wiring_declarations}
 }}  // namespace detail
 #endif
 
@@ -450,12 +565,16 @@ template <typename Runtime>
 template <typename Runtime>
 ::aster::Status RegisterGeneratedTransports(Runtime& runtime) noexcept {{
 #if defined(__ZEPHYR__)
-{wiring_registrations}
+{zephyr_wiring_registrations}
+  static_cast<void>(runtime);
+  return kRequiresTransportWiring ? ::aster::Status::kUnavailable : ::aster::Status::kOk;
+#elif !defined(ASTER_GENERATED_METADATA_ONLY)
+{linux_wiring_registrations}
   static_cast<void>(runtime);
   return kRequiresTransportWiring ? ::aster::Status::kUnavailable : ::aster::Status::kOk;
 #else
   static_cast<void>(runtime);
-  return kExternalRouteCount == 0U ? ::aster::Status::kOk : ::aster::Status::kUnavailable;
+  return ::aster::Status::kUnavailable;
 #endif
 }}
 inline constexpr bool kTypedComposition =
@@ -770,6 +889,7 @@ def emit_deployment(
                         separators=(",", ":"),
                         ensure_ascii=False,
                     ),
+                    "ports": [{"name": port.name, "kind": port.kind} for port in module.ports],
                 }
             )
         budgets = {

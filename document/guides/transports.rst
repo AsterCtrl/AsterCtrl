@@ -66,8 +66,11 @@ USB CDC ACM
   ``options.poll_interval_us`` (default 1000, bounded to 100--1000000) for
   executor-driven receive polling. Their fixed framing and bridge storage is
   included in the Deployment Lock's RAM budget.
-  The Zephyr endpoint maps to a CDC ACM Devicetree node and the Linux endpoint
-  maps to an absolute ``/dev`` path with the ``tty`` backend.
+  The Zephyr endpoint maps to a CDC ACM Devicetree node. The Linux endpoint maps
+  to an absolute TTY path, opens it at ``options.baud_rate`` (default 115200),
+  and installs the same generated Channel bridge before Runtime startup.
+  Supported baud rates are 9600, 57600, 115200, 230400, 460800 and 921600;
+  platform support for the three highest rates still depends on ``termios``.
 
 UDP, Zenoh, ROS 2, AimRT, gRPC and MQTT are not official v0.2 transports. They
 may be supplied by versioned transport plugins, but the resolver rejects a

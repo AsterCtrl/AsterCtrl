@@ -11,7 +11,10 @@ Tests are arranged by contract rather than by operating system alone:
   truncation, illegal wire types, bounds and malformed input. Every pull request
   also runs the generated decoder under LLVM libFuzzer with ASan and UBSan.
 * Transport tests cover Local dispatch, CAN fragmentation/loss/reorder/restart,
-  SocketCAN ``vcan`` and USB COBS/CRC framing through a pseudo-TTY.
+  SocketCAN ``vcan`` and USB COBS/CRC framing through a pseudo-TTY. The example
+  gate also starts the generated Linux USB node on a temporary pseudo-TTY,
+  observes a complete outbound frame, delivers ``SIGTERM`` and requires a clean
+  Runtime shutdown.
 * Zephyr tests execute the portable pub/sub Module source in ``native_sim`` and
   QEMU. ``native_sim`` also drives the CAN Device Adapter through Zephyr's
   loopback controller, including its RX handoff from the driver callback into

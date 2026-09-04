@@ -216,6 +216,25 @@ int main() {
   assert(supervisor.state() == aster::platform::linux::SupervisorState::kStopped);
 
   {
+    aster::LocalChannel<1, 1, 8> slot_channel;
+    auto slot_handles = aster::CoreHandles{};
+    slot_handles.channel = aster::ChannelRef(slot_channel);
+    slot_handles.clock = aster::ClockRef(clock);
+    const aster::CoreRef slot_core(slot_handles);
+    Source slot_source;
+    Sink slot_sink;
+    aster::platform::linux::Supervisor per_instance({}, deployment);
+    assert(per_instance.AddModule({&slot_source, slot_core, "configured-source"}) ==
+           aster::Status::kOk);
+    assert(per_instance.AddModule({&slot_sink, slot_core, "configured-sink"}) ==
+           aster::Status::kOk);
+    assert(per_instance.AddRegistry(slot_channel) == aster::Status::kOk);
+    assert(per_instance.Start(deployment) == aster::Status::kOk);
+    assert(slot_sink.value() == 42);
+    per_instance.Shutdown();
+  }
+
+  {
     aster::platform::linux::ThreadExecutor<4> executor("gated", clock);
     auto executor_handles = handles;
     executor_handles.executor = aster::ExecutorRef(executor);

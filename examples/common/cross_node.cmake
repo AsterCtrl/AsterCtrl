@@ -28,8 +28,11 @@ else()
   target_include_directories(aster_generated_node PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}"
     "${ASTER_GENERATED_DIR}")
-  target_link_libraries(aster_generated_node PRIVATE aster_generated aster::core)
+  target_link_libraries(aster_generated_node PRIVATE
+    aster_generated
+    aster::linux
+    aster::transport)
 
   include(CTest)
-  add_test(NAME aster_generated_node_runs COMMAND aster_generated_node)
+  add_test(NAME aster_generated_node_checks COMMAND aster_generated_node --check)
 endif()

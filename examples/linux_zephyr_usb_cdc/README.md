@@ -20,6 +20,9 @@ uv run aster deploy plan examples/linux_zephyr_usb_cdc/deployment.yaml examples/
 Deployment code generation emits the bounded header and both Node compositions
 in one deterministic tree. The generated Zephyr endpoint registers its Channel
 route, starts the CDC ACM framing Adapter, and polls it from the resolved
-executor without changing ``CommandSink``. The Linux endpoint and physical
-end-to-end link remain release work; physical enumeration is still an explicitly
-pending hardware verification item for v0.2.0.
+executor without changing ``CommandSink``. The generated Linux endpoint opens
+the resolved TTY, starts the matching Channel bridge, runs under the Linux
+Supervisor and shuts down on ``SIGINT`` or ``SIGTERM``. CI exercises that path
+with a pseudo-TTY and observes a complete outbound frame. The physical
+end-to-end link remains release work; physical enumeration is still an
+explicitly pending hardware verification item for v0.2.0.

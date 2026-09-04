@@ -737,6 +737,18 @@ def resolve_deployment(
                     f"transport {transport.name!r} requires options.poll_interval_us "
                     "in 100..1000000"
                 )
+            baud_rate = transport.options.get("baud_rate", 115200)
+            if isinstance(baud_rate, bool) or baud_rate not in {
+                9600,
+                57600,
+                115200,
+                230400,
+                460800,
+                921600,
+            }:
+                raise GraphError(
+                    f"transport {transport.name!r} requires a supported options.baud_rate"
+                )
         maximum_mtu = {"can": 8, "canfd": 64}.get(transport.type)
         if maximum_mtu is not None and transport.mtu > maximum_mtu:
             raise GraphError(

@@ -184,6 +184,8 @@ if(ASTER_BUILD_TESTS)
                    tests/linux/core_plugin_loader_test.cpp aster::linux)
     aster_add_test(aster_linux_supervisor_test
                    tests/linux/supervisor_test.cpp aster::linux)
+    aster_add_test(aster_linux_node_runtime_test
+                   tests/linux/node_runtime_test.cpp aster::linux)
     aster_add_test(aster_linux_shutdown_signal_test
                    tests/linux/shutdown_signal_test.cpp aster::linux)
     aster_add_test(aster_linux_tty_stream_test

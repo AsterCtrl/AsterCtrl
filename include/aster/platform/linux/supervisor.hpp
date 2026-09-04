@@ -48,6 +48,7 @@ class Supervisor {
   Supervisor& operator=(const Supervisor&) = delete;
 
   Status AddModule(Module& module) noexcept;
+  Status AddModule(const ModuleSlot& module) noexcept;
   Status AddRegistry(Registry& registry) noexcept;
   Status LoadPlugin(std::string_view path) noexcept;
   Status Start(const transport::DeploymentId& deployment_id) noexcept;

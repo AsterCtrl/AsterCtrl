@@ -26,6 +26,11 @@ Implemented
 * Added a shared Channel-to-packet seam and lifecycle Module. The generator now
   constructs and registers a bounded USB CDC ACM route bridge for Zephyr nodes,
   including explicit polling and framing-buffer RAM accounting in the Lock.
+* Added the matching Linux static-node owner and generated TTY route wiring.
+  The generated process now starts the Supervisor with the resolved Deployment
+  identity, runs its executor, and shuts down on ``SIGINT`` or ``SIGTERM``. CI
+  opens a pseudo-TTY and proves that startup emits a complete framed command
+  before exercising reverse-order shutdown.
 * Replaced the shallow packaged-directory SBOM with a deterministic inventory
   of every release asset, its byte size and SHA-256 digest.
 * Published ``dev_c`` and ``mc02`` board definitions without the former prefix
@@ -38,7 +43,7 @@ PIL, UDP and ecosystem bridges move to v0.3. The alpha is compile-only. The
 final v0.2.0 tag and legacy-repository archive remain blocked until both boards
 pass physical smoke tests. USB device enumeration may remain an explicitly
 documented unverified item, but its protocol and pseudo-TTY tests must pass.
-Generated CAN nodes and the Linux side of USB still refuse Runtime startup
-until their route-bridge construction is complete. A generated Zephyr USB node
-now starts its resolved Runtime and transport infrastructure, but this alone is
-not presented as an end-to-end or physical-enumeration demonstration.
+Generated CAN nodes still refuse Runtime startup until their route-bridge
+construction is complete. Both generated USB endpoints now start their resolved
+Runtime and transport infrastructure, but the pseudo-TTY gate is not presented
+as a physical-enumeration or cross-device demonstration.

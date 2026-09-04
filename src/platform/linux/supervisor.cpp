@@ -12,11 +12,18 @@ Supervisor::Supervisor(CoreRef default_core, transport::DeploymentId deployment_
 Supervisor::~Supervisor() { Shutdown(); }
 
 Status Supervisor::AddModule(Module& module) noexcept {
+  return AddModule({&module, default_core_, module.Info().name});
+}
+
+Status Supervisor::AddModule(const ModuleSlot& module) noexcept {
   if (state_ != SupervisorState::kComposing) {
     return Status::kInvalidState;
   }
+  if (module.module == nullptr) {
+    return Status::kInvalidArgument;
+  }
   try {
-    modules_.push_back({&module, default_core_, module.Info().name});
+    modules_.push_back(module);
   } catch (const std::bad_alloc&) {
     return Status::kCapacityExceeded;
   } catch (...) {
