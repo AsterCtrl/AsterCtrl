@@ -35,9 +35,14 @@ CAN and SocketCAN
   FIFO head queued for the next thread-context ``Send`` or ``Poll`` call.
   Completion, rejection, failure, abort and RX overflow counts remain visible
   through fixed-size statistics. ``Send`` and ``Poll`` reject both declared and
-  actual ISR callers. Callers must obtain a successful ``Stop`` before the
-  Adapter's storage or receiver state leaves scope; a failed controller stop is
-  exposed as ``kStopFailed`` and retains callback state for a retry.
+  actual ISR callers. Each Adapter receives its own process-lifetime
+  ``CanCallbackFence``. A successful ``Stop`` detaches the Adapter before its
+  storage or receiver state may leave scope, so a driver's late completion can
+  touch only the fence; a failed controller stop is exposed as ``kStopFailed``
+  and retains callback state for a retry. A fence is one-shot bound and cannot
+  be reused by a different Adapter object. For the same reason, a successfully
+  stopped Adapter is retired; create a new Adapter and fence instead of
+  restarting it.
   Admission is atomic only against an initially empty FIFO; a busy link may
   reject a later fragment with bounded backpressure. CAN FD remains a future
   Transport implementation and is rejected by the v0.2 resolver.

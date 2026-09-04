@@ -268,7 +268,12 @@ bool RunCanAdapterSmoke() {
     return false;
   }
 
-  aster::platform::zephyr::CanDeviceAdapter adapter(*can_device);
+  static aster::platform::zephyr::CanCallbackFence adapter_callbacks;
+  aster::platform::zephyr::CanDeviceAdapter adapter(*can_device, adapter_callbacks);
+  aster::platform::zephyr::CanDeviceAdapter duplicate_adapter(*can_device, adapter_callbacks);
+  if (duplicate_adapter.Ready() != aster::Status::kInvalidState) {
+    return false;
+  }
   CanCapture capture;
   capture.adapter = &adapter;
   capture.stop_when_full = true;
@@ -327,7 +332,8 @@ bool RunCanAdapterSmoke() {
     return false;
   }
 
-  aster::platform::zephyr::CanDeviceAdapter stopping_adapter(*can_device);
+  static aster::platform::zephyr::CanCallbackFence stopping_callbacks;
+  aster::platform::zephyr::CanDeviceAdapter stopping_adapter(*can_device, stopping_callbacks);
   CanCapture stopping_capture;
   if (stopping_adapter.Start({CaptureCanFrame, &stopping_capture}, {0x321, CAN_STD_ID_MASK}) !=
       aster::Status::kOk) {

@@ -39,15 +39,22 @@ bool IsTransmitAbort(int error) noexcept { return error == -ENETDOWN || error ==
 
 }  // namespace
 
-CanDeviceAdapter::CanDeviceAdapter(const device& can_device) noexcept : can_device_(can_device) {
+CanCallbackFence::CanCallbackFence() noexcept { k_sem_init(&finished_, 0, 1); }
+
+CanDeviceAdapter::CanDeviceAdapter(const device& can_device,
+                                   CanCallbackFence& callback_fence) noexcept
+    : can_device_(can_device), callback_fence_(callback_fence) {
   k_mutex_init(&control_mutex_);
   k_mutex_init(&poll_mutex_);
-  k_sem_init(&callback_finished_, 0, 1);
   k_msgq_init(&receive_queue_, receive_storage_.data(), sizeof(QueuedFrame), kReceiveQueueDepth);
   k_msgq_init(&transmit_queue_, transmit_storage_.data(), sizeof(can_frame), kTransmitQueueDepth);
+  callback_fence_bound_ = atomic_cas(&callback_fence_.claimed_, 0, 1);
 }
 
 Status CanDeviceAdapter::Ready() const noexcept {
+  if (!callback_fence_bound_ || retired_) {
+    return Status::kInvalidState;
+  }
   return device_is_ready(&can_device_) ? Status::kOk : Status::kUnavailable;
 }
 
@@ -66,6 +73,10 @@ Status CanDeviceAdapter::Start(transport::can::CanFrameReceiver receiver,
     k_mutex_unlock(&control_mutex_);
     return Status::kInvalidState;
   }
+  if (!callback_fence_bound_ || retired_) {
+    k_mutex_unlock(&control_mutex_);
+    return Status::kInvalidState;
+  }
   if (!device_is_ready(&can_device_)) {
     k_mutex_unlock(&control_mutex_);
     return Status::kUnavailable;
@@ -76,16 +87,18 @@ Status CanDeviceAdapter::Start(transport::can::CanFrameReceiver receiver,
   k_msgq_purge(&transmit_queue_);
   atomic_clear(&tx_in_flight_);
   receiver_ = receiver;
+  atomic_ptr_set(&callback_fence_.owner_, this);
 
   const can_filter native_filter{
       .id = filter.arbitration_id,
       .mask = filter.mask,
       .flags = 0,
   };
-  filter_id_ = can_add_rx_filter(&can_device_, Receive, this, &native_filter);
+  filter_id_ = can_add_rx_filter(&can_device_, Receive, &callback_fence_, &native_filter);
   if (filter_id_ < 0) {
     const auto filter_status = FromZephyrError(filter_id_);
     filter_id_ = -1;
+    DetachCallbacksLocked();
     receiver_ = {};
     StoreState(CanDeviceState::kStopped);
     k_mutex_unlock(&control_mutex_);
@@ -96,6 +109,7 @@ Status CanDeviceAdapter::Start(transport::can::CanFrameReceiver receiver,
   if (!IsOk(start_status)) {
     can_remove_rx_filter(&can_device_, filter_id_);
     filter_id_ = -1;
+    DetachCallbacksLocked();
     WaitForCallbacksLocked();
     receiver_ = {};
     StoreState(CanDeviceState::kStopped);
@@ -219,8 +233,9 @@ Status CanDeviceAdapter::Stop() noexcept {
   StoreState(CanDeviceState::kStopping);
   AbortQueuedTransmitsLocked();
 
-  // A successful can_stop() settles every driver-owned TX mailbox. Keep the
-  // filter and callback state intact when it fails so Stop() can be retried.
+  // Stop controller admission first. Keep the filter and callback owner intact
+  // when this fails so Stop() can be retried; a successful stop may still be
+  // followed by a driver completion, which is why detachment uses the fence.
   const int stop_error = can_stop(&can_device_);
   if (stop_error != 0 && stop_error != -EALREADY) {
     StoreState(CanDeviceState::kStopFailed);
@@ -232,6 +247,7 @@ Status CanDeviceAdapter::Stop() noexcept {
     can_remove_rx_filter(&can_device_, filter_id_);
     filter_id_ = -1;
   }
+  DetachCallbacksLocked();
 
   // Do not retain the state lock while another Poll() receiver is running.
   // The current dispatch thread already owns poll_mutex_ and may finish the
@@ -247,6 +263,7 @@ Status CanDeviceAdapter::Stop() noexcept {
   }
   k_msgq_purge(&receive_queue_);
   receiver_ = {};
+  retired_ = true;
   StoreState(CanDeviceState::kStopped);
   k_mutex_unlock(&control_mutex_);
   if (!called_from_dispatch) {
@@ -283,12 +300,19 @@ void CanDeviceAdapter::Receive(const device*, can_frame* frame, void* state) noe
   if (frame == nullptr || state == nullptr) {
     return;
   }
-  auto& self = *static_cast<CanDeviceAdapter*>(state);
-  atomic_inc(&self.callbacks_active_);
+  auto& fence = *static_cast<CanCallbackFence*>(state);
+  atomic_inc(&fence.active_);
+  auto* const owner = static_cast<CanDeviceAdapter*>(atomic_ptr_get(&fence.owner_));
+  if (owner == nullptr) {
+    atomic_dec(&fence.active_);
+    k_sem_give(&fence.finished_);
+    return;
+  }
+  auto& self = *owner;
   if (self.LoadState() != CanDeviceState::kRunning) {
     atomic_inc(&self.rx_dropped_);
-    atomic_dec(&self.callbacks_active_);
-    k_sem_give(&self.callback_finished_);
+    atomic_dec(&fence.active_);
+    k_sem_give(&fence.finished_);
     return;
   }
   const QueuedFrame queued{
@@ -300,16 +324,23 @@ void CanDeviceAdapter::Receive(const device*, can_frame* frame, void* state) noe
   } else {
     atomic_inc(&self.rx_dropped_);
   }
-  atomic_dec(&self.callbacks_active_);
-  k_sem_give(&self.callback_finished_);
+  atomic_dec(&fence.active_);
+  k_sem_give(&fence.finished_);
 }
 
 void CanDeviceAdapter::TransmitComplete(const device*, int error, void* state) noexcept {
   if (state == nullptr) {
     return;
   }
-  auto& self = *static_cast<CanDeviceAdapter*>(state);
-  atomic_inc(&self.callbacks_active_);
+  auto& fence = *static_cast<CanCallbackFence*>(state);
+  atomic_inc(&fence.active_);
+  auto* const owner = static_cast<CanDeviceAdapter*>(atomic_ptr_get(&fence.owner_));
+  if (owner == nullptr) {
+    atomic_dec(&fence.active_);
+    k_sem_give(&fence.finished_);
+    return;
+  }
+  auto& self = *owner;
   if (atomic_cas(&self.tx_in_flight_, 1, 0)) {
     if (error == 0) {
       atomic_inc(&self.tx_completions_);
@@ -319,8 +350,8 @@ void CanDeviceAdapter::TransmitComplete(const device*, int error, void* state) n
       atomic_inc(&self.tx_failures_);
     }
   }
-  atomic_dec(&self.callbacks_active_);
-  k_sem_give(&self.callback_finished_);
+  atomic_dec(&fence.active_);
+  k_sem_give(&fence.finished_);
   // Completion may run in an ISR. The next thread-context Send() or Poll()
   // advances the FIFO.
 }
@@ -333,7 +364,8 @@ void CanDeviceAdapter::PumpTransmitLocked() noexcept {
     }
 
     atomic_set(&tx_in_flight_, 1);
-    const int send_error = can_send(&can_device_, &next_frame, K_NO_WAIT, TransmitComplete, this);
+    const int send_error =
+        can_send(&can_device_, &next_frame, K_NO_WAIT, TransmitComplete, &callback_fence_);
     if (send_error == 0) {
       can_frame accepted_frame;
       static_cast<void>(k_msgq_get(&transmit_queue_, &accepted_frame, K_NO_WAIT));
@@ -365,9 +397,13 @@ void CanDeviceAdapter::AbortQueuedTransmitsLocked() noexcept {
   }
 }
 
+void CanDeviceAdapter::DetachCallbacksLocked() noexcept {
+  static_cast<void>(atomic_ptr_cas(&callback_fence_.owner_, this, nullptr));
+}
+
 void CanDeviceAdapter::WaitForCallbacksLocked() noexcept {
-  while (atomic_get(&callbacks_active_) != 0) {
-    static_cast<void>(k_sem_take(&callback_finished_, K_FOREVER));
+  while (atomic_get(&callback_fence_.active_) != 0) {
+    static_cast<void>(k_sem_take(&callback_fence_.finished_, K_FOREVER));
   }
 }
 

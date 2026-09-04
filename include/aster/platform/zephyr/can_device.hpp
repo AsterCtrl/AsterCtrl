@@ -39,9 +39,31 @@ enum class CanDeviceState : std::uint8_t {
   kStopFailed,
 };
 
+// Zephyr CAN drivers may finish a callback after can_stop() returns. This
+// process-lifetime fence keeps the driver-owned callback argument valid while
+// allowing a stopped Adapter to leave scope. A fence binds to exactly one
+// Adapter object and must not be reused.
+class CanCallbackFence {
+ public:
+  CanCallbackFence() noexcept;
+
+  CanCallbackFence(const CanCallbackFence&) = delete;
+  CanCallbackFence& operator=(const CanCallbackFence&) = delete;
+  CanCallbackFence(CanCallbackFence&&) = delete;
+  CanCallbackFence& operator=(CanCallbackFence&&) = delete;
+
+ private:
+  friend class CanDeviceAdapter;
+
+  atomic_t claimed_{};
+  atomic_ptr_t owner_{};
+  atomic_t active_{};
+  k_sem finished_{};
+};
+
 class CanDeviceAdapter {
  public:
-  explicit CanDeviceAdapter(const device& can_device) noexcept;
+  CanDeviceAdapter(const device& can_device, CanCallbackFence& callback_fence) noexcept;
 
   CanDeviceAdapter(const CanDeviceAdapter&) = delete;
   CanDeviceAdapter& operator=(const CanDeviceAdapter&) = delete;
@@ -85,24 +107,26 @@ class CanDeviceAdapter {
 
   void PumpTransmitLocked() noexcept;
   void AbortQueuedTransmitsLocked() noexcept;
+  void DetachCallbacksLocked() noexcept;
   void WaitForCallbacksLocked() noexcept;
   [[nodiscard]] CanDeviceState LoadState() const noexcept;
   void StoreState(CanDeviceState state) noexcept;
 
   const device& can_device_;
+  CanCallbackFence& callback_fence_;
   transport::can::CanFrameReceiver receiver_{};
   k_mutex control_mutex_{};
   k_mutex poll_mutex_{};
-  k_sem callback_finished_{};
   k_msgq receive_queue_{};
   alignas(4) std::array<char, kReceiveQueueDepth * sizeof(QueuedFrame)> receive_storage_{};
   k_msgq transmit_queue_{};
   alignas(4) std::array<char, kTransmitQueueDepth * sizeof(can_frame)> transmit_storage_{};
   k_tid_t dispatch_thread_id_{};
   int filter_id_{-1};
+  bool callback_fence_bound_{};
+  bool retired_{};
   atomic_t state_{};
   atomic_t tx_in_flight_{};
-  atomic_t callbacks_active_{};
   atomic_t tx_frames_{};
   atomic_t tx_completions_{};
   atomic_t tx_failures_{};
