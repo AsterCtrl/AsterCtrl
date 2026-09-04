@@ -469,7 +469,9 @@ class LocalRpc final : public RpcBackend {
     auto* const completion_state = pending.completion_state;
     const auto info = pending.info;
     std::array<std::byte, MaximumResponseSize> response{};
-    std::copy_n(pending.response.begin(), response_size, response.begin());
+    for (std::size_t index = 0; index < response_size; ++index) {
+      response[index] = pending.response[index];
+    }
     Release(pending);
     completion(completion_state, status, std::span<const std::byte>(response.data(), response_size),
                info, context);

@@ -720,6 +720,24 @@ def resolve_deployment(
                 )
         if transport.type in {"can", "canfd"} and transport.bitrate_bps is None:
             raise GraphError(f"transport {transport.name!r} requires bitrate_bps")
+        if transport.type == "can":
+            bounded_options = {
+                "poll_interval_us": (100, 1_000_000, 1_000),
+                "retry_timeout_us": (100, 1_000_000, 5_000),
+                "maximum_retries": (1, 15, 2),
+                "reassembly_timeout_us": (100, 10_000_000, 100_000),
+            }
+            for option, (minimum, maximum, default) in bounded_options.items():
+                value = transport.options.get(option, default)
+                if (
+                    isinstance(value, bool)
+                    or not isinstance(value, int)
+                    or not minimum <= value <= maximum
+                ):
+                    raise GraphError(
+                        f"transport {transport.name!r} requires options.{option} "
+                        f"in {minimum}..{maximum}"
+                    )
         if transport.type == "usb_cdc":
             for option in ("vid", "pid"):
                 value = transport.options.get(option)
@@ -1099,6 +1117,52 @@ def resolve_deployment(
                 f"transport {name!r} utilization {used:.3f} exceeds budget {limit:.3f}"
             )
 
+    can_routes = [
+        route
+        for route in routes
+        if route["transport"] != "local" and transport_by_name[route["transport"]].type == "can"
+    ]
+    if can_routes:
+        time_authorities = {
+            configured.authority or deployment.time_authority
+            for configured in deployment.time_domains
+            if configured.source == "synced"
+        }
+        time_authorities.discard(None)
+        if len(time_authorities) != 1:
+            raise GraphError(
+                "CAN application routes require exactly one synchronized time authority"
+            )
+        time_authority = next(iter(time_authorities))
+        participating_nodes: set[str] = set()
+        for transport_name in sorted({str(route["transport"]) for route in can_routes}):
+            transport_routes = [
+                route for route in can_routes if route["transport"] == transport_name
+            ]
+            peers_by_node: dict[str, set[str]] = {}
+            for route in transport_routes:
+                source_node = str(route["source_node"])
+                destination_node = str(route["destination_node"])
+                peers_by_node.setdefault(source_node, set()).add(destination_node)
+                peers_by_node.setdefault(destination_node, set()).add(source_node)
+            multiple_peers = sorted(
+                name for name, peers in peers_by_node.items() if len(peers) != 1
+            )
+            if multiple_peers:
+                raise GraphError(
+                    f"v0.2 CAN transport {transport_name!r} supports one peer per node: "
+                    + ", ".join(multiple_peers)
+                )
+            if time_authority not in peers_by_node:
+                raise GraphError(
+                    f"CAN transport {transport_name!r} does not connect synchronized "
+                    f"time authority {time_authority!r}"
+                )
+            participating_nodes.update(peers_by_node)
+        invalid_node_ids = sorted(name for name in participating_nodes if node_ids[name] > 255)
+        if invalid_node_ids:
+            raise GraphError("CAN links require node IDs in 1..255: " + ", ".join(invalid_node_ids))
+
     application_instances = {item["name"]: item for item in app_graph["instances"]}
     zephyr_runtime_by_node: dict[str, dict[str, int]] = {}
     for node in deployment.nodes:
@@ -1149,6 +1213,11 @@ def resolve_deployment(
                 # remaining fixed allowance covers its lifecycle Module,
                 # Router entries, Channel bridges, padding and statistics.
                 transport_storage_bytes += 768 + 4 * maximum_payload + 256 * len(transport_routes)
+            elif transport.type == "can":
+                maximum_payload = max(int(route["max_encoded_size"]) for route in transport_routes)
+                # Control-plane handshake/reassembly, route-local sender or
+                # receiver state, fixed payload buffers, and Adapter state.
+                transport_storage_bytes += 1536 + 8 * maximum_payload + 512 * len(transport_routes)
         capacities = {
             "module_capacity": max(1, len(node.instances) + len(external_transports)),
             # Every declared port may bind a distinct local name. Routes remain
@@ -1161,7 +1230,8 @@ def resolve_deployment(
             "executor_queue_depth": max(
                 (int(executor["queue_depth"]) for executor in executor_lock[node.name].values()),
                 default=16,
-            ),
+            )
+            + len(external_transports),
             # A full maximum-size message can enter an initially empty Adapter
             # even when the controller has no mailbox available yet.
             "can_tx_queue_depth": max(can_frame_counts, default=1),

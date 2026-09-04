@@ -37,6 +37,16 @@ CAN and SocketCAN
   Each endpoint uses the same logical Deployment resource name. Its Zephyr
   Hardware Profile maps to a Devicetree node label, while its Linux profile maps
   to a ``socketcan`` interface such as ``can0`` or ``vcan0``.
+  The generator constructs a ``CanChannelTransportModule`` as infrastructure,
+  ahead of Application Modules. It binds resolved Channel routes to either the
+  best-effort bridge or the reliable sender/receiver, owns Adapter lifecycle,
+  and polls handshake, heartbeat, time synchronization, retries and
+  reassembly from the bounded executor queue. Application frames remain gated
+  until the peer's Deployment and Schema hashes match and the clock is
+  synchronized. v0.2 therefore requires exactly one synchronized authority and
+  supports one peer per CAN node; the resolver rejects other layouts before
+  code generation. The generated fixed storage and one polling slot per
+  external Transport are included in the Runtime resource budget.
   On Zephyr, ``CanDeviceAdapter`` owns controller start/stop and one standard-ID
   RX filter. Its driver callback only copies a frame and timestamp into a
   bounded ``k_msgq``; ``Poll`` performs protocol dispatch later in executor
@@ -57,6 +67,9 @@ CAN and SocketCAN
   Admission is atomic only against an initially empty FIFO; a busy link may
   reject a later fragment with bounded backpressure. CAN FD remains a future
   Transport implementation and is rejected by the v0.2 resolver.
+  CAN RPC wire primitives remain independently tested, but generated CAN RPC
+  route composition is still release work; ``kRequiresTransportWiring`` keeps
+  such a Node from starting silently.
 
 USB CDC ACM
   The same COBS and CRC32C framing runs over a Zephyr CDC ACM byte stream and a

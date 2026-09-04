@@ -269,7 +269,7 @@ def test_rejects_zephyr_executor_queue_above_kconfig_capacity(tmp_path: Path) ->
     document["spec"]["nodes"]["sensor-node"]["executors"] = {"control": {"queue_depth": 257}}
     _save(deployment, document)
 
-    with pytest.raises(GraphError, match="executor queue depth 257.*maximum 256"):
+    with pytest.raises(GraphError, match="executor queue depth 258.*maximum 256"):
         resolve_deployment(workspace, deployment)
 
 
@@ -586,6 +586,52 @@ def test_usb_cdc_requires_supported_baud_rate(tmp_path: Path, baud_rate: int) ->
     _save(deployment, document)
 
     with pytest.raises((GraphError, ValidationError), match="baud_rate|options"):
+        resolve_deployment(workspace, deployment)
+
+
+@pytest.mark.parametrize(
+    ("option", "value"),
+    [
+        ("poll_interval_us", 99),
+        ("retry_timeout_us", 1_000_001),
+        ("maximum_retries", 0),
+        ("reassembly_timeout_us", True),
+    ],
+)
+def test_can_requires_bounded_runtime_options(tmp_path: Path, option: str, value: int) -> None:
+    workspace, _, _, deployment = create_workspace(tmp_path)
+    document = _load(deployment)
+    document["spec"]["transports"]["can0"].setdefault("options", {})[option] = value
+    _save(deployment, document)
+
+    with pytest.raises((GraphError, ValidationError), match=option):
+        resolve_deployment(workspace, deployment)
+
+
+def test_can_application_routes_require_synchronized_authority(tmp_path: Path) -> None:
+    workspace, _, _, deployment = create_workspace(tmp_path)
+    document = _load(deployment)
+    document["spec"]["time"]["domains"]["control"] = {"source": "monotonic"}
+    document["spec"]["time"].pop("authority")
+    _save(deployment, document)
+
+    with pytest.raises(GraphError, match="synchronized time authority"):
+        resolve_deployment(workspace, deployment)
+
+
+def test_can_time_authority_must_be_on_the_link(tmp_path: Path) -> None:
+    workspace, _, _, deployment = create_workspace(tmp_path)
+    document = _load(deployment)
+    document["spec"]["nodes"]["clock-node"] = {
+        "host": "soc",
+        "instances": [],
+        "domains": ["control"],
+    }
+    document["spec"]["time"]["authority"] = "clock-node"
+    document["spec"]["time"]["domains"]["control"]["authority"] = "clock-node"
+    _save(deployment, document)
+
+    with pytest.raises(GraphError, match="does not connect synchronized time authority"):
         resolve_deployment(workspace, deployment)
 
 

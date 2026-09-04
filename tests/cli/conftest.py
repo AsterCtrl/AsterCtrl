@@ -160,7 +160,7 @@ spec:
   time:
     authority: sensor-node
     domains:
-      control: {source: monotonic}
+      control: {source: synced, authority: sensor-node, max_skew_us: 500}
   budgets:
     hosts:
       mcu: {stack_bytes: 8192}

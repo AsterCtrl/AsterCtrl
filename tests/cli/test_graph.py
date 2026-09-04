@@ -110,7 +110,7 @@ def test_linux_and_zephyr_emitters_are_bounded(tmp_path: Path) -> None:
     assert "CONFIG_ASTERCTRL_MAX_RPC_SERVICES=1" in zephyr_config
     assert "CONFIG_ASTERCTRL_ROUTE_COUNT=1" in zephyr_config
     assert "CONFIG_ASTERCTRL_MAX_MESSAGE_BYTES=32" in zephyr_config
-    assert "CONFIG_ASTERCTRL_EXECUTOR_QUEUE_DEPTH=4" in zephyr_config
+    assert "CONFIG_ASTERCTRL_EXECUTOR_QUEUE_DEPTH=5" in zephyr_config
     assert "CONFIG_ASTERCTRL_CAN_TX_QUEUE_DEPTH=6" in zephyr_config
     assert "CONFIG_ASTERCTRL_ARENA_BYTES=4096" in zephyr_config
     assert "CONFIG_NUM_PREEMPT_PRIORITIES=15" in zephyr_config
@@ -140,10 +140,20 @@ def test_linux_and_zephyr_emitters_are_bounded(tmp_path: Path) -> None:
     assert "DEVICE_DT_GET(DT_NODELABEL(can1))" in zephyr_composition
     assert "device_is_ready(device_0)" in zephyr_composition
     assert "runtime.RegisterHardware" in zephyr_composition
+    assert "kWiredExternalRouteCount = 1U" in zephyr_composition
+    assert "CanDeviceAdapter" in zephyr_composition
+    assert "CanChannelTransportModule" in zephyr_composition
+    assert ".AddEgress(" in zephyr_composition
+    assert "runtime.AddInfrastructureModule(" in zephyr_composition
     assert (
         "add_library(aster_generated"
         in (output / "nodes/controller-node/aster.generated.cmake").read_text()
     )
+    linux_composition = (output / "nodes/controller-node/composition.generated.hpp").read_text()
+    assert "kWiredExternalRouteCount = 1U" in linux_composition
+    assert "SocketCanAdapter" in linux_composition
+    assert "CanChannelTransportModule" in linux_composition
+    assert ".AddIngress(" in linux_composition
     assert lock["stack_bytes"] == {"mcu": 1024, "soc": 1024}
     assert lock["static_ram_bytes"] == {"mcu": 256, "soc": 128}
     assert lock["flash_bytes"] == {"mcu": 4096, "soc": 2048}
@@ -167,7 +177,7 @@ def test_linux_and_zephyr_emitters_are_bounded(tmp_path: Path) -> None:
     assert zephyr_node.runtime is not None
     assert zephyr_node.runtime.arena_bytes == 4096
     assert zephyr_node.runtime.can_tx_queue_depth == 6
-    assert zephyr_node.runtime.transport_storage_bytes == 0
+    assert zephyr_node.runtime.transport_storage_bytes == 2176
     assert zephyr_node.runtime.fixed_ram_bytes == lock["runtime_ram_bytes"]["mcu"]
     assert typed_lock.hosts[0].os == "zephyr"
     assert typed_lock.hardware[0].resources[0].backend == "devicetree"
@@ -231,6 +241,7 @@ def test_linux_and_zephyr_emitters_are_bounded(tmp_path: Path) -> None:
                     "-Wall",
                     "-Wextra",
                     "-Werror",
+                    "-DASTER_GENERATED_METADATA_ONLY",
                     "-I",
                     str(include),
                     "-I",

@@ -15,11 +15,18 @@ the project follows Semantic Versioning.
   owns the Supervisor and Runtime services, and performs signal-driven shutdown.
 - Generated Linux TTY/USB CDC ACM Channel wiring plus a pseudo-TTY startup,
   framing and shutdown acceptance test.
+- Generated lifecycle-managed CAN/SocketCAN Channel wiring with bounded
+  best-effort and reliable paths, handshake/time-sync gating, retry and peer
+  restart recovery.
+- SocketCAN Adapter lifecycle coverage on Linux ``vcan`` and explicit CAN
+  transport state in the Zephyr RAM budget.
 
 ### Fixed
 
 - Release SBOMs now inventory every packaged asset by path, size, and SHA-256
   instead of reporting only the staging directory.
+- Linux consumers using a GNU C++ dialect no longer collide with the compiler's
+  legacy ``linux`` preprocessor macro.
 
 ## [0.2.0-alpha.1] - 2026-09-04
 

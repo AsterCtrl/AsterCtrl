@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import tempfile
@@ -69,11 +70,168 @@ def _channel_descriptor(route: dict[str, Any], endpoint: str) -> str:
     )
 
 
+def _cpp_byte_array(value: bytes) -> str:
+    return "{" + ", ".join(f"std::byte{{0x{byte:02x}}}" for byte in value) + "}"
+
+
+def _can_transport_wiring(
+    *,
+    platform: str,
+    node_name: str,
+    node_ids: dict[str, int],
+    selected: list[dict[str, Any]],
+    transport_name: str,
+    transport: dict[str, Any],
+    resource: dict[str, Any],
+    index: int,
+    deployment_id: str,
+    time_authorities: set[str],
+) -> tuple[str, str, int]:
+    if any(route["kind"] != "channel" for route in selected):
+        return "", "", 0
+    egress = [route for route in selected if route["source_node"] == node_name]
+    ingress = [route for route in selected if route["destination_node"] == node_name]
+    if not egress and not ingress:
+        return "", "", 0
+
+    peer_nodes = {
+        route["destination_node"] if route["source_node"] == node_name else route["source_node"]
+        for route in selected
+    }
+    if len(peer_nodes) != 1:
+        raise ValueError(
+            f"CAN transport {transport_name!r} on {node_name!r} requires exactly one peer"
+        )
+    if len(time_authorities) != 1:
+        raise ValueError(
+            f"CAN transport {transport_name!r} requires exactly one synchronized time authority"
+        )
+    peer_name = next(iter(peer_nodes))
+    local_node_id = int(node_ids[node_name])
+    peer_node_id = int(node_ids[peer_name])
+    if local_node_id > 255 or peer_node_id > 255:
+        raise ValueError(f"CAN transport {transport_name!r} requires Node IDs in 1..255")
+
+    identifier = re.sub(r"[^A-Za-z0-9_]", "_", transport_name)
+    identifier = f"transport_{identifier}_{index}"
+    schema_input = json.dumps(
+        [
+            {
+                "id": int(route["id"]),
+                "kind": route["kind"],
+                "schema_hash": route["schema_hash"],
+                "type": route["type"],
+            }
+            for route in sorted(selected, key=lambda item: int(item["id"]))
+        ],
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+    deployment_hash = bytes.fromhex(deployment_id)[:16]
+    schema_hash = hashlib.sha256(schema_input).digest()[:16]
+    maximum_message_size = max(int(route["max_encoded_size"]) for route in selected)
+    options = transport["options"]
+    poll_interval_ns = int(options.get("poll_interval_us", 1000)) * 1000
+    retry_timeout_ns = int(options.get("retry_timeout_us", 5000)) * 1000
+    maximum_retries = int(options.get("maximum_retries", 2))
+    reassembly_timeout_ns = int(options.get("reassembly_timeout_us", 100000)) * 1000
+
+    declarations = [
+        f"inline constexpr ::aster::transport::can::Handshake handshake_{identifier}{{\n"
+        f"    1U, {local_node_id}U, {_cpp_byte_array(deployment_hash)}, "
+        f"{_cpp_byte_array(schema_hash)}}};",
+        f"inline constexpr ::aster::transport::can::CanLinkControlConfig "
+        f"control_{identifier}{{\n"
+        f"    handshake_{identifier},\n"
+        f"    {peer_node_id}U,\n"
+        f"    {'true' if node_name in time_authorities else 'false'},\n"
+        "    1000000000ULL,\n"
+        "    100000000ULL,\n"
+        "    300000000ULL,\n"
+        "    10000000ULL,\n"
+        "    3U,\n"
+        f"    {retry_timeout_ns}ULL,\n"
+        f"    {maximum_retries}U,\n"
+        f"    {reassembly_timeout_ns}ULL}};",
+    ]
+    if platform == "zephyr":
+        if resource["backend"] != "devicetree":
+            raise ValueError(f"Zephyr CAN transport {transport_name!r} needs Devicetree")
+        declarations.extend(
+            (
+                f"inline ::aster::platform::zephyr::CanCallbackFence fence_{identifier};",
+                f"inline ::aster::platform::zephyr::CanDeviceAdapter adapter_{identifier}(\n"
+                f"    *DEVICE_DT_GET(DT_NODELABEL({resource['device']})), "
+                f"fence_{identifier});",
+            )
+        )
+        adapter_type = "::aster::platform::zephyr::CanDeviceAdapter"
+    else:
+        if resource["backend"] != "socketcan":
+            raise ValueError(f"Linux CAN transport {transport_name!r} needs SocketCAN")
+        declarations.append(
+            f"inline ::aster::transport::can::SocketCanAdapter adapter_{identifier}(\n"
+            f"    {_cpp_string(resource['device'])});"
+        )
+        adapter_type = "::aster::transport::can::SocketCanAdapter"
+    declarations.append(
+        f"inline ::aster::transport::can::CanChannelTransportModule<\n"
+        f"    {adapter_type}, {len(egress)}U, {len(ingress)}U, {maximum_message_size}U>\n"
+        f"    module_{identifier}({_cpp_string(transport_name)}, adapter_{identifier},\n"
+        f"                        control_{identifier}, {poll_interval_ns}ULL,\n"
+        f"                        {retry_timeout_ns}ULL, {maximum_retries}U,\n"
+        f"                        {reassembly_timeout_ns}ULL);"
+    )
+
+    registrations: list[str] = []
+    for route in egress:
+        reliability = (
+            "::aster::transport::can::ChannelReliability::kReliable"
+            if route["qos"] == "reliable"
+            else "::aster::transport::can::ChannelReliability::kBestEffort"
+        )
+        minimum_period_ns = max(1, int(1_000_000_000 / float(route["max_rate_hz"])))
+        declaration = "auto" if not registrations else ""
+        registrations.append(
+            f"  {declaration} status_{identifier} = detail::module_{identifier}.AddEgress(\n"
+            f"      {route['id']}U, {_channel_descriptor(route, 'from')}, {reliability},\n"
+            f"      ::aster::transport::can::CanPriority::kState, {minimum_period_ns}ULL);\n"
+            f"  if (!::aster::IsOk(status_{identifier})) {{\n"
+            f"    return status_{identifier};\n"
+            "  }"
+        )
+    for route in ingress:
+        reliability = (
+            "::aster::transport::can::ChannelReliability::kReliable"
+            if route["qos"] == "reliable"
+            else "::aster::transport::can::ChannelReliability::kBestEffort"
+        )
+        declaration = "auto" if not registrations else ""
+        registrations.append(
+            f"  {declaration} status_{identifier} = detail::module_{identifier}.AddIngress(\n"
+            f"      {route['id']}U, {_channel_descriptor(route, 'to')}, {reliability});\n"
+            f"  if (!::aster::IsOk(status_{identifier})) {{\n"
+            f"    return status_{identifier};\n"
+            "  }"
+        )
+    registrations.append(
+        f"  status_{identifier} = runtime.AddInfrastructureModule(\n"
+        f"      detail::module_{identifier}, {_cpp_string(f'transport.{transport_name}')});\n"
+        f"  if (!::aster::IsOk(status_{identifier})) {{\n"
+        f"    return status_{identifier};\n"
+        "  }"
+    )
+    return "\n\n".join(declarations), "\n".join(registrations), len(selected)
+
+
 def _zephyr_transport_wiring(
     node_name: str,
+    node_ids: dict[str, int],
     routes: list[dict[str, Any]],
     hardware: dict[str, Any] | None,
     transports: dict[str, Any],
+    deployment_id: str,
+    time_authorities: set[str],
 ) -> tuple[str, str, int]:
     declarations: list[str] = []
     registrations: list[str] = []
@@ -83,14 +241,34 @@ def _zephyr_transport_wiring(
 
     for index, (transport_name, transport) in enumerate(sorted(transports.items())):
         selected = [route for route in routes if route["transport"] == transport_name]
+        resource_name = transport["resource"]
+        resource = hardware["resources"].get(resource_name)
+        if transport["type"] == "can":
+            if resource is None:
+                raise ValueError(f"Zephyr CAN transport {transport_name!r} has no resource")
+            can_declarations, can_registrations, can_routes = _can_transport_wiring(
+                platform="zephyr",
+                node_name=node_name,
+                node_ids=node_ids,
+                selected=selected,
+                transport_name=transport_name,
+                transport=transport,
+                resource=resource,
+                index=index,
+                deployment_id=deployment_id,
+                time_authorities=time_authorities,
+            )
+            if can_routes:
+                declarations.append(can_declarations)
+                registrations.append(can_registrations)
+                wired_routes += can_routes
+            continue
         if transport["type"] != "usb_cdc" or any(route["kind"] != "channel" for route in selected):
             continue
         egress = [route for route in selected if route["source_node"] == node_name]
         ingress = [route for route in selected if route["destination_node"] == node_name]
         if not egress and not ingress:
             continue
-        resource_name = transport["resource"]
-        resource = hardware["resources"].get(resource_name)
         if resource is None or resource["backend"] != "devicetree":
             raise ValueError(f"Zephyr transport {transport_name!r} has no Devicetree resource")
         identifier = re.sub(r"[^A-Za-z0-9_]", "_", transport_name)
@@ -146,9 +324,12 @@ def _zephyr_transport_wiring(
 
 def _linux_transport_wiring(
     node_name: str,
+    node_ids: dict[str, int],
     routes: list[dict[str, Any]],
     hardware: dict[str, Any] | None,
     transports: dict[str, Any],
+    deployment_id: str,
+    time_authorities: set[str],
 ) -> tuple[str, str, int]:
     declarations: list[str] = []
     registrations: list[str] = []
@@ -158,14 +339,34 @@ def _linux_transport_wiring(
 
     for index, (transport_name, transport) in enumerate(sorted(transports.items())):
         selected = [route for route in routes if route["transport"] == transport_name]
+        resource_name = transport["resource"]
+        resource = hardware["resources"].get(resource_name)
+        if transport["type"] == "can":
+            if resource is None:
+                raise ValueError(f"Linux CAN transport {transport_name!r} has no resource")
+            can_declarations, can_registrations, can_routes = _can_transport_wiring(
+                platform="linux",
+                node_name=node_name,
+                node_ids=node_ids,
+                selected=selected,
+                transport_name=transport_name,
+                transport=transport,
+                resource=resource,
+                index=index,
+                deployment_id=deployment_id,
+                time_authorities=time_authorities,
+            )
+            if can_routes:
+                declarations.append(can_declarations)
+                registrations.append(can_registrations)
+                wired_routes += can_routes
+            continue
         if transport["type"] != "usb_cdc" or any(route["kind"] != "channel" for route in selected):
             continue
         egress = [route for route in selected if route["source_node"] == node_name]
         ingress = [route for route in selected if route["destination_node"] == node_name]
         if not egress and not ingress:
             continue
-        resource_name = transport["resource"]
-        resource = hardware["resources"].get(resource_name)
         if resource is None or resource["backend"] != "tty":
             raise ValueError(f"Linux transport {transport_name!r} has no TTY resource")
         identifier = re.sub(r"[^A-Za-z0-9_]", "_", transport_name)
@@ -284,6 +485,7 @@ def _generate_bounded_types(workspace: Any, output_root: Path) -> tuple[Path, ..
 def _composition(
     node_name: str,
     node: dict[str, Any],
+    node_ids: dict[str, int],
     host_name: str,
     platform: str,
     instances: list[dict[str, Any]],
@@ -293,6 +495,7 @@ def _composition(
     hardware: dict[str, Any] | None,
     transports: dict[str, Any],
     deployment_id: str,
+    time_authorities: set[str],
     artifact_input_digest: str,
 ) -> str:
     instance_rows = ",\n".join(
@@ -363,13 +566,29 @@ def _composition(
             zephyr_wiring_declarations,
             zephyr_wiring_registrations,
             wired_external_route_count,
-        ) = _zephyr_transport_wiring(node_name, routes, hardware, transports)
+        ) = _zephyr_transport_wiring(
+            node_name,
+            node_ids,
+            routes,
+            hardware,
+            transports,
+            deployment_id,
+            time_authorities,
+        )
     elif platform == "linux":
         (
             linux_wiring_declarations,
             linux_wiring_registrations,
             wired_external_route_count,
-        ) = _linux_transport_wiring(node_name, routes, hardware, transports)
+        ) = _linux_transport_wiring(
+            node_name,
+            node_ids,
+            routes,
+            hardware,
+            transports,
+            deployment_id,
+            time_authorities,
+        )
     channel_port_count = sum(
         port["kind"] in {"publisher", "subscriber"}
         for instance in instances
@@ -384,9 +603,12 @@ def _composition(
         for port in instance["ports"]
     )
     runtime_message_size = max((int(route["max_size"]) for route in routes), default=256)
+    external_transports = {
+        str(route["transport"]) for route in routes if route["transport"] != "local"
+    }
     executor_queue_depth = max(
         (int(executor["queue_depth"]) for executor in node["executors"].values()), default=16
-    )
+    ) + len(external_transports)
     typed = bool(instances) and all(item["class_name"] and item["header"] for item in instances)
     if typed:
         class_pattern = re.compile(r"^(?:::)?[A-Za-z_]\w*(?:::[A-Za-z_]\w*)*$")
@@ -447,10 +669,14 @@ def _composition(
 #if defined(__ZEPHYR__)
 #include <zephyr/device.h>
 #include <zephyr/devicetree.h>
+#include "aster/platform/zephyr/can_device.hpp"
 #include "aster/platform/zephyr/usb_cdc_acm.hpp"
+#include "aster/transport/can/channel_transport_module.hpp"
 #include "aster/transport/channel_transport_module.hpp"
 #include "aster/transport/usb/stream_transport.hpp"
 #elif !defined(ASTER_GENERATED_METADATA_ONLY)
+#include "aster/transport/can/channel_transport_module.hpp"
+#include "aster/transport/can/socketcan_adapter.hpp"
 #include "aster/transport/channel_transport_module.hpp"
 #include "aster/transport/usb/linux_tty.hpp"
 #include "aster/transport/usb/stream_transport.hpp"
@@ -865,6 +1091,13 @@ def emit_deployment(
     modules = load_modules(workspace)
     application_instances = {item.name: item for item in application.instances}
     hosts = {item.name: item for item in deployment.hosts}
+    node_ids = {name: int(node["id"]) for name, node in lock["nodes"].items()}
+    time_authorities = {
+        domain.authority or deployment.time_authority
+        for domain in deployment.time_domains
+        if domain.source == "synced"
+    }
+    time_authorities.discard(None)
     _write(output_root / "deployment.lock.yaml", dump_yaml(lock))
     _generate_bounded_types(workspace, output_root)
     for node_name, node in sorted(lock["nodes"].items()):
@@ -914,6 +1147,7 @@ def emit_deployment(
         composition = _composition(
             node_name,
             node,
+            node_ids,
             host_name,
             host.os,
             instance_specs,
@@ -923,6 +1157,7 @@ def emit_deployment(
             hardware,
             node_transports,
             lock["deployment_id"],
+            time_authorities,
             lock["artifacts"][node_name]["input_digest"],
         )
         if host.os == "zephyr":

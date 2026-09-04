@@ -57,6 +57,12 @@ if(UNIX)
     $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
   target_link_libraries(aster_linux PUBLIC aster::core Threads::Threads
                                       PRIVATE ${CMAKE_DL_LIBS})
+  if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    # GNU dialects predefine `linux` as a macro. Keep the public
+    # aster::platform::linux namespace usable by downstream targets even when
+    # they have not disabled compiler extensions themselves.
+    target_compile_options(aster_linux INTERFACE -Ulinux)
+  endif()
   aster_target_defaults(aster_linux)
   list(APPEND ASTER_INSTALL_TARGETS aster_linux)
 
@@ -220,6 +226,9 @@ if(ASTER_BUILD_TESTS)
                    tests/transports/can_link_control_test.cpp aster::transport)
     aster_add_test(aster_can_channel_bridge_test
                    tests/transports/can_channel_bridge_test.cpp aster::transport)
+    aster_add_test(aster_can_channel_transport_module_test
+                   tests/transports/can_channel_transport_module_test.cpp
+                   aster::transport)
     aster_add_test(aster_can_rpc_bridge_test
                    tests/transports/can_rpc_bridge_test.cpp aster::transport)
     if(ASTER_ENABLE_TSAN)

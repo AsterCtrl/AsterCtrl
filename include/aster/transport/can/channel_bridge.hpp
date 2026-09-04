@@ -186,6 +186,10 @@ class FastChannelIngress {
   }
 
   [[nodiscard]] FreshnessGuard& freshness() noexcept { return freshness_; }
+  void ResetPeer() noexcept {
+    reassembler_.ResetHistory();
+    freshness_.Reset();
+  }
   [[nodiscard]] const FastReassemblyStats& reassembly_stats() const noexcept {
     return reassembler_.stats();
   }

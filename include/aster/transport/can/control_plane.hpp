@@ -306,6 +306,13 @@ class FreshnessGuard {
   }
 
   void Rearm() noexcept { explicitly_rearmed_ = true; }
+  void Reset() noexcept {
+    last_receive_ns_ = 0;
+    last_sequence_ = 0;
+    has_sample_ = false;
+    explicitly_rearmed_ = false;
+    state_ = FreshnessState::kUnarmed;
+  }
   FreshnessState state() const noexcept { return state_; }
   std::uint8_t last_sequence() const noexcept { return last_sequence_; }
 
