@@ -18,6 +18,8 @@ uv run aster deploy plan examples/linux_zephyr_usb_cdc/deployment.yaml examples/
 ```
 
 Deployment code generation emits the bounded header and both Node compositions
-in one deterministic tree. CI compiles them with C++20, exceptions and RTTI
-disabled. USB framing has host tests, but physical enumeration remains an
-explicitly pending hardware verification item for v0.2.0.
+in one deterministic tree. The generated Zephyr endpoint registers its Channel
+route, starts the CDC ACM framing Adapter, and polls it from the resolved
+executor without changing ``CommandSink``. The Linux endpoint and physical
+end-to-end link remain release work; physical enumeration is still an explicitly
+pending hardware verification item for v0.2.0.

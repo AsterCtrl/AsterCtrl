@@ -324,6 +324,7 @@ class LockedZephyrRuntime:
     maximum_message_size: int
     executor_queue_depth: int
     can_tx_queue_depth: int
+    transport_storage_bytes: int
     hardware_capacity: int
     executor_stack_bytes: int
     arena_bytes: int

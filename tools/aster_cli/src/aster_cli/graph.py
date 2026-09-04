@@ -144,6 +144,7 @@ def _zephyr_fixed_ram(capacities: dict[str, int]) -> int:
         + 512  # executor object, thread control block, semaphores, and message queue
         + capacities["executor_queue_depth"] * 32
         + capacities["can_tx_queue_depth"] * 32
+        + capacities["transport_storage_bytes"]
         + modules * 32  # ModuleSlot storage
         + (modules + 3) * 8  # RegistrySlot storage
         + channels * (96 + capacities["subscriber_capacity"] * 16)  # topics and subscribers
@@ -726,6 +727,16 @@ def resolve_deployment(
                     raise GraphError(
                         f"transport {transport.name!r} requires options.{option} in 1..65535"
                     )
+            poll_interval_us = transport.options.get("poll_interval_us", 1000)
+            if (
+                isinstance(poll_interval_us, bool)
+                or not isinstance(poll_interval_us, int)
+                or not 100 <= poll_interval_us <= 1_000_000
+            ):
+                raise GraphError(
+                    f"transport {transport.name!r} requires options.poll_interval_us "
+                    "in 100..1000000"
+                )
         maximum_mtu = {"can": 8, "canfd": 64}.get(transport.type)
         if maximum_mtu is not None and transport.mtu > maximum_mtu:
             raise GraphError(
@@ -1114,6 +1125,18 @@ def resolve_deployment(
                 if route["kind"] == "channel" and payload_size <= 7
                 else (payload_size + _CAN_FRAGMENT_PAYLOAD - 1) // _CAN_FRAGMENT_PAYLOAD
             )
+        transport_storage_bytes = 0
+        for transport_name in sorted(external_transports):
+            transport_routes = [
+                route for route in node_routes if route["transport"] == transport_name
+            ]
+            transport = transport_by_name[transport_name]
+            if transport.type == "usb_cdc":
+                maximum_payload = max(int(route["max_size"]) for route in transport_routes)
+                # PacketCodec owns one raw and two COBS-sized buffers. The
+                # remaining fixed allowance covers its lifecycle Module,
+                # Router entries, Channel bridges, padding and statistics.
+                transport_storage_bytes += 768 + 4 * maximum_payload + 256 * len(transport_routes)
         capacities = {
             "module_capacity": max(1, len(node.instances) + len(external_transports)),
             # Every declared port may bind a distinct local name. Routes remain
@@ -1130,6 +1153,7 @@ def resolve_deployment(
             # A full maximum-size message can enter an initially empty Adapter
             # even when the controller has no mailbox available yet.
             "can_tx_queue_depth": max(can_frame_counts, default=1),
+            "transport_storage_bytes": transport_storage_bytes,
             "hardware_capacity": max(1, len(capability_names)),
             "executor_stack_bytes": max(
                 [1024]

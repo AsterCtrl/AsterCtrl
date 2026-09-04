@@ -4,6 +4,17 @@ Transport Adapters
 The Graph contains logical Channel and RPC routes. Transport details remain in
 the Deployment and never enter Module Interfaces.
 
+``ChannelPacketEgress`` and ``ChannelPacketIngress`` form the shared seam
+between the local Channel registry and packet-oriented Transports. They carry
+the resolved Route ID, Schema Hash, sequence and timestamps without knowing
+whether the Adapter below is USB, an in-memory test link, or a future reliable
+CAN packet Adapter. An optional maximum age becomes an absolute wire deadline;
+leave it disabled unless both nodes use the same synchronized clock domain.
+``ChannelTransportModule`` owns route registration, Transport start/stop and
+bounded executor-driven polling. As generated infrastructure it starts before
+Application Modules, stops after them, and therefore keeps link lifecycle out
+of business code.
+
 Local
   Bounded in-process dispatch for Channel and RPC. Registration is sealed before
   use and delivery records capacity and callback failures.
@@ -51,6 +62,10 @@ USB CDC ACM
   The same COBS and CRC32C framing runs over a Zephyr CDC ACM byte stream and a
   Linux TTY. A Deployment must specify an explicit product VID and PID. Values
   in examples are development-only and must not be shipped as an allocation.
+  Zephyr Channel routes are emitted as lifecycle-managed infrastructure and use
+  ``options.poll_interval_us`` (default 1000, bounded to 100--1000000) for
+  executor-driven receive polling. Their fixed framing and bridge storage is
+  included in the Deployment Lock's RAM budget.
   The Zephyr endpoint maps to a CDC ACM Devicetree node and the Linux endpoint
   maps to an absolute ``/dev`` path with the ``tty`` backend.
 

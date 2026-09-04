@@ -44,9 +44,7 @@ def test_release_sbom_inventories_every_asset_deterministically(tmp_path: Path) 
     assert components[1]["hashes"] == [
         {"alg": "SHA-256", "content": hashlib.sha256(b"linux").hexdigest()}
     ]
-    assert components[1]["properties"] == [
-        {"name": "asterctrl:release-asset:size", "value": "5"}
-    ]
+    assert components[1]["properties"] == [{"name": "asterctrl:release-asset:size", "value": "5"}]
 
 
 def test_release_sbom_cli_writes_valid_json(

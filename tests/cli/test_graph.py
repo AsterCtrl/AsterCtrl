@@ -167,6 +167,7 @@ def test_linux_and_zephyr_emitters_are_bounded(tmp_path: Path) -> None:
     assert zephyr_node.runtime is not None
     assert zephyr_node.runtime.arena_bytes == 4096
     assert zephyr_node.runtime.can_tx_queue_depth == 6
+    assert zephyr_node.runtime.transport_storage_bytes == 0
     assert zephyr_node.runtime.fixed_ram_bytes == lock["runtime_ram_bytes"]["mcu"]
     assert typed_lock.hosts[0].os == "zephyr"
     assert typed_lock.hardware[0].resources[0].backend == "devicetree"
@@ -368,3 +369,12 @@ def test_zephyr_usb_emitter_selects_new_stack_and_product_ids(tmp_path: Path) ->
     assert "CONFIG_ASTERCTRL_USB_PID=0x4001" in config
     assert "aster-bus = &cdc_acm_uart0;" in overlay
     assert '&cdc_acm_uart0 {\n  status = "okay";\n};' in overlay
+    composition = (output / "nodes/sensor-node/composition.generated.hpp").read_text()
+    assert "kWiredExternalRouteCount = 1U" in composition
+    assert "CdcAcmByteStream" in composition
+    assert "StreamTransport<32U>" in composition
+    assert "ChannelTransportModule<1U, 0U>" in composition
+    assert ".AddEgress(" in composition
+    assert "runtime.AddInfrastructureModule(" in composition
+    lock = yaml.safe_load((output / "deployment.lock.yaml").read_text())
+    assert lock["nodes"]["sensor-node"]["runtime"]["transport_storage_bytes"] == 1152

@@ -5,6 +5,18 @@ the project follows Semantic Versioning.
 
 ## [Unreleased]
 
+### Added
+
+- Shared bounded Channel-to-packet Transport bridges and a lifecycle Module for
+  generated Transport infrastructure.
+- Generated Zephyr USB CDC ACM Channel wiring with bounded polling and explicit
+  framing-buffer memory accounting.
+
+### Fixed
+
+- Release SBOMs now inventory every packaged asset by path, size, and SHA-256
+  instead of reporting only the staging directory.
+
 ## [0.2.0-alpha.1] - 2026-09-04
 
 ### Added

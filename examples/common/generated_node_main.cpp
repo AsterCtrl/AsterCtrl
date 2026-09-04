@@ -72,6 +72,10 @@ int main() {
         static_cast<unsigned int>(aster::Status::kUnavailable));
     return 2;
   }
+  status = aster::generated::RegisterGeneratedTransports(node);
+  if (!aster::IsOk(status)) {
+    return Fail("transport", status);
+  }
   status = node.Initialize();
   if (!aster::IsOk(status)) {
     return Fail("initialize", status);

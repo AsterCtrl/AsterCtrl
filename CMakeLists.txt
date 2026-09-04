@@ -207,6 +207,11 @@ if(ASTER_BUILD_TESTS)
                    tests/transports/peer_registry_test.cpp aster::transport)
     aster_add_test(aster_local_transport_test
                    tests/transports/local_transport_test.cpp aster::transport)
+    aster_add_test(aster_channel_bridge_test
+                   tests/transports/channel_bridge_test.cpp aster::transport)
+    aster_add_test(aster_channel_transport_module_test
+                   tests/transports/channel_transport_module_test.cpp
+                   aster::transport)
     aster_add_test(aster_can_protocol_test
                    tests/transports/can_protocol_test.cpp aster::transport)
     aster_add_test(aster_can_link_control_test

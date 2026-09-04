@@ -40,6 +40,7 @@ spec:
         # Development-only identifiers; products must use their assigned VID/PID.
         vid: 51966
         pid: 16385
+        poll_interval_us: 1000
   route_rules:
     - match: gateway.command->actuator.command
       transport: usb0

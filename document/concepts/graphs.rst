@@ -28,6 +28,10 @@ Channel/subscriber and RPC capacities, message buffers, and Hardware registry.
 ``flash_bytes`` is accumulated per Host, and all three RAM components and flash
 are checked against the Deployment and Hardware Profile limits. Final linker
 size checks remain authoritative.
+Generated Zephyr packet Transports also contribute a conservative
+``transport_storage_bytes`` allowance to ``runtime_ram_bytes`` for framing
+buffers, route bridges and lifecycle state; the Lock never treats this hidden
+infrastructure as free memory.
 
 Hardware Profiles are host-specific. A Zephyr profile maps logical resource
 names to Devicetree node labels with the ``devicetree`` backend; a Linux profile
