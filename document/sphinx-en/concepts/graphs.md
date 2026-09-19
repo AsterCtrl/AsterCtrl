@@ -1,7 +1,10 @@
 # Configuration, communication and placement
 
-Ordinary Linux applications no longer require an Application Graph, a Deployment
-Graph, application.yaml, Module Port tables or a Deployment Lock.
+Ordinary Linux has one user-facing configuration: `runtime.yaml`.
+`application.yaml`, the separate Application/Deployment Graph pair and Module Port
+tables were removed from the current user model. They remain only in legacy v1alpha2
+migration fixtures. Ordinary Linux does not produce a Deployment Lock; it is not a
+local-run entrypoint.
 
 ## Implemented: runtime.yaml
 

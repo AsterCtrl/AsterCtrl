@@ -26,7 +26,8 @@ committed. `ASTERCTRL_SOURCE_DIR` is convenient while developing against a
 checkout; installed SDKs are found with `find_package(AsterCtrl)` instead.
 
 The template has a Module header/source, Package export metadata, CMake and
-runtime.yaml. It has no custom main, Application graph or Deployment Lock.
+runtime.yaml. The current model has no custom main, separate Application graph or
+Deployment Lock file.
 `aster_add_package(demo MANIFEST package.yaml)` generates the C ABI entry in
 the build directory and links only Module/Package Interfaces. Edit runtime.yaml
 and rerun CMake (or build, which reruns configuration) to update the launch

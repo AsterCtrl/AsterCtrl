@@ -8,7 +8,8 @@
 C++ Module → Package 动态库 → runtime.yaml → aster run --config runtime.yaml
 ```
 
-普通 Linux 不需要 `application.yaml`、Port 连接表或 Deployment Lock。
+普通 Linux 当前只有 `runtime.yaml`；`application.yaml` 和独立的 Port/Graph 输入已从当前
+模型移除。Deployment Lock 也不是本地运行的前置条件。
 下面的配置假定应用已经构建并导出了 `robot.Controller`：
 
 ```yaml

@@ -7,8 +7,8 @@ Modules and communication configuration, not platform/simulation branches in
 algorithm source.
 
 Linux already selects instances, parameters, namespace/remap and executors in
-runtime.yaml and supports mixed static/dynamic Modules. It requires neither
-application.yaml nor a generic Hardware Profile. Source reuse still depends on
+runtime.yaml and supports mixed static/dynamic Modules. `application.yaml` was removed
+from the current user model; a generic Hardware Profile is not required. Source reuse still depends on
 compatible message semantics, clock behavior and capacity contracts; changing a
 filename alone does not establish equivalence.
 

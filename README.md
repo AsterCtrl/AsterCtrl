@@ -18,7 +18,8 @@ sources are intended to be rebuilt for bounded, static Zephyr deployments.
 - `runtime.yaml` selects Packages, Module instances, executors and instance configuration.
 - Modules register Topic and RPC endpoints during `Initialize`; the Runtime
   validates and seals those registrations before `Start`.
-- Ordinary Linux runs do not require an Application graph or Deployment Lock.
+- Ordinary Linux has one user-facing `runtime.yaml`; the separate Application graph and
+  Deployment Lock model was removed from this path.
 - Optional cross-node and Zephyr deployment compilation is being migrated to
   the same runtime configuration, without Module Port-to-Port graphs.
 - Every Module lifecycle call uses one canonical C ABI. Linux creates Module

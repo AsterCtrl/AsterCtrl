@@ -2,9 +2,10 @@
 
 ## Default workflow
 
-`aster run --config runtime.yaml` starts aster_runtime without a custom launcher,
-Application file or Deployment Lock. Packages, instances, executors, logging and
-parameters are parsed at startup. Restart after configuration changes; hot reload
+`aster run --config runtime.yaml` starts aster_runtime without a custom launcher.
+Linux has only the user-facing `runtime.yaml`; Application files and Deployment Locks
+are not local-run entrypoints. Packages, instances, executors, logging and parameters
+are parsed at startup. Restart after configuration changes; hot reload
 is not implemented.
 
 Named serial executors and thread pools honor thread counts and queue capacities.

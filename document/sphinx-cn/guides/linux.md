@@ -2,8 +2,8 @@
 
 ## 默认路径
 
-`aster run --config runtime.yaml` 启动通用 aster_runtime，不要求自写启动器、
-Application 文件或 Deployment Lock。配置中的 Package、实例、执行器、日志和参数
+`aster run --config runtime.yaml` 启动通用 aster_runtime，不要求自写启动器。
+当前 Linux 配置只有 `runtime.yaml`；Application 文件和 Deployment Lock 不属于本地运行入口。配置中的 Package、实例、执行器、日志和参数
 在启动时解析。配置改变后重新运行即可；当前不提供热重载。
 
 具名串行执行器和线程池落实线程数与队列容量。Local Channel/RPC 使用实例的

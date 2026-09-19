@@ -1,7 +1,9 @@
 # 配置、通信关系与部署
 
-普通 Linux 应用不再要求用户维护 Application Graph 和 Deployment Graph，
-也不需要 application.yaml、Module Port 连接表或 Deployment Lock。
+普通 Linux 当前只有一份用户配置：`runtime.yaml`。
+`application.yaml`、独立的 Application/Deployment Graph 和 Module Port 连接表已经从当前
+用户模型移除；它们只在旧 v1alpha2 迁移回归资料中保留。普通 Linux 也不生成
+Deployment Lock，锁文件不属于本地运行入口。
 
 ## 当前已实现：runtime.yaml
 

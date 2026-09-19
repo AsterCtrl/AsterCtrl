@@ -4,8 +4,9 @@
 
 AsterCtrl targets robot control applications on Linux and Zephyr. Linux now
 supports configuration-driven Package loading and Module execution. The v1alpha3
-static Zephyr deployment path is being migrated. Ordinary Linux applications
-no longer require Application files or Module Port connection tables.
+static Zephyr deployment path is being migrated. Ordinary Linux uses one
+user-facing `runtime.yaml`; Application files and Module Port connection tables
+were removed from the current user model.
 
 ```{toctree}
 :caption: Concepts

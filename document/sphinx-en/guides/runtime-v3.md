@@ -8,8 +8,10 @@ This is an implementation note for the next alpha, not a full dual-platform acce
 C++ Module → Package shared library → runtime.yaml → aster run --config runtime.yaml
 ```
 
-Ordinary Linux execution requires neither `application.yaml`, Module Port tables nor a
-Deployment Lock. This illustrative configuration assumes `robot.Controller` has been built:
+Ordinary Linux has one user-facing configuration: `runtime.yaml`. `application.yaml` and
+separate Module Port/Graph inputs were removed from the current model; a Deployment Lock
+is not a local-run prerequisite. This illustrative configuration assumes `robot.Controller`
+has been built:
 
 ```yaml
 api_version: aster.dev/v1alpha3

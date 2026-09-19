@@ -4,7 +4,7 @@
 
 AsterCtrl 面向 Linux 与 Zephyr 的机器人控制应用。Linux 已提供配置驱动的 Package
 加载和 Module 运行；同源 Module 的 v1alpha3 Zephyr 静态部署路径仍在迁移。
-普通 Linux 使用不再要求 Application 文件或 Port 连接表。
+普通 Linux 现在只有 `runtime.yaml`；Application 文件和 Port 连接表已从当前用户模型移除。
 
 ```{toctree}
 :caption: 核心概念

@@ -26,7 +26,7 @@ uv run aster run --runtime hello-aster/build/asterctrl/aster_runtime \
 发现。
 
 模板只包含 Module 头文件/源码、Package 导出元数据、CMake 与 runtime.yaml。
-没有自写 main、Application 图或 Deployment Lock。
+当前模型没有自写 main、独立 Application 图或 Deployment Lock 文件。
 `aster_add_package(demo MANIFEST package.yaml)` 在构建目录自动生成 C ABI 入口，
 Package 只链接 Module/Package Interface。修改 runtime.yaml 后重新运行 CMake
 （或触发重新配置的 build）即可更新启动配置，不会重新编译 Module。Ctrl-C 停止运行。

@@ -7,8 +7,8 @@ Zephyr modules. The former `aster package` dependency manager is removed.
 ## Configuration-driven Linux
 
 `aster init DIRECTORY` creates a minimal Module header/source, v1alpha3
-package.yaml, runtime.yaml and CMakeLists.txt. There is no custom launcher,
-Application graph or Deployment Lock.
+package.yaml, runtime.yaml and CMakeLists.txt. The template has no custom launcher;
+`runtime.yaml` is the only local-run configuration.
 
 `aster_add_package(target MANIFEST package.yaml)` invokes
 `aster codegen --package package.yaml --output BUILD_DIRECTORY` during CMake
