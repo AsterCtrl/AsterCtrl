@@ -1,5 +1,3 @@
-:orphan:
-
 # Link-U-OS 对 AsterCtrl 的参考评估
 
 审计日期：2026-09-18。

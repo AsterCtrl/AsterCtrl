@@ -11,6 +11,7 @@
 
 convergence-audit
 2026-09-05-core-convergence
+2026-09-18-link-u-os-research
 2026-09-04-v0.2-foundation
 template
 ```
