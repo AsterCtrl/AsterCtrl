@@ -3,6 +3,15 @@
 The only public executable is `aster` and the Python import package is
 `aster_cli`.
 
+## Command boundary
+
+| Command | Current status |
+| --- | --- |
+| `init`, `doctor`, `validate`, `run` | Current Linux workflow; `run` wires Local Channel/RPC only |
+| `codegen --package`, `codegen --proto` | Current Package-entry and bounded-Protobuf generators |
+| `graph`, `resolve`, `build` | Legacy v1alpha2 deployment regression; they do not consume v1alpha3 `runtime.yaml`/`deployment.yaml` |
+| `deploy plan/apply/status` | Legacy v1alpha2 Bundle/Inventory operations; they do not start services or flash firmware |
+
 `aster init`
 
 : Create a minimal Linux Module Package and runtime.yaml, with no launcher or Port graph.

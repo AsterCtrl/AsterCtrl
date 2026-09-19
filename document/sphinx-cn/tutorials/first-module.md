@@ -1,7 +1,7 @@
 # 编写第一个 Module
 
 Module 在普通 C++20 中实现业务行为。Topic/RPC 注册发生在 `Initialize()`，工作从
-`Start()` 开始；普通 Linux 应用不需要再声明一份 Port 表：
+`Start()` 开始；当前 Linux 直接使用这些注册结果，不维护独立的 Port 表：
 
 ```cpp
 class Controller final : public aster::ModuleBase {

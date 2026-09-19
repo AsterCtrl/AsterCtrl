@@ -37,12 +37,16 @@ Offline tools cannot infer arbitrary C++ registrations. `aster run --check`
 loads Modules, initializes them and checks local registrations; cross-node
 contract verification is still pending.
 
-## Optional cross-node and Zephyr deployment: in progress
+## Designed cross-node and Zephyr deployment (not executable yet)
 
 The target optional deployment.yaml references Runtime configuration and selects
 placement, Linux/Zephyr platforms, boards, resources and links. Cross-node
 contracts describe Topic/RPC names, types, sending/receiving nodes and capacities,
 not Module Port-to-Port edges.
+
+The current `aster graph`, `aster resolve` and `aster build` commands still accept
+only legacy v1alpha2 inputs; they cannot consume the v1alpha3 `deployment.yaml`
+described here. Do not treat this target shape as an executable configuration.
 
 Business configuration remains in the Runtime configuration. Node configuration
 contains platform policies, with no arbitrary deep YAML overrides. Zephyr needs

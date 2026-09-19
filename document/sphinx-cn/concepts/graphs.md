@@ -32,11 +32,15 @@ Linux 在启动时用 yaml-cpp 读取配置，实例业务参数采用类型化�
 离线工具不能从任意 C++ 源码推导全部注册；`aster run --check` 会实际加载、
 初始化并核对本节点注册，不能替代尚未实现的跨节点契约核对。
 
-## 可选跨节点和 Zephyr 部署：尚在实现
+## 设计中的跨节点和 Zephyr 部署（当前不可执行）
 
 目标是由可选 `deployment.yaml` 引用 Runtime 配置，指定实例放置、Linux/Zephyr
 平台、板卡、节点资源和通信链路。跨节点约束按 Topic/RPC 名称、类型、收发节点及
 容量声明，不重新引入 Module Port-to-Port 图。
+
+当前 `aster graph`、`aster resolve` 和 `aster build` 仍只接受旧 v1alpha2 输入；
+它们不能消费这里描述的 v1alpha3 `deployment.yaml`。不要把下面的目标结构当成
+可直接运行的配置。
 
 业务配置保留在 Runtime 配置中；节点配置只承载平台相关策略，不提供任意 YAML
 深度覆盖机制。Zephyr 需要构建期生成静态入口、资源表、Kconfig 和 overlay，

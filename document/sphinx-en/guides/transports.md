@@ -12,12 +12,13 @@ CAN/SocketCAN and USB implementations below are retained adapters and v1alpha2
 generated-node regressions. They are **not yet selectable backends of the new
 launcher**. Their tests do not demonstrate a v1alpha3 Linux–Zephyr deployment.
 
-## Retained adapter implementation
+## Legacy v1alpha2 adapter regression (not selectable by `aster run`)
 
 In the old compiler, logical Channel and RPC routes come from the Application
 Graph. The replacement deployment contract will use Topic/RPC names, types and
 nodes, without Module Port-to-Port connections. Transport details stay outside
-business Module Interfaces.
+business Module Interfaces. Nothing in this section is a backend of the current
+configuration-driven launcher.
 
 `ChannelPacketEgress` and `ChannelPacketIngress` form the shared seam
 between the local Channel registry and packet-oriented Transports. They carry

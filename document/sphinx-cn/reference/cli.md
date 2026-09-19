@@ -2,6 +2,15 @@
 
 唯一对外命令是 `aster`，Python import package 是 `aster_cli`。
 
+## 当前命令边界
+
+| 命令 | 当前状态 |
+| --- | --- |
+| `init`、`doctor`、`validate`、`run` | 当前 Linux 流程；`run` 的启动器只接通 Local Channel/RPC |
+| `codegen --package`、`codegen --proto` | 当前 Package 入口和 bounded Protobuf 生成 |
+| `graph`、`resolve`、`build` | 旧 v1alpha2 部署回归；不能消费 v1alpha3 `runtime.yaml`/`deployment.yaml` |
+| `deploy plan/apply/status` | 旧 v1alpha2 Bundle/Inventory 运维回归；不启动服务或烧录固件 |
+
 `aster init`
 
 : 创建最小 Linux Module Package 和 runtime.yaml，不生成启动器或 Port 图。

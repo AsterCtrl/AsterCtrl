@@ -1,6 +1,11 @@
 # Core convergence: implementation journal
 
-Status: in progress. This is not a release announcement.
+> Historical implementation journal: 2026-09-05. The measurements and
+> “uncommitted/unverified” statements below apply to that snapshot only. Use the
+> [implementation audit](convergence-audit.md), README and current CI runs for
+> present status.
+
+Status: historical record. This is not a release announcement.
 
 ## Implemented and checked
 
@@ -83,5 +88,6 @@ installed SDK consumer. Source-wide clang-format 18, targeted clang-tidy 18,
 Ruff, forbidden dependency/pin checks, spelling and bilingual Doxygen/Sphinx
 builds passed. Linux `vcan`, systemd, Zephyr and physical boards remain unverified.
 
-Existing uncommitted changes are preserved. Legacy repositories and robot
-business code are untouched. No commit, tag, release or remote mutation is made.
+At the time, existing uncommitted changes were preserved. That statement does not
+describe the current branch or authorize today’s release operations. Legacy repositories
+and robot business code remain outside this journal's scope.

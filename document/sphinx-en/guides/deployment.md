@@ -3,7 +3,7 @@
 ## Separate from local execution
 
 Ordinary Linux runs use runtime.yaml and aster run, without a Bundle or
-Deployment Lock. Optional v1alpha3 deployment.yaml will handle cross-node/Zephyr
+Deployment Lock. The planned v1alpha3 deployment.yaml will describe cross-node/Zephyr
 placement and communication constraints. That compiler is not complete, so this
 page does not present speculative configuration as an executable workflow.
 

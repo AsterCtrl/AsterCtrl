@@ -1,8 +1,8 @@
 # Write a first Module
 
 A Module implements business behaviour in ordinary C++20. It registers Topic/RPC
-endpoints in `Initialize` and begins work in `Start`. Ordinary Linux usage does
-not require a separate Port declaration:
+endpoints in `Initialize` and begins work in `Start`. The current Linux path uses
+those registrations directly; it has no separate Port declaration:
 
 ```cpp
 class Controller final : public aster::ModuleBase {

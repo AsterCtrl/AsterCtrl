@@ -1,7 +1,11 @@
 # Dual-platform convergence: implementation audit
 
-Audit date: 2026-09-05. Scope: the current uncommitted worktree, not a release
-announcement or physical-board qualification.
+> Historical snapshot: 2026-09-05. This page records that worktree's audit and
+> is not the current branch status, a release announcement or physical-board
+> qualification. Use the README, CLI reference and current CI records for the
+> present user workflow.
+
+Audit date: 2026-09-05. Scope: the uncommitted worktree at that time.
 
 ## Conclusion
 
@@ -31,7 +35,7 @@ communication view has not been delivered.
 | Hardware simplification | New Host does not require algorithm HardwareManager use | Old Hardware/Capability/Provider schemas, generation, SDK and examples must be removed after their replacement is tested |
 | CLI/build | Minimal Linux init, Package generation, no bespoke dependency manager, `cmake/`, pinned/pre-fetched yaml-cpp, C++20 exports and installed consumer | Explicit Zephyr/cross-node init options; `aster build` still consumes the old deployment model |
 | Deployment operations | Bundle digests, staging, current/previous switching, systemd template | Still depends on old Deployment/Inventory rather than only built artifact descriptions; no service start or MCU flashing |
-| Documentation/release | Doxygen XML embedded in bilingual Sphinx; current-vs-legacy guides corrected | Website migration; actual Linux/Zephyr CI and board gates; non-Python dependency SBOM coverage including yaml-cpp |
+| Documentation/release | Doxygen XML embedded in bilingual Sphinx; current-vs-legacy guides corrected | The website was migrated after this snapshot; current Linux/Zephyr CI and board gates still require current workflow and physical evidence; non-Python dependency SBOM coverage including yaml-cpp |
 
 ## Omissions fixed in this continuation
 
@@ -62,8 +66,9 @@ No usable Zephyr checkout/SDK was found locally. This continuation did not run
 clock, CAN loopback, UART, SPI, watchdog and cross-node CAN loss/restart evidence
 remain final-release gates.
 
-A configured workflow is not a passing remote run. This iteration does not
-commit, mutate remotes, publish, delete legacy archives or migrate robot business code.
+A configured workflow was not a passing remote run at the time of this snapshot.
+Later commits, remote runs and release actions are not tracked by this historical page;
+legacy archives and robot business code were outside its scope.
 
 ## Next implementation order
 

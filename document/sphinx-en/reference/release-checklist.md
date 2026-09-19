@@ -12,10 +12,10 @@ The final `v0.2.0` additionally requires dated physical `dev_c` and `mc02`
 evidence for console, clock, CAN loopback, UART, SPI and watchdog. USB enumeration
 is recorded separately and may remain unverified in the v0.2.0 notes.
 
-This convergence iteration does not publish a release or mutate remote
-repositories. Existing legacy archives remain intact. The earlier plan's
-archive-after-release sequence is historical, not an instruction to rearchive
-or delete repositories now.
+This checklist does not publish a release or mutate remote repositories; the
+release workflow does that separately. Existing legacy archives remain intact.
+The earlier archive-after-release sequence is historical, not an instruction to
+rearchive or delete repositories now.
 
 Run `samples/qualification` from `AsterCtrl/asterctrl-boards` on each board,
 retain the complete serial log and flashed firmware, and create the evidence

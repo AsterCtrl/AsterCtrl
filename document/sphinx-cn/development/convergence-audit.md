@@ -1,6 +1,9 @@
 # 双平台核心收敛：实施审计
 
-审计日期：2026-09-05。范围：当前未提交工作树；不是 Release Notes，也不是实板验收。
+> 历史快照：2026-09-05。本文记录当时工作树的审计结果，不是当前分支状态，也不是
+> Release Notes 或实板验收。当前用户流程以 README、CLI 参考和最新 CI 记录为准。
+
+审计日期：2026-09-05。范围：当时的未提交工作树。
 
 ## 结论
 
@@ -28,7 +31,7 @@ Zephyr 静态生成和新 Runtime 的跨节点后端仍缺少集成闭环。
 | 硬件模型收敛 | 新 Host 不要求算法使用 HardwareManager | 旧 Hardware/Capability/Provider Schema、生成逻辑、SDK 与示例仍在；须在替代路径测试完成后删除 |
 | CLI 与构建 | 最小 Linux init；Package 自动生成；移除自建依赖管理；`cmake/`、固定 yaml-cpp、预置源码、C++20 导出和独立消费者 | Zephyr/跨节点 init 选项未实现；`aster build` 仍是旧部署构建；不应假装它已消费新 runtime.yaml |
 | 部署运维 | Bundle 摘要、分阶段目录、current/previous 切换、systemd 模板 | 部署工具仍依赖旧 Deployment/Inventory；尚未只消费构建产物描述；不会启动服务或烧录 MCU |
-| 文档与发布 | Doxygen XML 集成双语 Sphinx；默认教程与旧路径边界已修正 | 官网仍需迁移；Linux/Zephyr CI 和实板门禁尚未执行；依赖 SBOM 需覆盖 yaml-cpp 等非 Python 依赖 |
+| 文档与发布 | Doxygen XML 集成双语 Sphinx；默认教程与旧路径边界已修正 | 本快照之后官网已迁移；Linux/Zephyr CI 与实板门禁需以当前运行记录和实测证据为准；依赖 SBOM 需覆盖 yaml-cpp 等非 Python 依赖 |
 
 ## 本次继续修复的遗漏
 
@@ -54,8 +57,8 @@ Zephyr 静态生成和新 Runtime 的跨节点后端仍缺少集成闭环。
 `dev_c`、`mc02` 编译和尺寸检查。双板 console、clock、CAN loopback、UART、SPI、
 watchdog，以及跨节点 CAN 丢包/重启实测仍是正式版门禁。
 
-已有工作流配置不代表已获得远端绿色结果；本轮不自动提交、操作远端、发布版本、
-删除旧归档或迁移机器人业务代码。
+本快照中的工作流配置不代表当时已获得远端绿色结果；后续提交、远端运行和发布状态
+不由本历史页追踪。旧归档和机器人业务代码不在本文范围内。
 
 ## 下一批顺序
 

@@ -16,7 +16,7 @@ ctest --preset host-debug
 uv run aster init hello-aster
 uv run cmake -S hello-aster -B hello-aster/build -G Ninja \
   -DASTERCTRL_SOURCE_DIR="$PWD"
-cmake --build hello-aster/build
+uv run cmake --build hello-aster/build
 uv run aster run --runtime hello-aster/build/asterctrl/aster_runtime \
   --config hello-aster/build/runtime.yaml
 ```

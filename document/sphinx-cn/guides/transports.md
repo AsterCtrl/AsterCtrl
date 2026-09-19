@@ -9,7 +9,7 @@ MCU 全局编译期容量限制；回调在接收实例的执行器上运行，�
 以下 CAN/USB 是已有 Adapter 与 v1alpha2 生成 Node 的回归路径，**尚未成为新启动器
 可选择的后端**。旧测试通过不等于 v1alpha3 跨平台部署已经接通。
 
-## 保留的 Adapter 实现
+## 旧 v1alpha2 Adapter 回归实现（不可由 `aster run` 选择）
 
 旧编译器从 Application Graph 取得逻辑 Route；新部署契约将使用 Topic/RPC 名称、
 类型与节点，不再使用 Module Port-to-Port 连接。物理协议不能泄漏进业务接口。

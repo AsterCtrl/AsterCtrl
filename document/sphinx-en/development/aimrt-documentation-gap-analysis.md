@@ -1,6 +1,6 @@
 # AimRT documentation structure and AsterCtrl gap analysis
 
-> This audit records the state before the bilingual Sphinx and integrated API
+> This historical audit records the state before the bilingual Sphinx and integrated API
 > work. Its Doxygen and Chinese-documentation gaps were closed in the following
 > implementation; the remaining items are still useful as roadmap context.
 > Its Application/Deployment and Provider recommendations also predate the
@@ -19,24 +19,27 @@ layers:
 3. component-by-component runtime configuration references;
 4. release history and generated Doxygen API pages.
 
-AsterCtrl already has a clearer architecture story for its own domain: the
-Application/Deployment split, bounded Protobuf, Linux/Zephyr portability,
-resource budgets and deterministic deployment are all represented. The main
-gap is the path from those concepts to routine engineering work. A reader can
+At that snapshot AsterCtrl had documented an Application/Deployment split,
+bounded Protobuf, Linux/Zephyr portability, resource budgets and deterministic
+deployment. The Application/Deployment split was later superseded for ordinary
+Linux by the `runtime.yaml` workflow. The main gap is the path from those
+concepts to routine engineering work. A reader can
 understand *why* AsterCtrl is designed this way, but cannot yet look up every
 public Interface, every YAML field, every generated artifact, or every supported
 example from the documentation site.
 
-The highest-value next work is therefore not to copy AimRT's directory tree
-literally. It is to add:
+At that time, the highest-value next work was not to copy AimRT's directory tree
+literally, but to add:
 
 - a public C/C++ Interface manual;
 - a complete Graph and Package schema reference;
 - an end-to-end examples catalog and board bring-up tutorial;
 - per-version release notes.
 
-Doxygen, multilingual output, version switching and performance reports should
-follow after the authored reference content is complete enough to support them.
+Doxygen XML integration and bilingual Sphinx output were delivered after this
+snapshot. Schema field reference, examples catalog, version switching and
+performance reports remain future documentation work; this page is not their
+current status tracker.
 
 ## Scope and evidence
 

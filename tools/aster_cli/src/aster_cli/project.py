@@ -16,20 +16,21 @@ class ProjectError(ValueError):
 _FILES = {
     "README.md": """# AsterCtrl application
 
-With AsterCtrl installed and the Python 3.12 aster_cli environment active:
+With AsterCtrl installed and its Python 3.12 aster_cli environment active:
 
     cmake -S . -B build -G Ninja -DCMAKE_PREFIX_PATH=/path/to/asterctrl/install
     cmake --build build
     aster run --config build/runtime.yaml
 
-For framework development, replace CMAKE_PREFIX_PATH with
+For framework development from an AsterCtrl checkout, replace CMAKE_PREFIX_PATH with
 -DASTERCTRL_SOURCE_DIR=/path/to/asterctrl and run with
 --runtime build/asterctrl/aster_runtime.
 
 Edit runtime.yaml to change the instance configuration, then rerun CMake to
 copy it to build/runtime.yaml. No Module recompilation is needed.
 The generated Package entry belongs in build/, not in application source.
-There is no custom launcher, Application graph, or Deployment Lock.
+The current Linux workflow uses runtime.yaml only; it has no custom launcher,
+Application graph or Deployment Lock input.
 Zephyr and cross-node deployment tooling is still being migrated to v1alpha3.
 """,
     ".gitignore": "/build/\n",
