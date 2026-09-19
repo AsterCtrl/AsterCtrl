@@ -300,7 +300,12 @@ class ThreadExecutor final : public Executor {
       const auto now_ns = clock_.NowNs();
       if (queue_[index].timestamp_ns > now_ns) {
         const auto delay = queue_[index].timestamp_ns - now_ns;
-        const auto maximum = static_cast<std::uint64_t>(std::chrono::nanoseconds::max().count());
+        // Keep far-future timers interruptible on every pthread implementation. A
+        // uint64_t deadline can otherwise overflow the platform's absolute
+        // condition-variable timeout before Shutdown wakes the worker.
+        constexpr auto kMaximumWait = std::chrono::milliseconds(100);
+        const auto maximum = static_cast<std::uint64_t>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(kMaximumWait).count());
         ready_.wait_for(
             lock, std::chrono::nanoseconds(static_cast<std::int64_t>(std::min(delay, maximum))));
         continue;
