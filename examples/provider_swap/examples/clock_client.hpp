@@ -7,11 +7,11 @@
 
 #include <cstdint>
 
-#include "aster/module.hpp"
+#include "aster_module_cpp_interface/module.hpp"
 
 namespace examples {
 
-class ClockClient final : public aster::Module {
+class ClockClient final : public aster::ModuleBase {
  public:
   [[nodiscard]] aster::ModuleInfo Info() const noexcept override {
     return {"clock-client", "examples.ClockClient", "consumer", {0, 2, 0}};
@@ -22,10 +22,7 @@ class ClockClient final : public aster::Module {
     return clock_ ? aster::Status::kOk : aster::Status::kUnavailable;
   }
 
-  aster::Status Start() noexcept override {
-    last_sample_ns_ = clock_.NowNs();
-    return aster::Status::kOk;
-  }
+  aster::Status Start() noexcept override { return clock_.NowNs(last_sample_ns_); }
 
   void Shutdown() noexcept override { last_sample_ns_ = 0; }
 

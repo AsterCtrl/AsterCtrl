@@ -5,10 +5,10 @@
 #include <span>
 
 #include "allocation_tracker.hpp"
-#include "aster/transport/can/control_plane.hpp"
-#include "aster/transport/can/fast_path.hpp"
-#include "aster/transport/can/link.hpp"
-#include "aster/transport/can/reliable_path.hpp"
+#include "aster_runtime/transport/can/control_plane.hpp"
+#include "aster_runtime/transport/can/fast_path.hpp"
+#include "aster_runtime/transport/can/link.hpp"
+#include "aster_runtime/transport/can/reliable_path.hpp"
 
 namespace {
 

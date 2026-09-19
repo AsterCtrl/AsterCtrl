@@ -44,14 +44,14 @@ jobs:
         run: uv sync --all-groups
       - name: Check Python source
         run: |
-          uv run ruff check tools/aster_cli/src tests/cli scripts/ci
-          uv run ruff format --check tools/aster_cli/src tests/cli scripts/ci
+          uv run python -m ruff check tools/aster_cli/src tests/cli scripts/ci
+          uv run python -m ruff format --check tools/aster_cli/src tests/cli scripts/ci
       - name: Check documentation spelling
         uses: crate-ci/typos@d43b6c087ac471e2ea7b8af622ff15f05c0c365b # v1.50.1
         with:
           files: README.md CHANGELOG.md CONTRIBUTING.md SECURITY.md document examples
       - name: Run CLI, graph, lock, and protobuf tests
-        run: uv run --package aster-cli pytest tests/cli
+        run: uv run --package aster-cli python -m pytest tests/cli
       - name: Fuzz the bounded protobuf decoder
         run: |
           mkdir -p build/fuzz
@@ -61,7 +61,7 @@ jobs:
             --bounds "$PWD/examples/linux_local/proto/bounds.yaml" \
             --output "$PWD/build/fuzz/state.pb.hpp"
           clang++-18 -std=c++20 -fsanitize=fuzzer,address,undefined \
-            -fno-omit-frame-pointer -Iinclude -Ibuild/fuzz \
+            -fno-omit-frame-pointer -Isrc/interface -Ibuild/fuzz \
             scripts/ci/bounded_protobuf_fuzz.cpp \
             -o build/fuzz/bounded-protobuf-fuzz
           ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 \
@@ -114,6 +114,16 @@ jobs:
           -DASTER_BUILD_TESTS=ON
       - name: Build
         run: cmake --build build/${{ matrix.compiler }} --parallel 2
+      - name: Verify pre-fetched Host dependencies build without a network
+        run: |
+          sudo unshare --net -- bash -eu -c '
+            cmake -S "$1" -B "$1/build/offline-$2" -G Ninja \
+              -DCMAKE_BUILD_TYPE=Debug -DASTER_BUILD_TESTS=OFF \
+              -DCMAKE_C_COMPILER="$3" -DCMAKE_CXX_COMPILER="$4" \
+              -DFETCHCONTENT_FULLY_DISCONNECTED=ON \
+              -DFETCHCONTENT_SOURCE_DIR_YAML_CPP="$1/build/$2/_deps/yaml_cpp-src"
+            cmake --build "$1/build/offline-$2" --parallel 2
+          ' -- "$PWD" '${{ matrix.compiler }}' '${{ matrix.cc }}' '${{ matrix.cxx }}'
       - name: Create the required SocketCAN test interface
         run: |
           sudo modprobe vcan
@@ -171,7 +181,7 @@ jobs:
           sudo apt-get install --yes clang-18 clang-format-18 clang-tidy-18 cmake ninja-build
       - name: Check formatting
         run: |
-          mapfile -d '' sources < <(find include src tests scripts/ci -type f \( -name '*.c' -o -name '*.cc' -o -name '*.cpp' -o -name '*.h' -o -name '*.hpp' \) -print0)
+          mapfile -d '' sources < <(find src tests scripts/ci -type f \( -name '*.c' -o -name '*.cc' -o -name '*.cpp' -o -name '*.h' -o -name '*.hpp' \) -print0)
           clang-format-18 --dry-run --Werror "${sources[@]}"
       - name: Build a compilation database
         env:
@@ -183,6 +193,7 @@ jobs:
       - name: Run clang-tidy
         run: >-
           clang-tidy-18 -p build/tidy
+          src/core/core_adapter.cpp
           src/core/runtime.cpp
           src/platform/linux/plugin_loader.cpp
           src/transports/can/socketcan.cpp
@@ -222,7 +233,7 @@ jobs:
         run: ${{ matrix.runtime_options }} ctest --test-dir build/sanitizer --output-on-failure --timeout 30
 
   documentation:
-    name: Sphinx/MyST documentation
+    name: Doxygen and bilingual Sphinx documentation
     runs-on: ubuntu-24.04
     steps:
       - name: Check out repository
@@ -237,6 +248,10 @@ jobs:
           version: "0.12.9"
       - name: Materialize the locked documentation environment
         run: uv sync --frozen --all-groups
+      - name: Install Doxygen
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes doxygen
       - name: Enforce Markdown documentation sources
         run: |
           if find document -type f -name '*.rst' -print -quit | grep -q .; then
@@ -244,8 +259,12 @@ jobs:
             exit 1
           fi
       - name: Build documentation with warnings as errors
-        run: uv run sphinx-build -W --keep-going -b html document document/_build/html
+        run: |
+          cmake -E make_directory build/document/doxygen
+          doxygen document/doxygen/Doxyfile
+          uv run python -m sphinx -W --keep-going -b html document/sphinx-en build/document/html
+          uv run python -m sphinx -W --keep-going -b html document/sphinx-cn build/document/html/zh_CN
       - name: Validate documentation links
-        run: >-
-          uv run sphinx-build -W --keep-going -b linkcheck
-          document document/_build/linkcheck
+        run: |
+          uv run python -m sphinx -W --keep-going -b linkcheck document/sphinx-en build/document/linkcheck/en
+          uv run python -m sphinx -W --keep-going -b linkcheck document/sphinx-cn build/document/linkcheck/zh_CN

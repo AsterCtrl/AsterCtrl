@@ -1,4 +1,4 @@
-#include "aster/platform/linux/supervisor.hpp"
+#include "aster_runtime/platform/linux/supervisor.hpp"
 
 #include <array>
 #include <atomic>
@@ -9,13 +9,15 @@
 #include <mutex>
 #include <thread>
 
-#include "aster/channel.hpp"
-#include "aster/platform/linux/runtime_services.hpp"
+#include "aster_module_cpp_interface/channel.hpp"
+#include "aster_runtime/core_adapter.hpp"
+#include "aster_runtime/local_channel.hpp"
+#include "aster_runtime/platform/linux/runtime_services.hpp"
 #include "test_types.hpp"
 
 namespace {
 
-class Source final : public aster::Module {
+class Source final : public aster::ModuleBase {
  public:
   [[nodiscard]] aster::ModuleInfo Info() const noexcept override {
     return {"source", "test.Source", "test", {1, 0, 0}};
@@ -26,10 +28,7 @@ class Source final : public aster::Module {
     return publisher_.Bind(core.channel(), "samples");
   }
 
-  aster::Status Start() noexcept override {
-    return publisher_.Publish({42}, core_.clock().NowNs(),
-                              {"source", aster::ExecutionKind::kThread, core_.clock().NowNs()});
-  }
+  aster::Status Start() noexcept override { return publisher_.Publish({42}); }
 
   void Shutdown() noexcept override {}
 
@@ -38,7 +37,7 @@ class Source final : public aster::Module {
   aster::Publisher<test::Sample> publisher_;
 };
 
-class Sink final : public aster::Module {
+class Sink final : public aster::ModuleBase {
  public:
   [[nodiscard]] aster::ModuleInfo Info() const noexcept override {
     return {"sink", "test.Sink", "test", {1, 0, 0}};
@@ -90,7 +89,7 @@ void CountWork(void* state, const aster::ExecutionContext&) noexcept {
   work.ready.notify_all();
 }
 
-class QueuedModule final : public aster::Module {
+class QueuedModule final : public aster::ModuleBase {
  public:
   QueuedModule(WorkState& work, bool fail_start) noexcept : work_(work), fail_start_(fail_start) {}
 
@@ -100,7 +99,8 @@ class QueuedModule final : public aster::Module {
 
   aster::Status Initialize(aster::CoreRef core) noexcept override {
     executor_ = core.executor();
-    return executor_.TryPost({CountWork, &work_}, {"initialize", aster::ExecutionKind::kThread, 0});
+    return executor_.TryPost(aster::WorkItem::Bind<CountWork>(&work_),
+                             {"initialize", aster::ExecutionKind::kThread, 0});
   }
 
   aster::Status Start() noexcept override {
@@ -108,8 +108,8 @@ class QueuedModule final : public aster::Module {
       const std::lock_guard lock(work_.mutex);
       count_seen_in_start_ = work_.count;
     }
-    const auto status =
-        executor_.TryPost({CountWork, &work_}, {"start", aster::ExecutionKind::kThread, 0});
+    const auto status = executor_.TryPost(aster::WorkItem::Bind<CountWork>(&work_),
+                                          {"start", aster::ExecutionKind::kThread, 0});
     return fail_start_ || !aster::IsOk(status) ? aster::Status::kUnavailable : aster::Status::kOk;
   }
 
@@ -142,7 +142,7 @@ void BlockWork(void* state, const aster::ExecutionContext&) noexcept {
   work.changed.wait(lock, [&] { return work.release; });
 }
 
-class BlockingModule final : public aster::Module {
+class BlockingModule final : public aster::ModuleBase {
  public:
   explicit BlockingModule(BlockingWorkState& work) noexcept : work_(work) {}
 
@@ -156,7 +156,8 @@ class BlockingModule final : public aster::Module {
   }
 
   aster::Status Start() noexcept override {
-    return executor_.TryPost({BlockWork, &work_}, {"start", aster::ExecutionKind::kThread, 0});
+    return executor_.TryPost(aster::WorkItem::Bind<BlockWork>(&work_),
+                             {"start", aster::ExecutionKind::kThread, 0});
   }
 
   void Shutdown() noexcept override {
@@ -195,7 +196,8 @@ int main() {
   auto handles = aster::CoreHandles{};
   handles.channel = aster::ChannelRef(channel);
   handles.clock = aster::ClockRef(clock);
-  const aster::CoreRef core(handles);
+  const aster::CoreAdapter core_adapter(handles);
+  const auto core = core_adapter.ref();
   Source source;
   Sink sink;
   const auto deployment = Id(std::byte{0x21});
@@ -220,7 +222,8 @@ int main() {
     auto slot_handles = aster::CoreHandles{};
     slot_handles.channel = aster::ChannelRef(slot_channel);
     slot_handles.clock = aster::ClockRef(clock);
-    const aster::CoreRef slot_core(slot_handles);
+    const aster::CoreAdapter slot_core_adapter(slot_handles);
+    const auto slot_core = slot_core_adapter.ref();
     Source slot_source;
     Sink slot_sink;
     aster::platform::linux::Supervisor per_instance({}, deployment);
@@ -240,8 +243,8 @@ int main() {
     executor_handles.executor = aster::ExecutorRef(executor);
     WorkState work;
     QueuedModule queued(work, false);
-    aster::platform::linux::Supervisor gated(aster::CoreRef(executor_handles), deployment,
-                                             Lifecycle(executor));
+    const aster::CoreAdapter executor_core(executor_handles);
+    aster::platform::linux::Supervisor gated(executor_core.ref(), deployment, Lifecycle(executor));
     assert(gated.AddModule(queued) == aster::Status::kOk);
     assert(gated.Start(deployment) == aster::Status::kOk);
     assert(queued.count_seen_in_start() == 0);
@@ -260,7 +263,8 @@ int main() {
     executor_handles.executor = aster::ExecutorRef(executor);
     WorkState work;
     QueuedModule failing(work, true);
-    aster::platform::linux::Supervisor rollback(aster::CoreRef(executor_handles), deployment,
+    const aster::CoreAdapter executor_core(executor_handles);
+    aster::platform::linux::Supervisor rollback(executor_core.ref(), deployment,
                                                 Lifecycle(executor));
     assert(rollback.AddModule(failing) == aster::Status::kOk);
     assert(rollback.Start(deployment) == aster::Status::kUnavailable);
@@ -275,7 +279,8 @@ int main() {
     executor_handles.executor = aster::ExecutorRef(executor);
     BlockingWorkState work;
     BlockingModule blocking(work);
-    aster::platform::linux::Supervisor quiesce(aster::CoreRef(executor_handles), deployment,
+    const aster::CoreAdapter executor_core(executor_handles);
+    aster::platform::linux::Supervisor quiesce(executor_core.ref(), deployment,
                                                Lifecycle(executor));
     assert(quiesce.AddModule(blocking) == aster::Status::kOk);
     assert(quiesce.Start(deployment) == aster::Status::kOk);

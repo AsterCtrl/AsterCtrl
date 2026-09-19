@@ -1,5 +1,9 @@
 # Fake and hardware Provider swap
 
+> Legacy v1alpha2 Provider-graph regression, not the new real/sim architecture.
+> See [the current adapter boundary](../../document/sphinx-en/tutorials/real-and-sim.md).
+> Hardware and current Zephyr build qualification remain pending.
+
 `application.yaml` owns one stable `example.Clock/v1` Requirement/Provider
 binding. The two workspaces resolve the logical `clock/clock-provider` module to
 either `packages/fake_clock` or `packages/hardware_clock`; the Application and
@@ -26,5 +30,5 @@ ctest --test-dir build/examples/provider-swap/host --output-on-failure
 ```
 
 The Linux executable injects `ManualClock` and runs the resolved fake Provider.
-The real composition is compile-checked, but exercising its hardware clock
-requires a flashed `dev_c` board.
+The real composition requires a fresh Zephyr compile check; exercising its
+hardware clock additionally requires a flashed `dev_c` board.

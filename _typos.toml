@@ -1,5 +1,5 @@
 [files]
-extend-exclude = ["document/_build/**"]
+extend-exclude = ["build/document/**"]
 
 [default.extend-identifiers]
 NowNs = "NowNs"

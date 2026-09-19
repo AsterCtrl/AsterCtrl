@@ -4,7 +4,7 @@
 #include <cstddef>
 #include <span>
 
-#include "aster/transport/usb/stream_transport.hpp"
+#include "aster_runtime/transport/usb/stream_transport.hpp"
 
 namespace {
 

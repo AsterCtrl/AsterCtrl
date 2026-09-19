@@ -2,11 +2,11 @@
 #include <cstdint>
 #include <cstring>
 
-#include "aster/plugin.h"
+#include "aster_core_plugin_interface/core_plugin_main.h"
 
 namespace {
 
-struct TestBackendV1 {
+struct TestBackend {
   std::uint32_t interface_version;
   std::uint32_t struct_size;
   void* context;
@@ -15,38 +15,39 @@ struct TestBackendV1 {
 
 std::int32_t ReadValue(void*) { return 42; }
 
-const TestBackendV1 kBackend{1U, sizeof(TestBackendV1), nullptr, ReadValue};
+const TestBackend kBackend{1U, sizeof(TestBackend), nullptr, ReadValue};
 
-AsterStatusV1 QueryInterface(void*, AsterStringViewV1 name, std::uint32_t version,
-                             const void** interface_table, std::uint32_t* interface_struct_size) {
+aster_status_t QueryInterface(void*, aster_string_view_t name, std::uint32_t version,
+                              const void** interface_table, std::uint32_t* interface_struct_size) {
   if (interface_table == nullptr || interface_struct_size == nullptr) {
-    return ASTER_STATUS_INVALID_ARGUMENT_V1;
+    return ASTER_STATUS_INVALID_ARGUMENT;
   }
   *interface_table = nullptr;
   *interface_struct_size = 0;
   constexpr char kName[] = "test.backend";
   if (name.data == nullptr || name.size != sizeof(kName) - 1U ||
       std::memcmp(name.data, kName, name.size) != 0) {
-    return ASTER_STATUS_NOT_FOUND_V1;
+    return ASTER_STATUS_NOT_FOUND;
   }
   if (version != 1U) {
-    return ASTER_STATUS_VERSION_MISMATCH_V1;
+    return ASTER_STATUS_VERSION_MISMATCH;
   }
   *interface_table = &kBackend;
   *interface_struct_size = sizeof(kBackend);
-  return ASTER_STATUS_OK_V1;
+  return ASTER_STATUS_OK;
 }
 
-const AsterCorePluginV1 kPlugin{
-    ASTER_CORE_ABI_VERSION_V1,
-    sizeof(AsterCorePluginV1),
+const aster_core_plugin_t kPlugin{
+    ASTER_ABI_VERSION,
+    sizeof(aster_core_plugin_t),
     {"test-core-plugin", 16U},
     {"0.2.0", 5U},
     nullptr,
     QueryInterface,
-    nullptr,
 };
 
 }  // namespace
 
-extern "C" const AsterCorePluginV1* aster_core_plugin_v1() { return &kPlugin; }
+extern "C" const aster_core_plugin_t* AsterDynlibCreateCorePlugin() { return &kPlugin; }
+
+extern "C" void AsterDynlibDestroyCorePlugin(const aster_core_plugin_t*) {}

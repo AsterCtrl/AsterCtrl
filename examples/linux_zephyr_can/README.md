@@ -1,5 +1,9 @@
 # Linux to Zephyr over CAN
 
+> Legacy v1alpha2 generated-node regression. CAN is not yet selectable in the
+> v1alpha3 launcher; see [migration status](../../document/sphinx-en/guides/runtime-v3.md).
+> This example is not evidence of current Zephyr or physical-board acceptance.
+
 The typed IMU publisher and calibration RPC server run on the `dev_c` Zephyr
 host; the typed controller subscriber and RPC client run on Linux. Both
 endpoints compile against the same bounded Channel and unary RPC Interfaces

@@ -3,9 +3,10 @@
 #include <cstdio>
 #include <cstdlib>
 #include <new>
+#include <string_view>
 #include <thread>
 
-#include "aster/plugin.h"
+#include "aster_pkg_c_interface/pkg_main.h"
 
 namespace {
 
@@ -21,9 +22,9 @@ void Trace(char event) noexcept {
 }
 
 struct Instance {
-  const AsterExecutorServiceV1* executor{};
-  const AsterChannelServiceV1* channel{};
-  const AsterRpcServiceV1* rpc{};
+  const aster_executor_base_t* executor{};
+  const aster_channel_base_t* channel{};
+  const aster_rpc_base_t* rpc{};
   std::atomic<uint32_t> channel_calls{};
   std::atomic<uint32_t> rpc_completions{};
   std::atomic<uint32_t> rpc_result{};
@@ -31,48 +32,40 @@ struct Instance {
   std::atomic<uint32_t> concurrent_failures{};
 };
 
-const AsterChannelDescriptorV1 kChannelDescriptor{
-    ASTER_CORE_ABI_VERSION_V1,
-    sizeof(AsterChannelDescriptorV1),
+struct ModuleState;
+Instance& State(void* state) noexcept;
+
+const aster_channel_descriptor_t kChannelDescriptor{
     {"plugin.tick", 11},
-    {ASTER_CORE_ABI_VERSION_V1, sizeof(AsterTypeDescriptorV1), {"test.Tick", 9}, {{0x21}}, 1},
+    {{"test.Tick", 9}, {{0x21}}, 1},
 };
 
-const AsterServiceDescriptorV1 kRpcDescriptor{
-    ASTER_CORE_ABI_VERSION_V1,
-    sizeof(AsterServiceDescriptorV1),
+const aster_service_descriptor_t kRpcDescriptor{
     {"plugin.increment", 16},
     {{0x31}},
-    {ASTER_CORE_ABI_VERSION_V1,
-     sizeof(AsterTypeDescriptorV1),
-     {"test.Increment.Request", 22},
-     {{0x32}},
-     4},
-    {ASTER_CORE_ABI_VERSION_V1,
-     sizeof(AsterTypeDescriptorV1),
-     {"test.Increment.Response", 23},
-     {{0x33}},
-     4},
+    {{"test.Increment.Request", 22}, {{0x32}}, 4},
+    {{"test.Increment.Response", 23}, {{0x33}}, 4},
+    {},
 };
 
-AsterStatusV1 ReceiveChannel(void* state, const uint8_t* message, size_t message_size,
-                             const AsterMessageInfoV1* info,
-                             const AsterExecutionContextV1* caller) {
+aster_status_t ReceiveChannel(void* state, const uint8_t* message, size_t message_size,
+                              const aster_message_info_t* info,
+                              const aster_execution_context_t* caller) {
   if (state == nullptr || message == nullptr || message_size != 1 || message[0] != 42 ||
-      info == nullptr || info->struct_size < sizeof(AsterMessageInfoV1) || caller == nullptr ||
-      caller->struct_size < sizeof(AsterExecutionContextV1)) {
-    return ASTER_STATUS_INTERNAL_V1;
+      info == nullptr || caller == nullptr) {
+    return ASTER_STATUS_INTERNAL;
   }
-  static_cast<Instance*>(state)->channel_calls.fetch_add(1, std::memory_order_relaxed);
-  return ASTER_STATUS_OK_V1;
+  State(state).channel_calls.fetch_add(1, std::memory_order_relaxed);
+  return ASTER_STATUS_OK;
 }
 
-AsterStatusV1 Increment(void*, const uint8_t* request, size_t request_size, uint8_t* response,
-                        size_t response_capacity, size_t* response_size,
-                        const AsterRpcCallInfoV1* info, const AsterExecutionContextV1* caller) {
+aster_status_t Increment(void*, const uint8_t* request, size_t request_size, uint8_t* response,
+                         size_t response_capacity, size_t* response_size,
+                         const aster_rpc_call_info_t* info,
+                         const aster_execution_context_t* caller) {
   if (request == nullptr || request_size != 4 || response == nullptr || response_capacity < 4 ||
       response_size == nullptr || info == nullptr || info->request_id == 0 || caller == nullptr) {
-    return ASTER_STATUS_INTERNAL_V1;
+    return ASTER_STATUS_INTERNAL;
   }
   uint32_t value{};
   for (size_t index = 0; index < 4; ++index) {
@@ -83,16 +76,16 @@ AsterStatusV1 Increment(void*, const uint8_t* request, size_t request_size, uint
     response[index] = static_cast<uint8_t>(value >> (index * 8U));
   }
   *response_size = 4;
-  return ASTER_STATUS_OK_V1;
+  return ASTER_STATUS_OK;
 }
 
-void CompleteRpc(void* state, AsterStatusV1 status, const uint8_t* response, size_t response_size,
-                 const AsterRpcCallInfoV1* info, const AsterExecutionContextV1* context) {
-  if (state == nullptr || status != ASTER_STATUS_OK_V1 || response == nullptr ||
-      response_size != 4 || info == nullptr || info->request_id == 0 || context == nullptr) {
+void CompleteRpc(void* state, aster_status_t status, const uint8_t* response, size_t response_size,
+                 const aster_rpc_call_info_t* info, const aster_execution_context_t* context) {
+  if (state == nullptr || status != ASTER_STATUS_OK || response == nullptr || response_size != 4 ||
+      info == nullptr || info->request_id == 0 || context == nullptr) {
     return;
   }
-  auto& instance = *static_cast<Instance*>(state);
+  auto& instance = State(state);
   uint32_t result{};
   for (size_t index = 0; index < 4; ++index) {
     result |= static_cast<uint32_t>(response[index]) << (index * 8U);
@@ -101,178 +94,123 @@ void CompleteRpc(void* state, AsterStatusV1 status, const uint8_t* response, siz
   instance.rpc_completions.fetch_add(1, std::memory_order_relaxed);
 }
 
-void CompleteWork(void* state, const AsterExecutionContextV1*) {
-  static_cast<Instance*>(state)->work_completions.fetch_add(1, std::memory_order_relaxed);
+void CompleteWork(void* state, const aster_execution_context_t*) {
+  State(state).work_completions.fetch_add(1, std::memory_order_relaxed);
 }
 
-AsterStatusV1 Initialize(void* state, const AsterCoreRefV1* core) {
-  if (core == nullptr || core->abi_version != ASTER_CORE_ABI_VERSION_V1 ||
-      core->struct_size < sizeof(AsterCoreRefV1) || core->query_service == nullptr) {
-    return ASTER_STATUS_VERSION_MISMATCH_V1;
+aster_status_t Initialize(void* state, const aster_core_base_t* core) {
+  if (core == nullptr || core->abi_version != ASTER_ABI_VERSION ||
+      core->struct_size < sizeof(aster_core_base_t) || core->logger == nullptr ||
+      core->configurator == nullptr || core->clock == nullptr || core->executor == nullptr ||
+      core->parameter == nullptr || core->allocator == nullptr || core->hardware == nullptr ||
+      core->channel == nullptr || core->rpc == nullptr) {
+    return ASTER_STATUS_VERSION_MISMATCH;
   }
-  uint32_t size{123};
-  const AsterStringViewV1 unknown{"unknown", 7};
-  if (core->query_service(core->context, unknown, 1, &size) != nullptr || size != 0) {
-    return ASTER_STATUS_INTERNAL_V1;
+  const auto* logger = core->logger(core->impl);
+  if (logger == nullptr || logger->struct_size < sizeof(aster_logger_base_t) ||
+      logger->write == nullptr) {
+    return ASTER_STATUS_INTERNAL;
   }
-  const AsterStringViewV1 logger_name{ASTER_CORE_SERVICE_LOGGER_NAME_V1,
-                                      sizeof(ASTER_CORE_SERVICE_LOGGER_NAME_V1) - 1};
-  size = 123;
-  if (core->query_service(core->context, logger_name, 99, &size) != nullptr || size != 0) {
-    return ASTER_STATUS_INTERNAL_V1;
-  }
-  const auto* logger = static_cast<const AsterLoggerServiceV1*>(
-      core->query_service(core->context, logger_name, ASTER_CORE_SERVICE_LOGGER_VERSION_V1, &size));
-  if (logger == nullptr || size < sizeof(AsterLoggerServiceV1) ||
-      logger->service_version != ASTER_CORE_SERVICE_LOGGER_VERSION_V1 ||
-      logger->struct_size < sizeof(AsterLoggerServiceV1) || logger->write == nullptr) {
-    return ASTER_STATUS_INTERNAL_V1;
-  }
-  const AsterExecutionContextV1 small_context{
-      ASTER_CORE_ABI_VERSION_V1,
-      static_cast<uint32_t>(offsetof(AsterExecutionContextV1, timestamp_ns)),
-      {"plugin", 6},
-      ASTER_EXECUTION_KIND_THREAD_V1,
-      123};
-  if (logger->write(logger->context, ASTER_LOG_LEVEL_INFO_V1, {"must-not-log", 12},
-                    &small_context) != ASTER_STATUS_VERSION_MISMATCH_V1) {
-    return ASTER_STATUS_INTERNAL_V1;
-  }
-  const AsterExecutionContextV1 context{ASTER_CORE_ABI_VERSION_V1,
-                                        sizeof(AsterExecutionContextV1),
-                                        {"plugin", 6},
-                                        ASTER_EXECUTION_KIND_THREAD_V1,
-                                        123};
-  if (logger->write(logger->context, ASTER_LOG_LEVEL_INFO_V1, {"plugin initialized", 18},
-                    &context) != ASTER_STATUS_OK_V1) {
-    return ASTER_STATUS_INTERNAL_V1;
+  const aster_execution_context_t context{{"plugin", 6}, ASTER_EXECUTION_KIND_THREAD, 123};
+  if (logger->write(logger->impl, ASTER_LOG_LEVEL_INFO, {"plugin initialized", 18}, &context) !=
+      ASTER_STATUS_OK) {
+    return ASTER_STATUS_INTERNAL;
   }
 
-  const AsterStringViewV1 configurator_name{ASTER_CORE_SERVICE_CONFIGURATOR_NAME_V1,
-                                            sizeof(ASTER_CORE_SERVICE_CONFIGURATOR_NAME_V1) - 1};
-  const auto* configurator = static_cast<const AsterConfiguratorServiceV1*>(core->query_service(
-      core->context, configurator_name, ASTER_CORE_SERVICE_CONFIGURATOR_VERSION_V1, &size));
-  uint32_t answer{};
-  size_t written{};
-  if (configurator == nullptr || configurator->get == nullptr ||
-      configurator->get(configurator->context, {"answer", 6}, reinterpret_cast<uint8_t*>(&answer),
-                        sizeof(answer), &written) != ASTER_STATUS_OK_V1 ||
-      written != sizeof(answer) || answer != 42) {
-    return ASTER_STATUS_INTERNAL_V1;
+  const auto* configurator = core->configurator(core->impl);
+  aster_value_t answer{};
+  if (configurator == nullptr || configurator->struct_size < sizeof(aster_configurator_base_t) ||
+      configurator->get == nullptr ||
+      configurator->get(configurator->impl, {"answer", 6}, &answer) != ASTER_STATUS_OK ||
+      answer.kind != ASTER_VALUE_UINT64 || answer.data.unsigned_integer != 42) {
+    return ASTER_STATUS_INTERNAL;
   }
 
-  const AsterStringViewV1 clock_name{ASTER_CORE_SERVICE_CLOCK_NAME_V1,
-                                     sizeof(ASTER_CORE_SERVICE_CLOCK_NAME_V1) - 1};
-  const auto* clock = static_cast<const AsterClockServiceV1*>(
-      core->query_service(core->context, clock_name, ASTER_CORE_SERVICE_CLOCK_VERSION_V1, &size));
+  const auto* clock = core->clock(core->impl);
   uint32_t domain{};
   uint64_t now_ns{};
-  if (clock == nullptr || clock->get_domain == nullptr || clock->now_ns == nullptr ||
-      clock->get_domain(clock->context, &domain) != ASTER_STATUS_OK_V1 ||
-      domain != ASTER_CLOCK_DOMAIN_SIMULATED_V1 ||
-      clock->now_ns(clock->context, &now_ns) != ASTER_STATUS_OK_V1 || now_ns != 123) {
-    return ASTER_STATUS_INTERNAL_V1;
+  if (clock == nullptr || clock->struct_size < sizeof(aster_clock_base_t) ||
+      clock->get_domain == nullptr || clock->now_ns == nullptr ||
+      clock->get_domain(clock->impl, &domain) != ASTER_STATUS_OK ||
+      domain != ASTER_CLOCK_DOMAIN_SIMULATED ||
+      clock->now_ns(clock->impl, &now_ns) != ASTER_STATUS_OK || now_ns != 123) {
+    return ASTER_STATUS_INTERNAL;
   }
 
-  const AsterStringViewV1 executor_name{ASTER_CORE_SERVICE_EXECUTOR_NAME_V1,
-                                        sizeof(ASTER_CORE_SERVICE_EXECUTOR_NAME_V1) - 1};
-  auto& instance = *static_cast<Instance*>(state);
-  instance.executor = static_cast<const AsterExecutorServiceV1*>(core->query_service(
-      core->context, executor_name, ASTER_CORE_SERVICE_EXECUTOR_VERSION_V1, &size));
-  if (instance.executor == nullptr || size < sizeof(AsterExecutorServiceV1) ||
-      instance.executor->service_version != ASTER_CORE_SERVICE_EXECUTOR_VERSION_V1 ||
-      instance.executor->struct_size < sizeof(AsterExecutorServiceV1) ||
+  auto& instance = State(state);
+  instance.executor = core->executor(core->impl);
+  if (instance.executor == nullptr ||
+      instance.executor->struct_size < sizeof(aster_executor_base_t) ||
       instance.executor->get_name == nullptr || instance.executor->try_post == nullptr ||
       instance.executor->try_post_at == nullptr) {
-    return ASTER_STATUS_INTERNAL_V1;
+    return ASTER_STATUS_INTERNAL;
   }
 
-  const AsterStringViewV1 parameter_name{ASTER_CORE_SERVICE_PARAMETER_NAME_V1,
-                                         sizeof(ASTER_CORE_SERVICE_PARAMETER_NAME_V1) - 1};
-  const auto* parameter = static_cast<const AsterParameterServiceV1*>(core->query_service(
-      core->context, parameter_name, ASTER_CORE_SERVICE_PARAMETER_VERSION_V1, &size));
-  if (parameter == nullptr || size < sizeof(AsterParameterServiceV1) || parameter->get == nullptr ||
-      parameter->set == nullptr) {
-    return ASTER_STATUS_INTERNAL_V1;
+  const auto* parameter = core->parameter(core->impl);
+  if (parameter == nullptr || parameter->struct_size < sizeof(aster_parameter_base_t) ||
+      parameter->get == nullptr || parameter->set == nullptr) {
+    return ASTER_STATUS_INTERNAL;
   }
 
-  const AsterStringViewV1 allocator_name{ASTER_CORE_SERVICE_ALLOCATOR_NAME_V1,
-                                         sizeof(ASTER_CORE_SERVICE_ALLOCATOR_NAME_V1) - 1};
-  const auto* allocator = static_cast<const AsterAllocatorServiceV1*>(core->query_service(
-      core->context, allocator_name, ASTER_CORE_SERVICE_ALLOCATOR_VERSION_V1, &size));
-  if (allocator == nullptr || size < sizeof(AsterAllocatorServiceV1) ||
+  const auto* allocator = core->allocator(core->impl);
+  if (allocator == nullptr || allocator->struct_size < sizeof(aster_allocator_base_t) ||
       allocator->allocate == nullptr || allocator->deallocate == nullptr) {
-    return ASTER_STATUS_INTERNAL_V1;
+    return ASTER_STATUS_INTERNAL;
   }
 
-  const AsterStringViewV1 hardware_name{ASTER_CORE_SERVICE_HARDWARE_MANAGER_NAME_V1,
-                                        sizeof(ASTER_CORE_SERVICE_HARDWARE_MANAGER_NAME_V1) - 1};
-  const auto* hardware = static_cast<const AsterHardwareManagerServiceV1*>(core->query_service(
-      core->context, hardware_name, ASTER_CORE_SERVICE_HARDWARE_MANAGER_VERSION_V1, &size));
-  if (hardware == nullptr || size < sizeof(AsterHardwareManagerServiceV1) ||
+  const auto* hardware = core->hardware(core->impl);
+  if (hardware == nullptr || hardware->struct_size < sizeof(aster_hardware_manager_base_t) ||
       hardware->resolve == nullptr) {
-    return ASTER_STATUS_INTERNAL_V1;
+    return ASTER_STATUS_INTERNAL;
   }
 
-  const AsterStringViewV1 channel_name{ASTER_CORE_SERVICE_CHANNEL_NAME_V1,
-                                       sizeof(ASTER_CORE_SERVICE_CHANNEL_NAME_V1) - 1};
-  instance.channel = static_cast<const AsterChannelServiceV1*>(core->query_service(
-      core->context, channel_name, ASTER_CORE_SERVICE_CHANNEL_VERSION_V1, &size));
-  auto small_channel_descriptor = kChannelDescriptor;
-  small_channel_descriptor.struct_size =
-      static_cast<uint32_t>(offsetof(AsterChannelDescriptorV1, message_type));
-  if (instance.channel == nullptr || size < sizeof(AsterChannelServiceV1) ||
+  instance.channel = core->channel(core->impl);
+  auto invalid_channel_descriptor = kChannelDescriptor;
+  invalid_channel_descriptor.name = {};
+  if (instance.channel == nullptr || instance.channel->struct_size < sizeof(aster_channel_base_t) ||
       instance.channel->register_publisher == nullptr ||
       instance.channel->register_subscriber == nullptr || instance.channel->publish == nullptr ||
-      instance.channel->register_publisher(instance.channel->context, &small_channel_descriptor) !=
-          ASTER_STATUS_VERSION_MISMATCH_V1 ||
-      instance.channel->register_publisher(instance.channel->context, &kChannelDescriptor) !=
-          ASTER_STATUS_OK_V1 ||
-      instance.channel->register_subscriber(instance.channel->context, &kChannelDescriptor,
-                                            ReceiveChannel, &instance) != ASTER_STATUS_OK_V1) {
-    return ASTER_STATUS_INTERNAL_V1;
+      instance.channel->register_publisher(instance.channel->impl, &invalid_channel_descriptor) !=
+          ASTER_STATUS_INVALID_ARGUMENT ||
+      instance.channel->register_publisher(instance.channel->impl, &kChannelDescriptor) !=
+          ASTER_STATUS_OK ||
+      instance.channel->register_subscriber(instance.channel->impl, &kChannelDescriptor,
+                                            ReceiveChannel, state) != ASTER_STATUS_OK) {
+    return ASTER_STATUS_INTERNAL;
   }
 
-  const AsterStringViewV1 rpc_name{ASTER_CORE_SERVICE_RPC_NAME_V1,
-                                   sizeof(ASTER_CORE_SERVICE_RPC_NAME_V1) - 1};
-  instance.rpc = static_cast<const AsterRpcServiceV1*>(
-      core->query_service(core->context, rpc_name, ASTER_CORE_SERVICE_RPC_VERSION_V1, &size));
-  auto small_rpc_descriptor = kRpcDescriptor;
-  small_rpc_descriptor.request_type.struct_size =
-      static_cast<uint32_t>(offsetof(AsterTypeDescriptorV1, schema_hash));
-  if (instance.rpc == nullptr || size < sizeof(AsterRpcServiceV1) ||
+  instance.rpc = core->rpc(core->impl);
+  auto invalid_rpc_descriptor = kRpcDescriptor;
+  invalid_rpc_descriptor.request_type.name = {};
+  if (instance.rpc == nullptr || instance.rpc->struct_size < sizeof(aster_rpc_base_t) ||
       instance.rpc->register_client == nullptr || instance.rpc->register_server == nullptr ||
       instance.rpc->call_async == nullptr ||
-      instance.rpc->register_client(instance.rpc->context, &small_rpc_descriptor) !=
-          ASTER_STATUS_VERSION_MISMATCH_V1 ||
-      instance.rpc->register_server(instance.rpc->context, &kRpcDescriptor, Increment, &instance) !=
-          ASTER_STATUS_OK_V1 ||
-      instance.rpc->register_client(instance.rpc->context, &kRpcDescriptor) != ASTER_STATUS_OK_V1) {
-    return ASTER_STATUS_INTERNAL_V1;
+      instance.rpc->register_client(instance.rpc->impl, &invalid_rpc_descriptor) !=
+          ASTER_STATUS_INVALID_ARGUMENT ||
+      instance.rpc->register_server(instance.rpc->impl, &kRpcDescriptor, Increment, state) !=
+          ASTER_STATUS_OK ||
+      instance.rpc->register_client(instance.rpc->impl, &kRpcDescriptor) != ASTER_STATUS_OK) {
+    return ASTER_STATUS_INTERNAL;
   }
   Trace('I');
-  return ASTER_STATUS_OK_V1;
+  return ASTER_STATUS_OK;
 }
 
-AsterStatusV1 Start(void* state) {
-  auto& instance = *static_cast<Instance*>(state);
-  const AsterExecutionContextV1 context{ASTER_CORE_ABI_VERSION_V1,
-                                        sizeof(AsterExecutionContextV1),
-                                        {"plugin", 6},
-                                        ASTER_EXECUTION_KIND_THREAD_V1,
-                                        123};
+aster_status_t Start(void* state) {
+  auto& instance = State(state);
+  const aster_execution_context_t context{{"plugin", 6}, ASTER_EXECUTION_KIND_THREAD, 123};
   const uint8_t message = 42;
-  if (instance.channel->publish(instance.channel->context, &kChannelDescriptor, &message, 1, 123,
-                                &context) != ASTER_STATUS_OK_V1 ||
+  if (instance.channel->publish(instance.channel->impl, &kChannelDescriptor, &message, 1, 123,
+                                &context) != ASTER_STATUS_OK ||
       instance.channel_calls.load(std::memory_order_relaxed) != 1) {
-    return ASTER_STATUS_INTERNAL_V1;
+    return ASTER_STATUS_INTERNAL;
   }
   const uint8_t request[4]{41, 0, 0, 0};
-  if (instance.rpc->call_async(instance.rpc->context, &kRpcDescriptor, request, sizeof(request),
-                               1'000, CompleteRpc, &instance, &context) != ASTER_STATUS_OK_V1 ||
+  if (instance.rpc->call_async(instance.rpc->impl, &kRpcDescriptor, request, sizeof(request), 1'000,
+                               CompleteRpc, state, &context) != ASTER_STATUS_OK ||
       instance.rpc_completions.load(std::memory_order_relaxed) != 1 ||
       instance.rpc_result.load(std::memory_order_relaxed) != 42) {
-    return ASTER_STATUS_INTERNAL_V1;
+    return ASTER_STATUS_INTERNAL;
   }
 
   constexpr uint32_t kThreadCount = 4;
@@ -281,13 +219,12 @@ AsterStatusV1 Start(void* state) {
   for (auto& worker : workers) {
     worker = std::thread([&] {
       for (uint32_t iteration = 0; iteration < kIterations; ++iteration) {
-        if (instance.executor->try_post(instance.executor->context, CompleteWork, &instance,
-                                        &context) != ASTER_STATUS_OK_V1 ||
-            instance.channel->publish(instance.channel->context, &kChannelDescriptor, &message, 1,
-                                      123, &context) != ASTER_STATUS_OK_V1 ||
-            instance.rpc->call_async(instance.rpc->context, &kRpcDescriptor, request,
-                                     sizeof(request), 1'000, CompleteRpc, &instance,
-                                     &context) != ASTER_STATUS_OK_V1) {
+        if (instance.executor->try_post(instance.executor->impl, CompleteWork, state, &context) !=
+                ASTER_STATUS_OK ||
+            instance.channel->publish(instance.channel->impl, &kChannelDescriptor, &message, 1, 123,
+                                      &context) != ASTER_STATUS_OK ||
+            instance.rpc->call_async(instance.rpc->impl, &kRpcDescriptor, request, sizeof(request),
+                                     1'000, CompleteRpc, state, &context) != ASTER_STATUS_OK) {
           instance.concurrent_failures.fetch_add(1, std::memory_order_relaxed);
         }
       }
@@ -302,64 +239,60 @@ AsterStatusV1 Start(void* state) {
       instance.channel_calls.load(std::memory_order_relaxed) != kConcurrentCalls + 1 ||
       instance.rpc_completions.load(std::memory_order_relaxed) != kConcurrentCalls + 1 ||
       instance.rpc_result.load(std::memory_order_relaxed) != 42) {
-    return ASTER_STATUS_INTERNAL_V1;
+    return ASTER_STATUS_INTERNAL;
   }
   Trace('T');
-  return ASTER_STATUS_OK_V1;
+  return ASTER_STATUS_OK;
 }
 
 void Shutdown(void*) { Trace('S'); }
 
-struct BundleOwner {
-  Instance instance;
-  AsterModuleV1 module;
+aster_module_info_t Info(void*) {
+  return {{"loaded", 6}, {"test.Module", 11}, {"test-plugin", 11}, {1, 0, 0}};
+}
 
-  BundleOwner()
+struct ModuleState {
+  Instance instance;
+  aster_module_base_t module;
+
+  ModuleState()
       : module{
-            ASTER_CORE_ABI_VERSION_V1,
-            sizeof(AsterModuleV1),
-            {{"loaded", 6}, {"test.Module", 11}, {"test-plugin", 11}, {1, 0, 0}},
-            &instance,
-            Initialize,
-            Start,
-            Shutdown,
+            ASTER_ABI_VERSION, sizeof(aster_module_base_t), this, Info, Initialize, Start, Shutdown,
         } {}
 };
 
-AsterStatusV1 CreateBundle(void*, AsterModuleBundleV1* bundle) {
-  if (bundle == nullptr) {
-    return ASTER_STATUS_INVALID_ARGUMENT_V1;
-  }
-  auto* owner = new (std::nothrow) BundleOwner;
-  if (owner == nullptr) {
-    return ASTER_STATUS_CAPACITY_EXCEEDED_V1;
-  }
-  *bundle = {
-      ASTER_CORE_ABI_VERSION_V1,
-      sizeof(AsterModuleBundleV1),
-      &owner->module,
-      1,
-      owner,
-      [](void* state, const AsterModuleV1*, size_t) {
-        Trace('B');
-        delete static_cast<BundleOwner*>(state);
-      },
-  };
-  return ASTER_STATUS_OK_V1;
-}
+Instance& State(void* state) noexcept { return static_cast<ModuleState*>(state)->instance; }
 
-void ReleasePlugin(void*) { Trace('P'); }
-
-const AsterModuleBundlePluginV1 kPlugin{
-    ASTER_CORE_ABI_VERSION_V1,
-    sizeof(AsterModuleBundlePluginV1),
-    {"test-plugin", 11},
-    {"1.0.0", 5},
-    nullptr,
-    CreateBundle,
-    ReleasePlugin,
-};
+const aster_string_view_t kModuleNames[]{{"test.Module", 11}};
 
 }  // namespace
 
-extern "C" const AsterModuleBundlePluginV1* aster_module_bundle_v1() { return &kPlugin; }
+extern "C" {
+
+uint32_t AsterDynlibGetAbiVersion() { return ASTER_ABI_VERSION; }
+
+aster_string_view_t AsterDynlibGetPackageName() { return {"test-plugin", 11}; }
+
+aster_string_view_t AsterDynlibGetPackageVersion() { return {"1.0.0", 5}; }
+
+size_t AsterDynlibGetModuleNum() { return 1; }
+
+const aster_string_view_t* AsterDynlibGetModuleNameList() { return kModuleNames; }
+
+const aster_module_base_t* AsterDynlibCreateModule(aster_string_view_t module_name) {
+  if (module_name.data == nullptr || module_name.size != kModuleNames[0].size ||
+      std::string_view(module_name.data, module_name.size) !=
+          std::string_view(kModuleNames[0].data, kModuleNames[0].size)) {
+    return nullptr;
+  }
+  auto* state = new (std::nothrow) ModuleState;
+  return state == nullptr ? nullptr : &state->module;
+}
+
+void AsterDynlibDestroyModule(const aster_module_base_t* module) {
+  if (module != nullptr) {
+    Trace('B');
+    delete static_cast<ModuleState*>(module->impl);
+  }
+}
+}

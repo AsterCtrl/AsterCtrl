@@ -1,10 +1,13 @@
+#include "aster_runtime/local_rpc.hpp"
+
 #include <array>
 #include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <string_view>
 
-#include "aster/rpc.hpp"
+#include "aster_module_cpp_interface/rpc.hpp"
+#include "aster_runtime/core/executor.hpp"
 #include "test_types.hpp"
 
 namespace {
@@ -92,6 +95,26 @@ void CompleteReentrantly(void* state, aster::Status status, const test::AddRespo
 }  // namespace
 
 int main() {
+  {
+    ManualExecutor instances_executor;
+    aster::LocalRpc<2, 16, 16, 2> instances{aster::ExecutorRef(instances_executor)};
+    aster::RpcServer<test::AddService> left;
+    aster::RpcServer<test::AddService> right;
+    aster::RpcClient<test::AddService> right_client;
+    int left_calls{};
+    int right_calls{};
+    assert(left.Bind(aster::RpcRef(instances), Add, &left_calls, "left") == aster::Status::kOk);
+    assert(right.Bind(aster::RpcRef(instances), Add, &right_calls, "right") == aster::Status::kOk);
+    assert(right_client.Bind(aster::RpcRef(instances), "right") == aster::Status::kOk);
+    assert(instances.Seal() == aster::Status::kOk);
+    aster::RpcCompletion<test::AddService> completion;
+    CompletionResult result;
+    const aster::ExecutionContext context("test", aster::ExecutionKind::kThread, 1);
+    assert(right_client.CallAsync({1, 2}, 10, completion, Complete, &result, context) ==
+           aster::Status::kOk);
+    instances_executor.RunNext(2);
+    assert(left_calls == 0 && right_calls == 1 && result.sum == 3);
+  }
   ManualExecutor executor;
   aster::LocalRpc<2, 16, 16, 1> rpc{aster::ExecutorRef(executor)};
   aster::RpcServer<test::AddService> server;

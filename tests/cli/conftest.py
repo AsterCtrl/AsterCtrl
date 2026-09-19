@@ -70,10 +70,10 @@ spec:
             root,
             f"test/{module}.hpp",
             f"""#pragma once
-#include "aster/module.hpp"
+#include "aster_module_cpp_interface/module.hpp"
 
 namespace test {{
-class {module.title()} final : public aster::Module {{
+class {module.title()} final : public aster::ModuleBase {{
  public:
   aster::ModuleInfo Info() const noexcept override {{
     return {{"{module}", "test", "{package}", {{0, 2, 0}}}};

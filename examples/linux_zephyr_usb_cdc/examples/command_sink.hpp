@@ -7,13 +7,13 @@
 
 #include <cstdint>
 
-#include "aster/channel.hpp"
-#include "aster/module.hpp"
+#include "aster_module_cpp_interface/channel.hpp"
+#include "aster_module_cpp_interface/module.hpp"
 #include "command.pb.hpp"
 
 namespace examples {
 
-class CommandSink final : public aster::Module {
+class CommandSink final : public aster::ModuleBase {
  public:
   [[nodiscard]] aster::ModuleInfo Info() const noexcept override {
     return {"command-sink", "examples.CommandSink", "actuator", {0, 2, 0}};

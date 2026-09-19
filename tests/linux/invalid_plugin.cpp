@@ -1,11 +1,18 @@
-#include "aster/plugin.h"
+#include "aster_pkg_c_interface/pkg_main.h"
 
 namespace {
 
-const AsterModuleBundlePluginV1 kPlugin{
-    99, sizeof(AsterModuleBundlePluginV1), {"invalid", 7}, {"1.0.0", 5}, nullptr, nullptr, nullptr,
-};
+const aster_string_view_t kModuleNames[]{{"invalid.Module", 14}};
 
 }  // namespace
 
-extern "C" const AsterModuleBundlePluginV1* aster_module_bundle_v1() { return &kPlugin; }
+extern "C" {
+
+uint32_t AsterDynlibGetAbiVersion() { return 99; }
+aster_string_view_t AsterDynlibGetPackageName() { return {"invalid", 7}; }
+aster_string_view_t AsterDynlibGetPackageVersion() { return {"1.0.0", 5}; }
+size_t AsterDynlibGetModuleNum() { return 1; }
+const aster_string_view_t* AsterDynlibGetModuleNameList() { return kModuleNames; }
+const aster_module_base_t* AsterDynlibCreateModule(aster_string_view_t) { return nullptr; }
+void AsterDynlibDestroyModule(const aster_module_base_t*) {}
+}

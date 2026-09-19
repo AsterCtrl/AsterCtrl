@@ -6,8 +6,11 @@
 #include <string_view>
 
 #include "allocation_tracker.hpp"
-#include "aster/rpc.hpp"
-#include "aster/transport/can/rpc_bridge.hpp"
+#include "aster_module_cpp_interface/rpc.hpp"
+#include "aster_runtime/core/clock.hpp"
+#include "aster_runtime/core/executor.hpp"
+#include "aster_runtime/local_rpc.hpp"
+#include "aster_runtime/transport/can/rpc_bridge.hpp"
 #include "test_types.hpp"
 
 namespace {
@@ -76,7 +79,10 @@ void Complete(void* state, aster::Status status, const test::AddResponse& respon
 struct Clock {
   std::uint64_t now_ns{1'000};
 
-  static std::uint64_t Read(void* state) noexcept { return static_cast<Clock*>(state)->now_ns; }
+  static aster::Status Read(void* state, std::uint64_t& output) noexcept {
+    output = static_cast<Clock*>(state)->now_ns;
+    return aster::Status::kOk;
+  }
 };
 
 using RpcClientBridge = aster::transport::can::CanRpcClient<test::AddService>;

@@ -12,14 +12,14 @@
 #include <zephyr/kernel.h>
 #include <zephyr/sys/printk.h>
 
-#include "aster/platform/zephyr/runtime_services.hpp"
+#include "aster_runtime/platform/zephyr/runtime_services.hpp"
 #else
 #include <chrono>
 #include <iostream>
 #include <thread>
 
-#include "aster/platform/linux/node_runtime.hpp"
-#include "aster/platform/linux/shutdown_signal.hpp"
+#include "aster_runtime/platform/linux/node_runtime.hpp"
+#include "aster_runtime/platform/linux/shutdown_signal.hpp"
 #endif
 
 namespace {
@@ -34,7 +34,7 @@ bool ValidComposition(aster::generated::Composition& composition) noexcept {
     return false;
   }
   for (const auto& slot : composition.Modules()) {
-    if (slot.module == nullptr || slot.instance_name.empty() || slot.module->Info().type.empty()) {
+    if (!slot.module || slot.instance_name.empty() || slot.module.Info().type.empty()) {
       return false;
     }
   }

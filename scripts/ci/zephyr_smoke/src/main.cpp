@@ -12,8 +12,8 @@
 #include <cstdint>
 #include <span>
 
-#include "aster/platform/zephyr/can_device.hpp"
-#include "aster/platform/zephyr/runtime_services.hpp"
+#include "aster_runtime/platform/zephyr/can_device.hpp"
+#include "aster_runtime/platform/zephyr/runtime_services.hpp"
 #include "examples/common/portable_pubsub.hpp"
 
 namespace {
@@ -51,7 +51,7 @@ void RecordExecutorCallback(void* state, const aster::ExecutionContext&) noexcep
   probe.callbacks.fetch_add(1, std::memory_order_release);
 }
 
-class QueueingModule final : public aster::Module {
+class QueueingModule final : public aster::ModuleBase {
  public:
   explicit QueueingModule(ExecutorProbe& probe) noexcept : probe_(probe) {}
 
@@ -83,7 +83,7 @@ class QueueingModule final : public aster::Module {
   aster::CoreRef core_;
 };
 
-class GateObserverModule final : public aster::Module {
+class GateObserverModule final : public aster::ModuleBase {
  public:
   GateObserverModule(ExecutorProbe& probe, aster::Status start_result,
                      bool test_isr_capacity) noexcept

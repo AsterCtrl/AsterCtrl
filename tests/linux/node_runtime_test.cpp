@@ -1,12 +1,12 @@
-#include "aster/platform/linux/node_runtime.hpp"
+#include "aster_runtime/platform/linux/node_runtime.hpp"
 
 #include <array>
 #include <cassert>
 #include <cstddef>
 #include <span>
 
-#include "aster/channel.hpp"
-#include "aster/module.hpp"
+#include "aster_module_cpp_interface/channel.hpp"
+#include "aster_module_cpp_interface/module.hpp"
 
 namespace {
 
@@ -20,7 +20,7 @@ constexpr aster::ChannelDescriptor Descriptor() {
   return {"state", {"example.State", Schema(), 1}};
 }
 
-class Source final : public aster::Module {
+class Source final : public aster::ModuleBase {
  public:
   [[nodiscard]] aster::ModuleInfo Info() const noexcept override {
     return {"source", "example.Source", "tests", {0, 1, 0}};
@@ -39,13 +39,13 @@ class Source final : public aster::Module {
   aster::ChannelRef channel_;
 };
 
-class Sink final : public aster::Module {
+class Sink final : public aster::ModuleBase {
  public:
   [[nodiscard]] aster::ModuleInfo Info() const noexcept override {
     return {"sink", "example.Sink", "tests", {0, 1, 0}};
   }
   aster::Status Initialize(aster::CoreRef core) noexcept override {
-    return core.channel().RegisterSubscriber(Descriptor(), Receive, this);
+    return core.channel().RegisterSubscriber<Receive>(Descriptor(), this);
   }
   aster::Status Start() noexcept override { return aster::Status::kOk; }
   void Shutdown() noexcept override {}

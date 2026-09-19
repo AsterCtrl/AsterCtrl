@@ -9,7 +9,7 @@
 #include <cstdlib>
 #include <span>
 
-#include "aster/transport/usb/linux_tty.hpp"
+#include "aster_runtime/transport/usb/linux_tty.hpp"
 
 int main() {
   const int master = posix_openpt(O_RDWR | O_NOCTTY);

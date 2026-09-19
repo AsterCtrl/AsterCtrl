@@ -3,8 +3,8 @@
 #include <cstddef>
 #include <cstdlib>
 
-#include "aster/execution.hpp"
-#include "aster/transport/can/socketcan_adapter.hpp"
+#include "aster_module_cpp_interface/execution.hpp"
+#include "aster_runtime/transport/can/socketcan_adapter.hpp"
 
 namespace {
 

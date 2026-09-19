@@ -1,9 +1,10 @@
 #include <array>
 #include <cassert>
 #include <cstddef>
+#include <stdexcept>
 #include <string_view>
 
-#include "aster/runtime.hpp"
+#include "aster_runtime/runtime.hpp"
 
 namespace {
 
@@ -16,7 +17,7 @@ struct EventLog {
 
 void RecordQuiesce(void* state) noexcept { static_cast<EventLog*>(state)->Add('Q'); }
 
-class RecordingModule final : public aster::Module {
+class RecordingModule final : public aster::ModuleBase {
  public:
   RecordingModule(std::string_view name, char id, EventLog& log,
                   aster::Status initialize = aster::Status::kOk,
@@ -62,9 +63,29 @@ class RecordingRegistry final : public aster::Registry {
   bool sealed_{};
 };
 
+class ThrowingModule final : public aster::ModuleBase {
+ public:
+  aster::ModuleInfo Info() const noexcept override {
+    return {"throwing", "test.Throwing", "test", {1, 0, 0}};
+  }
+  aster::Status Initialize(aster::CoreRef) override { return aster::Status::kOk; }
+  aster::Status Start() override { throw std::runtime_error("start failed"); }
+  void Shutdown() noexcept override { stopped = true; }
+  bool stopped{};
+};
+
 }  // namespace
 
 int main() {
+  {
+    ThrowingModule module;
+    std::array<aster::ModuleSlot, 1> modules{{{&module, {}, "throwing"}}};
+    aster::Runtime runtime(modules);
+    assert(runtime.Initialize() == aster::Status::kOk);
+    assert(runtime.Start() == aster::Status::kInternal);
+    assert(module.stopped);
+    assert(runtime.failure()->operation == aster::LifecycleOperation::kStart);
+  }
   {
     EventLog log;
     RecordingModule first("first", 'A', log);
@@ -147,5 +168,19 @@ int main() {
     assert(runtime.Initialize() == aster::Status::kOk);
     assert(runtime.Start() == aster::Status::kOk);
     runtime.Shutdown();
+  }
+
+  {
+    EventLog log;
+    RecordingModule module("incompatible", 'A', log);
+    auto incompatible = *module.NativeHandle();
+    incompatible.abi_version = ASTER_ABI_VERSION + 1U;
+    std::array<aster::ModuleSlot, 1> modules{{
+        {aster::ModuleRef(&incompatible), {}, "incompatible"},
+    }};
+    aster::Runtime runtime(modules);
+    assert(runtime.Initialize() == aster::Status::kVersionMismatch);
+    assert(runtime.failure()->operation == aster::LifecycleOperation::kValidation);
+    assert(runtime.failure()->status == aster::Status::kVersionMismatch);
   }
 }

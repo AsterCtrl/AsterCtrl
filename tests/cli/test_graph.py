@@ -154,6 +154,20 @@ def test_linux_and_zephyr_emitters_are_bounded(tmp_path: Path) -> None:
     assert "SocketCanAdapter" in linux_composition
     assert "CanChannelTransportModule" in linux_composition
     assert ".AddIngress(" in linux_composition
+    assert "CoreRefOverlay" in linux_composition
+    assert "WithInstanceConfigurator" not in linux_composition
+    package_source = (output / "packages/control/package.generated.cpp").read_text()
+    assert '#include "aster_pkg_c_interface/pkg_macro.hpp"' in package_source
+    assert "::aster::ModuleRegistration" in package_source
+    assert "test::Controller" in package_source
+    assert "ASTER_PKG_MAIN" in package_source
+    packages_cmake = (output / "packages/aster.packages.cmake").read_text()
+    assert "include_guard(GLOBAL)" in packages_cmake
+    assert "control/package.generated.cmake" in packages_cmake
+    package_cmake = (output / "packages/control/package.generated.cmake").read_text()
+    assert "aster::module_cpp_interface" in package_cmake
+    assert "aster::core" not in package_cmake
+    assert not (output / "packages/sensors/package.generated.cpp").exists()
     assert lock["stack_bytes"] == {"mcu": 1024, "soc": 1024}
     assert lock["static_ram_bytes"] == {"mcu": 256, "soc": 128}
     assert lock["flash_bytes"] == {"mcu": 4096, "soc": 2048}
@@ -193,7 +207,8 @@ def test_linux_and_zephyr_emitters_are_bounded(tmp_path: Path) -> None:
     assert typed_lock.flash_bytes == {"mcu": 4096, "soc": 2048}
     compiler = shutil.which("c++")
     if compiler:
-        include = Path(__file__).parents[2] / "include"
+        project_root = Path(__file__).parents[2]
+        include = project_root / "src/interface"
         for source in output.glob("nodes/*/composition.generated.cpp"):
             header = source.with_suffix(".hpp")
             assert "ModuleSlot" in header.read_text(encoding="utf-8")
@@ -207,7 +222,7 @@ def test_linux_and_zephyr_emitters_are_bounded(tmp_path: Path) -> None:
             assert "config_json" in header.read_text(encoding="utf-8")
             check = source.with_name("composition.check.cpp")
             check.write_text(
-                '#include "aster/configuration.hpp"\n'
+                '#include "aster_runtime/configuration.hpp"\n'
                 '#include "composition.generated.hpp"\n'
                 "int main() {\n"
                 "  aster::StaticConfigurator<1, sizeof(std::uint32_t)> fallback;\n"
@@ -216,20 +231,18 @@ def test_linux_and_zephyr_emitters_are_bounded(tmp_path: Path) -> None:
                 "      fallback.Seal() != aster::Status::kOk) return 1;\n"
                 "  auto handles = aster::CoreHandles{};\n"
                 "  handles.configurator = aster::ConfiguratorRef(fallback);\n"
-                "  const aster::CoreRef core(handles);\n"
+                "  const aster::CoreAdapter core_adapter(handles);\n"
+                "  const auto core = core_adapter.ref();\n"
                 "  aster::generated::Composition value(core);\n"
                 "  if (value.Modules().size() != 1) return 1;\n"
                 "  std::uint32_t loaded{};\n"
                 '  if (value.Modules()[0].core.configurator().Get("global", loaded) !=\n'
                 "          aster::Status::kOk ||\n"
                 "      loaded != marker) return 2;\n"
-                "  std::array<std::byte, 64> output{};\n"
-                "  std::size_t written{};\n"
+                "  std::string_view config;\n"
                 "  const auto status = value.Modules()[0].core.configurator().Get(\n"
-                "      aster::generated::kInstanceConfigKey, output, written);\n"
+                "      aster::generated::kInstanceConfigKey, config);\n"
                 "  if (status != aster::Status::kOk) return 3;\n"
-                "  const auto config = std::string_view(\n"
-                "      reinterpret_cast<const char*>(output.data()), written);\n"
                 "  return config == aster::generated::kInstances[0].config_json ? 0 : 4;\n"
                 "}\n",
                 encoding="utf-8",
@@ -245,8 +258,14 @@ def test_linux_and_zephyr_emitters_are_bounded(tmp_path: Path) -> None:
                     "-I",
                     str(include),
                     "-I",
+                    str(project_root / "src/runtime"),
+                    "-I",
                     str(tmp_path),
                     str(check),
+                    str(project_root / "src/core/core_adapter.cpp"),
+                    str(project_root / "src/core/execution.cpp"),
+                    str(project_root / "src/platform/linux/execution.cpp"),
+                    *map(str, sorted((project_root / "src/core/service").glob("*.cpp"))),
                     "-o",
                     str(source.with_suffix(".check")),
                 ],

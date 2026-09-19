@@ -6,11 +6,16 @@
 #include <span>
 #include <string_view>
 
-#include "aster/channel.hpp"
-#include "aster/core_ref.hpp"
-#include "aster/executor.hpp"
-#include "aster/rpc_router.hpp"
-#include "aster/transport/can/channel_transport_module.hpp"
+#include "aster_module_cpp_interface/channel.hpp"
+#include "aster_module_cpp_interface/core_ref.hpp"
+#include "aster_module_cpp_interface/executor.hpp"
+#include "aster_runtime/core/clock.hpp"
+#include "aster_runtime/core/executor.hpp"
+#include "aster_runtime/core_adapter.hpp"
+#include "aster_runtime/local_channel.hpp"
+#include "aster_runtime/local_rpc.hpp"
+#include "aster_runtime/rpc_router.hpp"
+#include "aster_runtime/transport/can/channel_transport_module.hpp"
 #include "test_types.hpp"
 
 namespace {
@@ -181,15 +186,27 @@ aster::Status Receive(void* state, std::span<const std::byte> bytes, const aster
   return aster::Status::kOk;
 }
 
-aster::CoreRef Core(QueuedExecutor& executor, aster::LocalChannel<1, 1, 8>& channel,
-                    ManualClock& clock, aster::RpcRef rpc = {}) {
-  auto handles = aster::CoreHandles{};
-  handles.executor = aster::ExecutorRef(executor);
-  handles.channel = aster::ChannelRef(channel);
-  handles.rpc = rpc;
-  handles.clock = aster::ClockRef(clock);
-  return aster::CoreRef(handles);
-}
+class CoreOwner {
+ public:
+  CoreOwner(QueuedExecutor& executor, aster::LocalChannel<1, 1, 8>& channel, ManualClock& clock,
+            aster::RpcRef rpc = {})
+      : adapter_(aster::CoreHandles{
+            .configurator = {},
+            .logger = {},
+            .executor = aster::ExecutorRef(executor),
+            .channel = aster::ChannelRef(channel),
+            .rpc = rpc,
+            .parameter = {},
+            .clock = aster::ClockRef(clock),
+            .allocator = {},
+            .hardware = {},
+        }) {}
+
+  [[nodiscard]] aster::CoreRef ref() const noexcept { return adapter_.ref(); }
+
+ private:
+  aster::CoreAdapter adapter_;
+};
 
 aster::Status Add(void*, const test::AddRequest& request, test::AddResponse& response,
                   const aster::RpcCallInfo&, const aster::ExecutionContext&) noexcept {
@@ -233,11 +250,13 @@ void HandshakesAndRoutesAReliableChannel() {
   assert(destination.AddIngress(8, Descriptor(),
                                 aster::transport::can::ChannelReliability::kReliable) ==
          aster::Status::kOk);
-  assert(destination_channel.RegisterSubscriber(Descriptor(), Receive, &capture) ==
-         aster::Status::kOk);
-  assert(source.Initialize(Core(source_executor, source_channel, clock)) == aster::Status::kOk);
-  assert(destination.Initialize(Core(destination_executor, destination_channel, clock)) ==
-         aster::Status::kOk);
+  assert(
+      aster::ChannelRef(destination_channel).RegisterSubscriber<Receive>(Descriptor(), &capture) ==
+      aster::Status::kOk);
+  CoreOwner source_core(source_executor, source_channel, clock);
+  CoreOwner destination_core(destination_executor, destination_channel, clock);
+  assert(source.Initialize(source_core.ref()) == aster::Status::kOk);
+  assert(destination.Initialize(destination_core.ref()) == aster::Status::kOk);
   assert(source_channel.Seal() == aster::Status::kOk);
   assert(destination_channel.Seal() == aster::Status::kOk);
   assert(source.Start() == aster::Status::kOk);
@@ -297,10 +316,10 @@ void HandshakesAndRoutesRpcThroughTheNodeRouter() {
   assert(client_transport.AddRpcClient(18, client_bridge) == aster::Status::kOk);
   assert(server_transport.AddRpcServer(18, server_bridge) == aster::Status::kOk);
   assert(client_router.AddRemoteClient(descriptor, client_bridge) == aster::Status::kOk);
-  assert(client_transport.Initialize(Core(client_executor, client_channel, clock,
-                                          aster::RpcRef(client_router))) == aster::Status::kOk);
-  assert(server_transport.Initialize(Core(server_executor, server_channel, clock,
-                                          aster::RpcRef(server_router))) == aster::Status::kOk);
+  CoreOwner client_core(client_executor, client_channel, clock, aster::RpcRef(client_router));
+  CoreOwner server_core(server_executor, server_channel, clock, aster::RpcRef(server_router));
+  assert(client_transport.Initialize(client_core.ref()) == aster::Status::kOk);
+  assert(server_transport.Initialize(server_core.ref()) == aster::Status::kOk);
   assert(client.Bind(aster::RpcRef(client_router)) == aster::Status::kOk);
   assert(service.Bind(aster::RpcRef(server_router), Add, nullptr) == aster::Status::kOk);
   assert(client_router.Seal() == aster::Status::kOk);

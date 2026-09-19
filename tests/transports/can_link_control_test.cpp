@@ -4,7 +4,8 @@
 #include <cstdint>
 
 #include "allocation_tracker.hpp"
-#include "aster/transport/can/link_control.hpp"
+#include "aster_runtime/core/clock.hpp"
+#include "aster_runtime/transport/can/link_control.hpp"
 
 namespace {
 
@@ -17,7 +18,10 @@ struct Clock {
   std::uint64_t now_ns{1'000'000};
 };
 
-std::uint64_t ReadClock(void* state) noexcept { return static_cast<Clock*>(state)->now_ns; }
+aster::Status ReadClock(void* state, std::uint64_t& output) noexcept {
+  output = static_cast<Clock*>(state)->now_ns;
+  return aster::Status::kOk;
+}
 
 struct QueuedFrame {
   CanFrame frame;

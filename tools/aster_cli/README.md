@@ -1,40 +1,40 @@
 # AsterCtrl CLI
 
-`aster` validates v1alpha2 manifests, compiles Application and Deployment graphs,
-emits bounded Linux/Zephyr inputs, and generates fixed-capacity C++ types from
-protobuf descriptor sets.
+The Python 3.12 package `aster_cli` installs the single public command `aster`.
+Use uv for the Python environment, CMake for Host dependencies, and west for
+Zephyr modules. The former `aster package` dependency manager is removed.
 
-Packages export `.proto` files and declare their bounds/include roots under
-`spec.protobuf`. Graph resolution invokes the same bounded-profile analysis as
-code generation, then locks the canonical descriptor-and-bounds hash and each
-message's maximum encoded size. A Module port may declare `schema_hash` only as
-an assertion; release resolution never trusts a hand-entered hash. Connection
-`max_size` defaults to the derived maximum and cannot understate it.
+## Configuration-driven Linux
 
-The package is managed with `uv`, requires Python 3.12 plus `protoc`, and installs
-only the `aster` command. Planning commands are deterministic. `build`, `run`, and
-`deploy apply` do not execute external commands unless `--execute` is explicitly
-provided.
+`aster init DIRECTORY` creates a minimal Module header/source, v1alpha3
+package.yaml, runtime.yaml and CMakeLists.txt. There is no custom launcher,
+Application graph or Deployment Lock.
 
-```shell
-uv sync
-uv run aster init my_robot
-uv run aster doctor --format json
-uv run aster validate package.yaml
-uv run aster graph workspace.yaml application.yaml --format dot
-uv run aster resolve workspace.yaml deployment.yaml --output build/plan.yaml
-uv run aster resolve workspace.yaml deployment.yaml --release
-uv run aster codegen workspace.yaml deployment.yaml build/generated
-uv run aster deploy plan deployment.yaml inventory.yaml build/generated
-uv run aster deploy apply deployment.yaml inventory.yaml build/generated --execute
-uv run aster deploy status inventory.yaml
-uv run aster package lock workspace.yaml --release
-```
+`aster_add_package(target MANIFEST package.yaml)` invokes
+`aster codegen --package package.yaml --output BUILD_DIRECTORY` during CMake
+configuration. It generates the C ABI entry and links only Module/Package
+Interfaces. The manifest does not execute repository-owned Python.
 
-Code generation creates ``deployment.bundle.yaml`` with a digest for the
-Deployment Lock and a SHA-256/size record for every generated file. Deployment
-planning verifies the complete bundle. Local apply uses staged, verified release
-directories with atomic ``current`` and retained ``previous`` symlinks. SSH uses
-argv-only subprocesses and external SSH-agent/config authentication; inventory
-and deployment state never contain credentials. Serial and debug-probe flashing
-are not deployment Adapters in v0.2.
+`aster run --config runtime.yaml` starts the generic Runtime immediately; there
+is no --execute flag. Use --runtime PATH when aster_runtime is not on PATH,
+--check to initialize/seal without starting, or --duration-ms N for a smoke run.
+
+`aster validate runtime.yaml [--runtime PATH]` uses that same native parser
+without loading Packages or running Modules. It does not verify C++ registrations.
+
+## Bounded messages and migration
+
+`aster codegen --proto ...` or `--descriptor ...` generates fixed-capacity
+C++ types with the existing bounded Protobuf profile. This needs protoc when
+compiling .proto sources; ordinary Package generation does not.
+
+Deployment graph compilation, cross-node build inputs and bundle installation
+still consume v1alpha2 during the v1alpha3 migration. They are regression paths,
+not a second long-term configuration model. Existing deploy plan/apply/status
+retain digest verification, staged installation and rollback. Build and deployment
+mutation still require --execute.
+Old graph/resolve/build commands print migration warnings. Deployment activation
+switches files; it does not start systemd services or flash an MCU.
+
+See the bilingual getting-started and runtime-v3 guides in document/ for
+verified commands and the remaining Zephyr/transport/plugin work.

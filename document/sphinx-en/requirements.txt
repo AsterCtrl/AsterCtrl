@@ -1,0 +1,4 @@
+sphinx==8.2.3
+furo==2025.7.19
+breathe==4.36.0
+myst-parser==4.0.1

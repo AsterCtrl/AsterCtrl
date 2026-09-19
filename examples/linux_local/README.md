@@ -1,5 +1,9 @@
 # Single-node Linux
 
+> Legacy v1alpha2 regression example, not the default application workflow.
+> New applications use [aster init and runtime.yaml](../../document/sphinx-en/tutorials/getting-started.md)
+> without Application/Port graphs. This path remains until its replacement is tested.
+
 This example places real, typed publisher and subscriber `Module`
 implementations in one Linux node. Both use the bounded type generated from
 `state.proto`; the route is resolved as `local`, so no transport configuration

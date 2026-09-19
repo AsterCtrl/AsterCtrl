@@ -1,25 +1,23 @@
-#include "aster/runtime.hpp"
+#include "aster_runtime/runtime.hpp"
+
+#include "aster_runtime/execution.hpp"
 
 namespace aster {
 
 Status Runtime::Validate() noexcept {
   for (std::size_t index = 0; index < modules_.size(); ++index) {
-    const auto* module = modules_[index].module;
-    if (module == nullptr) {
+    const auto module = modules_[index].module;
+    const auto module_status = module.Validate();
+    if (!IsOk(module_status)) {
       RecordFailure(LifecycleSubject::kModule, LifecycleOperation::kValidation, index, {},
-                    Status::kInvalidArgument);
-      return Status::kInvalidArgument;
+                    module_status);
+      return module_status;
     }
-    const auto info = module->Info();
+    const auto info = module.Info();
     const auto instance_name =
         modules_[index].instance_name.empty() ? info.name : modules_[index].instance_name;
-    if (info.name.empty() || info.type.empty() || info.package.empty()) {
-      RecordFailure(LifecycleSubject::kModule, LifecycleOperation::kValidation, index,
-                    instance_name, Status::kInvalidArgument);
-      return Status::kInvalidArgument;
-    }
     for (std::size_t previous = 0; previous < index; ++previous) {
-      const auto previous_info = modules_[previous].module->Info();
+      const auto previous_info = modules_[previous].module.Info();
       const auto previous_name = modules_[previous].instance_name.empty()
                                      ? previous_info.name
                                      : modules_[previous].instance_name;
@@ -61,10 +59,11 @@ Status Runtime::Initialize() noexcept {
   state_ = RuntimeState::kInitializing;
   for (std::size_t index = 0; index < modules_.size(); ++index) {
     auto& slot = modules_[index];
-    const auto info = slot.module->Info();
+    const auto info = slot.module.Info();
     const auto instance_name = slot.instance_name.empty() ? info.name : slot.instance_name;
     initialized_module_count_ = index + 1;
-    const auto status = slot.module->Initialize(slot.core);
+    const ExecutionScope scope("lifecycle", slot.core.clock().NativeHandle());
+    const auto status = slot.module.Initialize(slot.core);
     if (!IsOk(status)) {
       RecordFailure(LifecycleSubject::kModule, LifecycleOperation::kInitialize, index,
                     instance_name, status);
@@ -94,10 +93,11 @@ Status Runtime::Start() noexcept {
   }
   state_ = RuntimeState::kStarting;
   for (std::size_t index = 0; index < modules_.size(); ++index) {
-    const auto info = modules_[index].module->Info();
+    const auto info = modules_[index].module.Info();
     const auto instance_name =
         modules_[index].instance_name.empty() ? info.name : modules_[index].instance_name;
-    const auto status = modules_[index].module->Start();
+    const ExecutionScope scope("lifecycle", modules_[index].core.clock().NativeHandle());
+    const auto status = modules_[index].module.Start();
     if (!IsOk(status)) {
       RecordFailure(LifecycleSubject::kModule, LifecycleOperation::kStart, index, instance_name,
                     status);
@@ -128,7 +128,9 @@ void Runtime::ShutdownInitializedModules() noexcept {
     hooks_.before_modules_shutdown(hooks_.state);
   }
   while (initialized_module_count_ != 0) {
-    modules_[--initialized_module_count_].module->Shutdown();
+    auto& slot = modules_[--initialized_module_count_];
+    const ExecutionScope scope("lifecycle", slot.core.clock().NativeHandle());
+    slot.module.Shutdown();
   }
 }
 

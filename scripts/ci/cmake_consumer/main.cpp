@@ -1,7 +1,7 @@
 #include <array>
 #include <span>
 
-#include "aster/runtime.hpp"
+#include "aster_runtime/runtime.hpp"
 
 int main() {
   std::array<aster::ModuleSlot, 0> modules{};

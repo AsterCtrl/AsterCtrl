@@ -1,5 +1,9 @@
 # Linux to Zephyr over USB CDC ACM
 
+> Legacy v1alpha2 generated-node regression. USB is not yet selectable in the
+> v1alpha3 launcher; see [migration status](../../document/sphinx-en/guides/runtime-v3.md).
+> This example is not evidence of current Zephyr or physical-board acceptance.
+
 The typed Linux gateway publishes bounded commands to a typed `dev_c` Zephyr
 sink. Both endpoints compile against the same `Command` Interface generated
 from `command.proto`. The deployment maps the route to `usb0` and binds that

@@ -3,48 +3,47 @@
 #include <string_view>
 #include <type_traits>
 
-#include "aster/plugin.h"
-#include "aster/status.hpp"
+#include "aster_core_plugin_interface/core_plugin_main.h"
+#include "aster_module_c_interface/aster_module_c_interface.h"
+#include "aster_module_cpp_interface/status.hpp"
 
-static_assert(std::is_standard_layout_v<AsterCoreRefV1>);
-static_assert(std::is_standard_layout_v<AsterExecutionContextV1>);
-static_assert(std::is_standard_layout_v<AsterTypeDescriptorV1>);
-static_assert(std::is_standard_layout_v<AsterChannelDescriptorV1>);
-static_assert(std::is_standard_layout_v<AsterServiceDescriptorV1>);
-static_assert(std::is_standard_layout_v<AsterConfiguratorServiceV1>);
-static_assert(std::is_standard_layout_v<AsterLoggerServiceV1>);
-static_assert(std::is_standard_layout_v<AsterExecutorServiceV1>);
-static_assert(std::is_standard_layout_v<AsterChannelServiceV1>);
-static_assert(std::is_standard_layout_v<AsterRpcServiceV1>);
-static_assert(std::is_standard_layout_v<AsterParameterServiceV1>);
-static_assert(std::is_standard_layout_v<AsterClockServiceV1>);
-static_assert(std::is_standard_layout_v<AsterAllocatorServiceV1>);
-static_assert(std::is_standard_layout_v<AsterHardwareManagerServiceV1>);
-static_assert(std::is_standard_layout_v<AsterModuleV1>);
-static_assert(std::is_standard_layout_v<AsterModuleBundleV1>);
-static_assert(std::is_standard_layout_v<AsterInterfaceHeaderV1>);
-static_assert(std::is_standard_layout_v<AsterCorePluginV1>);
-static_assert(static_cast<AsterStatusV1>(aster::Status::kOk) == ASTER_STATUS_OK_V1);
-static_assert(static_cast<AsterStatusV1>(aster::Status::kInvalidArgument) ==
-              ASTER_STATUS_INVALID_ARGUMENT_V1);
-static_assert(static_cast<AsterStatusV1>(aster::Status::kNotFound) == ASTER_STATUS_NOT_FOUND_V1);
-static_assert(static_cast<AsterStatusV1>(aster::Status::kCapacityExceeded) ==
-              ASTER_STATUS_CAPACITY_EXCEEDED_V1);
-static_assert(static_cast<AsterStatusV1>(aster::Status::kUnavailable) ==
-              ASTER_STATUS_UNAVAILABLE_V1);
-static_assert(static_cast<AsterStatusV1>(aster::Status::kAlreadyExists) ==
-              ASTER_STATUS_ALREADY_EXISTS_V1);
-static_assert(static_cast<AsterStatusV1>(aster::Status::kTimeout) == ASTER_STATUS_TIMEOUT_V1);
-static_assert(static_cast<AsterStatusV1>(aster::Status::kCancelled) == ASTER_STATUS_CANCELLED_V1);
-static_assert(static_cast<AsterStatusV1>(aster::Status::kTypeMismatch) ==
-              ASTER_STATUS_TYPE_MISMATCH_V1);
-static_assert(static_cast<AsterStatusV1>(aster::Status::kVersionMismatch) ==
-              ASTER_STATUS_VERSION_MISMATCH_V1);
-static_assert(static_cast<AsterStatusV1>(aster::Status::kInternal) == ASTER_STATUS_INTERNAL_V1);
-static_assert(static_cast<AsterStatusV1>(aster::Status::kProtocolError) ==
-              ASTER_STATUS_PROTOCOL_ERROR_V1);
-static_assert(static_cast<AsterStatusV1>(aster::Status::kInvalidState) ==
-              ASTER_STATUS_INVALID_STATE_V1);
+static_assert(std::is_standard_layout_v<aster_core_base_t>);
+static_assert(std::is_standard_layout_v<aster_execution_context_t>);
+static_assert(std::is_standard_layout_v<aster_type_descriptor_t>);
+static_assert(std::is_standard_layout_v<aster_channel_descriptor_t>);
+static_assert(std::is_standard_layout_v<aster_service_descriptor_t>);
+static_assert(std::is_standard_layout_v<aster_configurator_base_t>);
+static_assert(std::is_standard_layout_v<aster_logger_base_t>);
+static_assert(std::is_standard_layout_v<aster_executor_base_t>);
+static_assert(std::is_standard_layout_v<aster_channel_base_t>);
+static_assert(std::is_standard_layout_v<aster_rpc_base_t>);
+static_assert(std::is_standard_layout_v<aster_parameter_base_t>);
+static_assert(std::is_standard_layout_v<aster_clock_base_t>);
+static_assert(std::is_standard_layout_v<aster_allocator_base_t>);
+static_assert(std::is_standard_layout_v<aster_hardware_manager_base_t>);
+static_assert(std::is_standard_layout_v<aster_module_base_t>);
+static_assert(std::is_standard_layout_v<aster_interface_header_t>);
+static_assert(std::is_standard_layout_v<aster_core_plugin_t>);
+static_assert(static_cast<aster_status_t>(aster::Status::kOk) == ASTER_STATUS_OK);
+static_assert(static_cast<aster_status_t>(aster::Status::kInvalidArgument) ==
+              ASTER_STATUS_INVALID_ARGUMENT);
+static_assert(static_cast<aster_status_t>(aster::Status::kNotFound) == ASTER_STATUS_NOT_FOUND);
+static_assert(static_cast<aster_status_t>(aster::Status::kCapacityExceeded) ==
+              ASTER_STATUS_CAPACITY_EXCEEDED);
+static_assert(static_cast<aster_status_t>(aster::Status::kUnavailable) == ASTER_STATUS_UNAVAILABLE);
+static_assert(static_cast<aster_status_t>(aster::Status::kAlreadyExists) ==
+              ASTER_STATUS_ALREADY_EXISTS);
+static_assert(static_cast<aster_status_t>(aster::Status::kTimeout) == ASTER_STATUS_TIMEOUT);
+static_assert(static_cast<aster_status_t>(aster::Status::kCancelled) == ASTER_STATUS_CANCELLED);
+static_assert(static_cast<aster_status_t>(aster::Status::kTypeMismatch) ==
+              ASTER_STATUS_TYPE_MISMATCH);
+static_assert(static_cast<aster_status_t>(aster::Status::kVersionMismatch) ==
+              ASTER_STATUS_VERSION_MISMATCH);
+static_assert(static_cast<aster_status_t>(aster::Status::kInternal) == ASTER_STATUS_INTERNAL);
+static_assert(static_cast<aster_status_t>(aster::Status::kProtocolError) ==
+              ASTER_STATUS_PROTOCOL_ERROR);
+static_assert(static_cast<aster_status_t>(aster::Status::kInvalidState) ==
+              ASTER_STATUS_INVALID_STATE);
 static_assert(aster::CategoryOf(aster::Status::kInvalidArgument) ==
               aster::StatusCategory::kConfiguration);
 static_assert(aster::CategoryOf(aster::Status::kCapacityExceeded) ==
@@ -57,15 +56,15 @@ static_assert(aster::CategoryOf(aster::Status::kInvalidState) == aster::StatusCa
 static_assert(aster::CategoryOf(aster::Status::kInternal) == aster::StatusCategory::kPlatform);
 
 int main() {
-  assert(ASTER_CORE_ABI_VERSION_V1 == 1);
-  assert(std::string_view(ASTER_CORE_SERVICE_CONFIGURATOR_NAME_V1) == "aster.configurator");
-  assert(std::string_view(ASTER_CORE_SERVICE_HARDWARE_MANAGER_NAME_V1) == "aster.hardware_manager");
-  assert(ASTER_CORE_SERVICE_CONFIGURATOR_VERSION_V1 == 1);
-  assert(ASTER_CORE_SERVICE_RPC_VERSION_V1 == 1);
-  assert(offsetof(AsterCorePluginV1, abi_version) == 0);
-  assert(offsetof(AsterInterfaceHeaderV1, interface_version) == 0);
-  assert(offsetof(AsterModuleBundleV1, abi_version) == 0);
-  assert(offsetof(AsterLoggerServiceV1, service_version) == 0);
-  assert(offsetof(AsterRpcServiceV1, service_version) == 0);
-  assert(sizeof(AsterStatusV1) == 4);
+  assert(ASTER_ABI_VERSION == 2);
+  assert(std::string_view(ASTER_CORE_PLUGIN_CREATE_SYMBOL) == "AsterDynlibCreateCorePlugin");
+  assert(std::string_view(ASTER_CORE_PLUGIN_DESTROY_SYMBOL) == "AsterDynlibDestroyCorePlugin");
+  assert(offsetof(aster_core_plugin_t, abi_version) == 0);
+  assert(offsetof(aster_interface_header_t, interface_version) == 0);
+  assert(offsetof(aster_module_base_t, abi_version) == 0);
+  assert(offsetof(aster_module_base_t, impl) < offsetof(aster_module_base_t, info));
+  assert(offsetof(aster_module_base_t, info) < offsetof(aster_module_base_t, initialize));
+  assert(offsetof(aster_logger_base_t, struct_size) == 0);
+  assert(offsetof(aster_rpc_base_t, struct_size) == 0);
+  assert(sizeof(aster_status_t) == 4);
 }

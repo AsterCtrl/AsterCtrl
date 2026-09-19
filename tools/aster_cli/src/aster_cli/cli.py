@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import subprocess
 import sys
 from collections.abc import Sequence
@@ -21,16 +22,10 @@ from .doctor import doctor_report, format_doctor_text
 from .emitters import emit_deployment
 from .graph import GraphError, compile_application, resolve_deployment, to_dot
 from .models import load_deployment
-from .packages import (
-    PackageError,
-    add_package,
-    list_packages,
-    lock_packages,
-    remove_package,
-)
+from .package_codegen import generate_package
 from .project import ProjectError, initialize_project
 from .protobuf import ProtobufProfileError, generate_bounded_cpp, generate_from_proto
-from .validation import ValidationError, dump_yaml, validate_document, validate_mapping
+from .validation import ValidationError, dump_yaml, load_yaml, validate_document, validate_mapping
 
 
 def _print(value: Any, output: Path | None = None) -> None:
@@ -48,6 +43,14 @@ def _print(value: Any, output: Path | None = None) -> None:
 
 def _validate(args: argparse.Namespace) -> int:
     for path in args.paths:
+        document = load_yaml(path)
+        if "aster" in document or (
+            document.get("api_version") == "aster.dev/v1alpha3" and "kind" not in document
+        ):
+            status = _invoke_runtime(path, args.runtime, ["--validate-config"])
+            if status != 0:
+                return status
+            continue
         document = validate_document(path)
         print(f"validated {document['kind']} {path}")
     return 0
@@ -87,6 +90,14 @@ def _resolve(args: argparse.Namespace) -> int:
 
 
 def _codegen(args: argparse.Namespace) -> int:
+    if args.package_manifest:
+        if any(value is not None for value in (args.workspace, args.deployment, args.graph_output)):
+            raise ValueError("Package codegen cannot be combined with deployment paths")
+        if args.proto_output is None:
+            raise ValueError("Package codegen requires --output")
+        generate_package(args.package_manifest, args.proto_output)
+        print(f"generated Package entry in {args.proto_output}")
+        return 0
     if args.descriptor or args.proto:
         if any(value is not None for value in (args.workspace, args.deployment, args.graph_output)):
             raise ValueError("bounded protobuf codegen cannot be combined with graph paths")
@@ -181,12 +192,26 @@ def _build(args: argparse.Namespace) -> int:
     return 0
 
 
+def _invoke_runtime(config: Path, executable: Path | None, flags: Sequence[str]) -> int:
+    if not config.is_file():
+        raise ValueError(f"runtime config does not exist: {config}")
+    runtime = str(executable.resolve()) if executable else shutil.which("aster_runtime")
+    if runtime is None:
+        raise ValueError(
+            "aster_runtime is not on PATH; install the Host Runtime or pass --runtime PATH"
+        )
+    command = [runtime, "--config", str(config.resolve()), *flags]
+    try:
+        return subprocess.run(command, check=False).returncode
+    except OSError as error:
+        raise ValueError(f"cannot start Runtime: {error}") from error
+
+
 def _run(args: argparse.Namespace) -> int:
-    command = [str(args.binary.resolve()), *args.arguments]
-    if not args.execute:
-        _print({"mode": "plan", "command": command})
-        return 0
-    return subprocess.run(command, check=False).returncode
+    flags = ["--check"] if args.check else []
+    if args.duration_ms is not None:
+        flags.extend(["--duration-ms", str(args.duration_ms)])
+    return _invoke_runtime(args.config, args.runtime, flags)
 
 
 def _deploy_plan(args: argparse.Namespace) -> int:
@@ -211,33 +236,12 @@ def _deploy_status(args: argparse.Namespace) -> int:
     return 0
 
 
-def _package_add(args: argparse.Namespace) -> int:
-    add_package(args.workspace, args.name, args.source, args.version, args.revision)
-    return 0
-
-
-def _package_remove(args: argparse.Namespace) -> int:
-    remove_package(args.workspace, args.name)
-    return 0
-
-
-def _package_list(args: argparse.Namespace) -> int:
-    _print(list_packages(args.workspace))
-    return 0
-
-
-def _package_lock(args: argparse.Namespace) -> int:
-    document = lock_packages(args.workspace, args.output, release=args.release)
-    print(document["content_hash"])
-    return 0
-
-
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="aster")
     parser.add_argument("--version", action="version", version=__version__)
     commands = parser.add_subparsers(dest="command")
 
-    init = commands.add_parser("init", help="create a validated starter project")
+    init = commands.add_parser("init", help="create a minimal Linux Module Package")
     init.add_argument("directory", type=Path)
     init.set_defaults(handler=_init)
 
@@ -245,11 +249,12 @@ def build_parser() -> argparse.ArgumentParser:
     doctor.add_argument("--format", choices=("text", "json"), default="text")
     doctor.set_defaults(handler=_doctor)
 
-    validate = commands.add_parser("validate", help="validate v1alpha2 YAML")
+    validate = commands.add_parser("validate", help="validate versioned framework documents")
     validate.add_argument("paths", nargs="+", type=Path)
+    validate.add_argument("--runtime", type=Path, help="native parser for runtime.yaml validation")
     validate.set_defaults(handler=_validate)
 
-    graph = commands.add_parser("graph", help="compile an Application graph")
+    graph = commands.add_parser("graph", help="compile a legacy v1alpha2 Application graph")
     graph.add_argument("workspace", type=Path)
     graph.add_argument("application", type=Path)
     graph.add_argument("--format", choices=("json", "dot"), default="json")
@@ -261,7 +266,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     graph.set_defaults(handler=_graph)
 
-    resolve = commands.add_parser("resolve", help="resolve a Deployment graph")
+    resolve = commands.add_parser("resolve", help="resolve a legacy v1alpha2 Deployment graph")
     resolve.add_argument("workspace", type=Path)
     resolve.add_argument("deployment", type=Path)
     resolve.add_argument("--output", type=Path)
@@ -279,6 +284,7 @@ def build_parser() -> argparse.ArgumentParser:
     codegen.add_argument("deployment", type=Path, nargs="?")
     codegen.add_argument("graph_output", type=Path, nargs="?")
     source = codegen.add_mutually_exclusive_group()
+    source.add_argument("--package", dest="package_manifest", type=Path)
     source.add_argument("--descriptor", type=Path)
     source.add_argument("--proto", type=Path, nargs="+")
     codegen.add_argument("--include", type=Path, action="append", default=[])
@@ -305,10 +311,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     build.set_defaults(handler=_build)
 
-    run = commands.add_parser("run", help="plan or execute one Linux artifact")
-    run.add_argument("binary", type=Path)
-    run.add_argument("arguments", nargs=argparse.REMAINDER)
-    run.add_argument("--execute", action="store_true")
+    run = commands.add_parser("run", help="start the configuration-driven Host Runtime")
+    run.add_argument("--config", type=Path, required=True)
+    run.add_argument("--runtime", type=Path, help="explicit aster_runtime executable")
+    run.add_argument(
+        "--check",
+        action="store_true",
+        help="initialize and validate registrations without starting",
+    )
+    run.add_argument("--duration-ms", type=int, help="stop after a bounded smoke run")
     run.set_defaults(handler=_run)
 
     deploy = commands.add_parser("deploy", help="plan, apply, or inspect deployment")
@@ -330,37 +341,27 @@ def build_parser() -> argparse.ArgumentParser:
     )
     status.set_defaults(handler=_deploy_status)
 
-    package = commands.add_parser("package", help="manage workspace packages")
-    package_commands = package.add_subparsers(dest="package_command")
-    add = package_commands.add_parser("add")
-    add.add_argument("workspace", type=Path)
-    add.add_argument("name")
-    add.add_argument("source")
-    add.add_argument("--version")
-    add.add_argument("--revision")
-    add.set_defaults(handler=_package_add)
-    remove = package_commands.add_parser("remove")
-    remove.add_argument("workspace", type=Path)
-    remove.add_argument("name")
-    remove.set_defaults(handler=_package_remove)
-    listing = package_commands.add_parser("list")
-    listing.add_argument("workspace", type=Path)
-    listing.set_defaults(handler=_package_list)
-    lock = package_commands.add_parser("lock")
-    lock.add_argument("workspace", type=Path)
-    lock.add_argument("--output", type=Path, default=Path("package.lock.yaml"))
-    lock.add_argument(
-        "--release",
-        action="store_true",
-        help="require immutable revisions for git sources",
-    )
-    lock.set_defaults(handler=_package_lock)
-
     return parser
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+    arguments = list(sys.argv[1:] if argv is None else argv)
+    if arguments and arguments[0] == "package":
+        print(
+            "error: 'aster package' was removed; use CMake, west and uv for dependencies",
+            file=sys.stderr,
+        )
+        return 2
+    args = build_parser().parse_args(arguments)
+    if args.command in ("graph", "resolve", "build") or (
+        args.command == "codegen" and args.workspace is not None
+    ):
+        print(
+            "warning: this is the legacy v1alpha2 deployment path; ordinary Linux uses "
+            "runtime.yaml and 'aster run --config'. The v1alpha3 deployment compiler "
+            "is not implemented yet.",
+            file=sys.stderr,
+        )
     handler = getattr(args, "handler", None)
     if handler is None:
         return 0
@@ -370,7 +371,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         ValidationError,
         GraphError,
         DeploymentError,
-        PackageError,
         ProjectError,
         ProtobufProfileError,
         ValueError,

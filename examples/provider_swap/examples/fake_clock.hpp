@@ -5,11 +5,11 @@
 
 #pragma once
 
-#include "aster/module.hpp"
+#include "aster_module_cpp_interface/module.hpp"
 
 namespace examples {
 
-class FakeClock final : public aster::Module {
+class FakeClock final : public aster::ModuleBase {
  public:
   [[nodiscard]] aster::ModuleInfo Info() const noexcept override {
     return {"clock-provider", "examples.FakeClock", "clock", {0, 2, 0}};
@@ -20,8 +20,11 @@ class FakeClock final : public aster::Module {
     if (!clock_) {
       return aster::Status::kUnavailable;
     }
-    return clock_.domain() == aster::ClockDomain::kSimulated ? aster::Status::kOk
-                                                             : aster::Status::kTypeMismatch;
+    aster::ClockDomain domain{};
+    const auto status = clock_.GetDomain(domain);
+    if (!aster::IsOk(status)) return status;
+    return domain == aster::ClockDomain::kSimulated ? aster::Status::kOk
+                                                    : aster::Status::kTypeMismatch;
   }
 
   aster::Status Start() noexcept override { return aster::Status::kOk; }

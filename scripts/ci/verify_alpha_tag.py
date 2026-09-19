@@ -34,7 +34,7 @@ def main() -> int:
     if ALPHA_TAG.fullmatch(args.tag) is None:
         raise SystemExit(f"refusing release for {args.tag!r}; only v0.2.0-alpha.N is allowed")
     root = Path(__file__).resolve().parents[2]
-    version_header = root / "include/aster/version.hpp"
+    version_header = root / "src/interface/aster_module_cpp_interface/version.hpp"
     match = SOURCE_VERSION.search(version_header.read_text(encoding="utf-8"))
     if match is None:
         raise SystemExit(f"cannot read the source version from {version_header}")
@@ -46,7 +46,9 @@ def main() -> int:
 
     semver_sources = {
         "transport header": _match_version(
-            root, "include/aster/transport/version.hpp", SOURCE_VERSION.pattern
+            root,
+            "src/interface/aster_runtime/transport/version.hpp",
+            SOURCE_VERSION.pattern,
         ),
         "CMake package": _match_version(
             root, "CMakeLists.txt", r'set\(ASTERCTRL_VERSION_STRING\s+"([^"]+)"\)'
@@ -58,8 +60,11 @@ def main() -> int:
         "CLI runtime": _match_version(
             root, "tools/aster_cli/src/aster_cli/__init__.py", r'__version__\s*=\s*"([^"]+)"'
         ),
-        "Sphinx documentation": _match_version(
-            root, "document/conf.py", r'^release\s*=\s*"([^"]+)"'
+        "English Sphinx documentation": _match_version(
+            root, "document/sphinx-en/conf.py", r'^release\s*=\s*"([^"]+)"'
+        ),
+        "Chinese Sphinx documentation": _match_version(
+            root, "document/sphinx-cn/conf.py", r'^release\s*=\s*"([^"]+)"'
         ),
     }
     mismatches = {

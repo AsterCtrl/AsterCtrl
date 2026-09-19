@@ -4,9 +4,10 @@
 #include <cstddef>
 #include <cstdint>
 
-#include "aster/channel.hpp"
-#include "aster/transport/can/channel_bridge.hpp"
-#include "aster/transport/can/reliable_channel_bridge.hpp"
+#include "aster_module_cpp_interface/channel.hpp"
+#include "aster_runtime/local_channel.hpp"
+#include "aster_runtime/transport/can/channel_bridge.hpp"
+#include "aster_runtime/transport/can/reliable_channel_bridge.hpp"
 
 namespace {
 
@@ -66,7 +67,8 @@ void BridgesBoundedChannelAcrossCan() {
   assert(source.RegisterPublisher(Descriptor()) == aster::Status::kOk);
   assert(egress.Bind(aster::ChannelRef(source), Descriptor()) == aster::Status::kOk);
   assert(ingress.Bind(aster::ChannelRef(destination), Descriptor()) == aster::Status::kOk);
-  assert(destination.RegisterSubscriber(Descriptor(), Receive, &capture) == aster::Status::kOk);
+  assert(aster::ChannelRef(destination).RegisterSubscriber<Receive>(Descriptor(), &capture) ==
+         aster::Status::kOk);
   assert(source.Seal() == aster::Status::kOk);
   assert(destination.Seal() == aster::Status::kOk);
 
@@ -99,7 +101,8 @@ void ReliablyBridgesAndAcknowledgesBoundedChannel() {
   assert(source.RegisterPublisher(Descriptor()) == aster::Status::kOk);
   assert(egress.Bind(aster::ChannelRef(source), Descriptor()) == aster::Status::kOk);
   assert(ingress.Bind(aster::ChannelRef(destination), Descriptor()) == aster::Status::kOk);
-  assert(destination.RegisterSubscriber(Descriptor(), Receive, &capture) == aster::Status::kOk);
+  assert(aster::ChannelRef(destination).RegisterSubscriber<Receive>(Descriptor(), &capture) ==
+         aster::Status::kOk);
   assert(source.Seal() == aster::Status::kOk);
   assert(destination.Seal() == aster::Status::kOk);
 
@@ -134,7 +137,7 @@ void AcknowledgesWireDeliveryWhenAnApplicationSubscriberFails() {
   assert(source.RegisterPublisher(Descriptor()) == aster::Status::kOk);
   assert(egress.Bind(aster::ChannelRef(source), Descriptor()) == aster::Status::kOk);
   assert(ingress.Bind(aster::ChannelRef(destination), Descriptor()) == aster::Status::kOk);
-  assert(destination.RegisterSubscriber(Descriptor(), RejectMessage, nullptr) ==
+  assert(aster::ChannelRef(destination).RegisterSubscriber<RejectMessage>(Descriptor(), nullptr) ==
          aster::Status::kOk);
   assert(source.Seal() == aster::Status::kOk);
   assert(destination.Seal() == aster::Status::kOk);

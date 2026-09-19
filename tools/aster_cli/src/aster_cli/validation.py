@@ -32,10 +32,20 @@ class ValidationError(ValueError):
     """Raised when a document cannot be parsed or violates its contract."""
 
 
+class _UniqueKeyLoader(yaml.SafeLoader):
+    def construct_mapping(self, node, deep=False):
+        mapping = super().construct_mapping(node, deep=deep)
+        if len(mapping) != len(node.value):
+            raise yaml.constructor.ConstructorError(
+                None, None, "duplicate key in mapping", node.start_mark
+            )
+        return mapping
+
+
 def load_yaml(path: str | Path) -> dict[str, Any]:
     source = Path(path)
     try:
-        value = yaml.safe_load(source.read_text(encoding="utf-8"))
+        value = yaml.load(source.read_text(encoding="utf-8"), Loader=_UniqueKeyLoader)
     except (OSError, UnicodeError, yaml.YAMLError) as error:
         raise ValidationError(f"{source}: cannot read YAML: {error}") from error
     if not isinstance(value, dict):
@@ -46,7 +56,7 @@ def load_yaml(path: str | Path) -> dict[str, Any]:
 def _schemas() -> dict[str, dict[str, Any]]:
     root = files("aster_cli.schemas")
     result: dict[str, dict[str, Any]] = {}
-    for name in ("common.schema.json", *SCHEMA_BY_KIND.values()):
+    for name in ("common.schema.json", "package-v3.schema.json", *SCHEMA_BY_KIND.values()):
         schema = json.loads(root.joinpath(name).read_text(encoding="utf-8"))
         result[name] = schema
         result[str(schema["$id"])] = schema
@@ -79,6 +89,9 @@ def validate_document(path: str | Path) -> dict[str, Any]:
     source = Path(path)
     document = load_yaml(source)
     kind = document.get("kind")
+    if document.get("api_version") == "aster.dev/v1alpha3" and kind == "Package":
+        validate_mapping(document, "package-v3.schema.json", str(source))
+        return document
     if not isinstance(kind, str) or kind not in SCHEMA_BY_KIND:
         raise ValidationError(f"{source}: unsupported kind {kind!r}")
     validate_mapping(document, SCHEMA_BY_KIND[kind], str(source))

@@ -1,5 +1,3 @@
-#include "aster/core_ref.hpp"
-
 #include <cassert>
 #include <cstddef>
 #include <cstdint>
@@ -7,18 +5,24 @@
 #include <span>
 #include <string_view>
 
+#include "aster_runtime/core/allocator.hpp"
+#include "aster_runtime/core/clock.hpp"
+#include "aster_runtime/core/configurator.hpp"
+#include "aster_runtime/core/executor.hpp"
+#include "aster_runtime/core/hardware.hpp"
+#include "aster_runtime/core/logger.hpp"
+#include "aster_runtime/core/parameter.hpp"
+#include "aster_runtime/core_adapter.hpp"
+#include "aster_runtime/local_channel.hpp"
+#include "aster_runtime/local_rpc.hpp"
+
 namespace {
 
 class TestConfigurator final : public aster::Configurator {
  public:
-  aster::Status Get(std::string_view key, std::span<std::byte> output,
-                    std::size_t& written) const noexcept override {
-    written = 0;
-    if (key != "answer" || output.size() < sizeof(value)) {
-      return aster::Status::kNotFound;
-    }
-    std::memcpy(output.data(), &value, sizeof(value));
-    written = sizeof(value);
+  aster::Status Get(std::string_view key, aster::ValueView& output) const noexcept override {
+    if (key != "answer") return aster::Status::kNotFound;
+    output = aster::ValueView(value);
     return aster::Status::kOk;
   }
 
@@ -54,26 +58,17 @@ class TestExecutor final : public aster::Executor {
 
 class TestParameters final : public aster::ParameterStore {
  public:
-  aster::Status Get(std::string_view, std::string_view, std::span<std::byte> output,
-                    std::size_t& written) const noexcept override {
-    written = 0;
-    if (output.empty()) {
-      return aster::Status::kCapacityExceeded;
-    }
-    output[0] = value;
-    written = 1;
+  aster::Status Get(std::string_view, aster::ValueView& output,
+                    std::span<std::byte>) const noexcept override {
+    output = aster::ValueView(value);
     return aster::Status::kOk;
   }
-  aster::Status Set(std::string_view, std::string_view, std::span<const std::byte> input,
+  aster::Status Set(std::string_view, aster::ValueView input,
                     const aster::ExecutionContext&) noexcept override {
-    if (input.size() != 1) {
-      return aster::Status::kTypeMismatch;
-    }
-    value = input[0];
-    return aster::Status::kOk;
+    return input.Get(value);
   }
 
-  std::byte value{};
+  std::uint8_t value{};
 };
 
 class TestClock final : public aster::Clock {
@@ -117,6 +112,16 @@ void Increment(void* state, const aster::ExecutionContext&) noexcept {
 }  // namespace
 
 int main() {
+  static_assert(sizeof(aster::LoggerRef) == sizeof(void*));
+  static_assert(sizeof(aster::ExecutorRef) == sizeof(void*));
+  static_assert(sizeof(aster::ChannelRef) == sizeof(void*));
+  static_assert(sizeof(aster::RpcRef) == sizeof(void*));
+  static_assert(sizeof(aster::ConfiguratorRef) == sizeof(void*));
+  static_assert(sizeof(aster::ParameterRef) == sizeof(void*));
+  static_assert(sizeof(aster::ClockRef) == sizeof(void*));
+  static_assert(sizeof(aster::AllocatorRef) == sizeof(void*));
+  static_assert(sizeof(aster::CoreRefOverlay) <= 160);
+
   TestConfigurator configurator;
   TestLogger logger;
   TestExecutor executor;
@@ -126,7 +131,7 @@ int main() {
   TestHardware hardware;
   aster::LocalChannel<1, 1, 8> channel;
   aster::LocalRpc<1, 8, 8> rpc{aster::ExecutorRef(executor)};
-  const aster::CoreRef core({
+  const aster::CoreAdapter core_adapter({
       .configurator = aster::ConfiguratorRef(configurator),
       .logger = aster::LoggerRef(logger),
       .executor = aster::ExecutorRef(executor),
@@ -137,31 +142,62 @@ int main() {
       .allocator = aster::AllocatorRef(allocator),
       .hardware = aster::HardwareManagerRef(hardware),
   });
+  const auto core = core_adapter.ref();
 
   std::uint32_t answer{};
   assert(core.configurator().Get("answer", answer) == aster::Status::kOk);
   assert(answer == 42);
   const aster::ExecutionContext context("caller", aster::ExecutionKind::kThread, 1);
+
+  TestConfigurator instance_configurator;
+  instance_configurator.value = 7;
+  const aster::CoreRefOverlay overlay(core, instance_configurator);
+  answer = 0;
+  assert(overlay.ref().configurator().Get("answer", answer) == aster::Status::kOk);
+  assert(answer == 7);
+  assert(overlay.ref().channel());
+  std::uint64_t now = 99;
+  assert(overlay.ref().clock().NowNs(now) == aster::Status::kOk && now == 123);
+  assert(aster::ClockRef{}.NowNs(now) == aster::Status::kUnavailable && now == 123);
+  const aster_clock_base_t failed_clock{sizeof(aster_clock_base_t), nullptr, nullptr,
+                                        [](void*, std::uint64_t* output) -> aster_status_t {
+                                          *output = 0;
+                                          return ASTER_STATUS_UNAVAILABLE;
+                                        }};
+  assert(aster::ClockRef(&failed_clock).NowNs(now) == aster::Status::kUnavailable && now == 123);
+
+  const auto* logger_service = core.NativeHandle()->logger(core.NativeHandle()->impl);
+  assert(logger_service != nullptr && logger_service->struct_size == sizeof(*logger_service));
+  aster_execution_context_t malformed_context{};
+  assert(logger_service->write(logger_service->impl, ASTER_LOG_LEVEL_INFO, {"invalid", 7},
+                               &malformed_context) == ASTER_STATUS_INVALID_ARGUMENT);
+
   assert(core.logger().Write(aster::LogLevel::kInfo, "ready", context) == aster::Status::kOk);
   assert(logger.last_message == "ready");
   int count{};
-  assert(core.executor().TryPost({Increment, &count}, context) == aster::Status::kOk);
+  assert(core.executor().TryPost(aster::WorkItem::Bind<Increment>(&count), context) ==
+         aster::Status::kOk);
   assert(count == 1);
-  assert(core.clock().domain() == aster::ClockDomain::kSimulated);
-  assert(core.clock().NowNs() == 123);
+  aster::ClockDomain domain{};
+  assert(core.clock().GetDomain(domain) == aster::Status::kOk &&
+         domain == aster::ClockDomain::kSimulated);
+  assert(core.clock().NowNs(now) == aster::Status::kOk && now == 123);
   assert(core.allocator().Allocate(8, 8) != nullptr);
   Device* device{};
   assert(core.hardware().Resolve("device", device) == aster::Status::kOk);
   assert(device == &hardware.device);
 
-  std::array<std::byte, 1> value{std::byte{0x2a}};
-  assert(core.parameter().Set("gain", "uint8", value, context) == aster::Status::kOk);
-  std::array<std::byte, 1> output{};
-  std::size_t written{};
-  assert(core.parameter().Get("gain", "uint8", output, written) == aster::Status::kOk);
-  assert(written == 1 && output[0] == value[0]);
+  assert(core.parameter().Set("gain", std::uint8_t{42}, context) == aster::Status::kOk);
+  std::uint8_t output{};
+  assert(core.parameter().Get("gain", output) == aster::Status::kOk);
+  assert(output == 42);
 
   const aster::CoreRef empty;
   assert(empty.logger().Write(aster::LogLevel::kInfo, "ignored", context) ==
          aster::Status::kUnavailable);
+
+  const aster::CoreAdapter empty_adapter({});
+  const auto* allocator_service =
+      empty_adapter.NativeHandle()->allocator(empty_adapter.NativeHandle()->impl);
+  assert(allocator_service == nullptr);
 }

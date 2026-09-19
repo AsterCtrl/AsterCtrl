@@ -1,0 +1,6 @@
+api_version: aster.dev/v1alpha3
+aster:
+  packages:
+    - {name: unbuilt, path: /package-does-not-exist/unbuilt.so}
+  modules:
+    - {name: example, type: example.Unbuilt, package: unbuilt}

@@ -1,10 +1,11 @@
-#include "aster/rpc_router.hpp"
+#include "aster_runtime/rpc_router.hpp"
 
 #include <array>
 #include <cassert>
 #include <cstddef>
 #include <span>
 
+#include "aster_runtime/core/rpc.hpp"
 #include "test_types.hpp"
 
 namespace {

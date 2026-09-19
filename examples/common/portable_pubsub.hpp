@@ -10,9 +10,11 @@
 #include <cstdint>
 #include <span>
 
-#include "aster/channel.hpp"
-#include "aster/module.hpp"
-#include "aster/runtime.hpp"
+#include "aster_module_cpp_interface/channel.hpp"
+#include "aster_module_cpp_interface/module.hpp"
+#include "aster_runtime/core_adapter.hpp"
+#include "aster_runtime/local_channel.hpp"
+#include "aster_runtime/runtime.hpp"
 
 namespace aster::examples {
 
@@ -65,7 +67,7 @@ struct TypeSupport<examples::Pulse> {
 
 namespace aster::examples {
 
-class PulseSink final : public Module {
+class PulseSink final : public ModuleBase {
  public:
   [[nodiscard]] ModuleInfo Info() const noexcept override {
     return {"pulse-sink", "aster.examples.PulseSink", "portable-pubsub", {0, 2, 0}};
@@ -103,7 +105,7 @@ class PulseSink final : public Module {
   bool received_{};
 };
 
-class PulseSource final : public Module {
+class PulseSource final : public ModuleBase {
  public:
   [[nodiscard]] ModuleInfo Info() const noexcept override {
     return {"pulse-source", "aster.examples.PulseSource", "portable-pubsub", {0, 2, 0}};
@@ -113,10 +115,7 @@ class PulseSource final : public Module {
     return publisher_.Bind(core.channel(), "pulse");
   }
 
-  Status Start() noexcept override {
-    const ExecutionContext context{"portable-pubsub", ExecutionKind::kThread, 1};
-    return publisher_.Publish(Pulse{42}, 1, context);
-  }
+  Status Start() noexcept override { return publisher_.Publish(Pulse{42}); }
 
   void Shutdown() noexcept override {}
 
@@ -128,15 +127,16 @@ template <std::size_t MaximumMessageSize = 32>
 class PortablePubSubComposition {
  public:
   PortablePubSubComposition() noexcept
-      : core_(CoreHandles{.configurator = {},
-                          .logger = {},
-                          .executor = {},
-                          .channel = ChannelRef(channel_),
-                          .rpc = {},
-                          .parameter = {},
-                          .clock = {},
-                          .allocator = {},
-                          .hardware = {}}),
+      : core_adapter_(CoreHandles{.configurator = {},
+                                  .logger = {},
+                                  .executor = {},
+                                  .channel = ChannelRef(channel_),
+                                  .rpc = {},
+                                  .parameter = {},
+                                  .clock = {},
+                                  .allocator = {},
+                                  .hardware = {}}),
+        core_(core_adapter_.ref()),
         modules_{{{&sink_, core_, "sink"}, {&source_, core_, "source"}}},
         registries_{{{&channel_}}},
         runtime_(modules_, registries_) {}
@@ -158,6 +158,7 @@ class PortablePubSubComposition {
   LocalChannel<1, 1, MaximumMessageSize> channel_;
   PulseSink sink_;
   PulseSource source_;
+  CoreAdapter core_adapter_;
   CoreRef core_;
   std::array<ModuleSlot, 2> modules_;
   std::array<RegistrySlot, 1> registries_;

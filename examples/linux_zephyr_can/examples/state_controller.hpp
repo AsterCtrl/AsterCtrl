@@ -7,14 +7,14 @@
 
 #include <cstdint>
 
-#include "aster/channel.hpp"
-#include "aster/module.hpp"
-#include "aster/rpc.hpp"
+#include "aster_module_cpp_interface/channel.hpp"
+#include "aster_module_cpp_interface/module.hpp"
+#include "aster_module_cpp_interface/rpc.hpp"
 #include "imu.pb.hpp"
 
 namespace examples {
 
-class StateController final : public aster::Module {
+class StateController final : public aster::ModuleBase {
  public:
   [[nodiscard]] aster::ModuleInfo Info() const noexcept override {
     return {"state-controller", "examples.StateController", "control", {0, 2, 0}};

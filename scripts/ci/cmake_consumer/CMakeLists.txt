@@ -16,4 +16,3 @@ endif()
 
 add_executable(asterctrl_consumer main.cpp)
 target_link_libraries(asterctrl_consumer PRIVATE aster::core)
-target_compile_features(asterctrl_consumer PRIVATE cxx_std_20)

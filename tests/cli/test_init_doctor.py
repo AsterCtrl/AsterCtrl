@@ -1,33 +1,32 @@
 from __future__ import annotations
 
 import json
+import shlex
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
 import aster_cli.doctor as doctor
 import pytest
 from aster_cli.cli import main
-from aster_cli.graph import resolve_deployment
 from aster_cli.validation import validate_document
 
 REPOSITORY = Path(__file__).resolve().parents[2]
 
 
-def test_init_creates_valid_resolvable_template(tmp_path: Path) -> None:
+def test_init_creates_a_linux_package_without_a_deployment_graph(tmp_path: Path) -> None:
     target = tmp_path / "starter"
 
     assert main(["init", str(target)]) == 0
-    assert (target / "application.yaml").is_file()
-    assert (target / "deployment.sim.yaml").is_file()
-    for path in target.rglob("*.yaml"):
-        if path.name == "bounds.yaml":
-            continue
-        validate_document(path)
-    lock = resolve_deployment(target / "workspace.yaml", target / "deployment.sim.yaml")
-    assert lock["nodes"]["app"]["id"] == 1
-    assert lock["nodes"]["app"]["instances"] == ["source", "sink"]
+    assert (target / "runtime.yaml").is_file()
+    assert not (target / "application.yaml").exists()
+    assert not (target / "workspace.yaml").exists()
+    assert not (target / "src/main.cpp").exists()
+    manifest = validate_document(target / "package.yaml")
+    assert manifest["api_version"] == "aster.dev/v1alpha3"
+    assert manifest["spec"]["modules"][0]["type"] == "demo.Hello"
 
 
 def test_init_refuses_nonempty_directory(tmp_path: Path, capsys) -> None:
@@ -46,22 +45,9 @@ def test_init_refuses_nonempty_directory(tmp_path: Path, capsys) -> None:
 )
 def test_init_template_builds_and_runs(tmp_path: Path) -> None:
     target = tmp_path / "starter"
-    generated = target / "build" / "generated"
-    build = target / "build" / "host"
+    build = target / "build"
 
     assert main(["init", str(target)]) == 0
-    assert (
-        main(
-            [
-                "codegen",
-                str(target / "workspace.yaml"),
-                str(target / "deployment.sim.yaml"),
-                str(generated),
-            ]
-        )
-        == 0
-    )
-    assert (generated / "types" / "state.pb.hpp").is_file()
     subprocess.run(
         [
             "cmake",
@@ -72,12 +58,82 @@ def test_init_template_builds_and_runs(tmp_path: Path) -> None:
             "-G",
             "Ninja",
             f"-DASTERCTRL_SOURCE_DIR={REPOSITORY}",
-            f"-DASTER_GENERATED_DIR={generated / 'nodes' / 'app'}",
+            f"-DPython3_EXECUTABLE={sys.executable}",
         ],
         check=True,
     )
     subprocess.run(["cmake", "--build", str(build), "--parallel", "2"], check=True)
-    subprocess.run([str(build / "aster_app")], check=True)
+    result = subprocess.run(
+        [
+            str(build / "asterctrl/aster_runtime"),
+            "--config",
+            str(build / "runtime.yaml"),
+            "--duration-ms",
+            "20",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert "[hello/lifecycle] hello from AsterCtrl" in result.stderr
+
+    # Exercise the shipped service command against the same Runtime as direct launch.
+    unit = (build / "asterctrl/aster-node@.service").read_text()
+    assert "@CMAKE_INSTALL_FULL_BINDIR@" not in unit
+    command = shlex.split(
+        next(
+            line.removeprefix("ExecStart=")
+            for line in unit.splitlines()
+            if line.startswith("ExecStart=")
+        )
+    )
+    command[0] = str(build / "asterctrl/aster_runtime")
+    command[-1] = str(build / "runtime.yaml")
+    subprocess.run([*command, "--duration-ms", "20"], check=True, capture_output=True, text=True)
+
+    # The installed SDK must provide the same helper, without repository paths.
+    prefix = tmp_path / "install"
+    subprocess.run(
+        ["cmake", "--install", str(build / "asterctrl"), "--prefix", str(prefix)], check=True
+    )
+    consumer = tmp_path / "consumer"
+    assert main(["init", str(consumer)]) == 0
+    (consumer / "aster_cli.py").write_text("raise RuntimeError('Package-owned Python executed')\n")
+    subprocess.run(
+        [
+            "cmake",
+            "-S",
+            str(consumer),
+            "-B",
+            str(consumer / "build"),
+            "-G",
+            "Ninja",
+            f"-DCMAKE_PREFIX_PATH={prefix}",
+            f"-DPython3_EXECUTABLE={sys.executable}",
+        ],
+        check=True,
+        cwd=consumer,
+    )
+    subprocess.run(["cmake", "--build", str(consumer / "build")], check=True)
+    package = consumer / "build/demo.so"
+    original = package.read_bytes()
+    config = consumer / "runtime.yaml"
+    config.write_text(config.read_text().replace("hello from AsterCtrl", "configured at runtime"))
+    subprocess.run(["cmake", "--build", str(consumer / "build")], check=True)
+    assert package.read_bytes() == original
+    result = subprocess.run(
+        [
+            str(prefix / "bin/aster_runtime"),
+            "--config",
+            str(consumer / "build/runtime.yaml"),
+            "--duration-ms",
+            "20",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert "configured at runtime" in result.stderr
 
 
 def test_doctor_json_fails_when_required_cmake_is_missing(monkeypatch, capsys) -> None:

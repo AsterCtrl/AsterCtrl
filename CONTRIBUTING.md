@@ -15,16 +15,24 @@ Commit subjects use `scope: lowercase summary`, for example
 
 ```sh
 uv sync --all-groups
-uv run --package aster-cli pytest tests/cli
+uv run --package aster-cli python -m pytest tests/cli
 cmake --preset host-debug
 cmake --build --preset host-debug
 ctest --preset host-debug
-uv run sphinx-build -W --keep-going -b html document document/_build/html
+cmake -E make_directory build/document/doxygen
+doxygen document/doxygen/Doxyfile
+uv run python -m sphinx -W --keep-going -b html \
+  document/sphinx-en build/document/html
+uv run python -m sphinx -W --keep-going -b html \
+  document/sphinx-cn build/document/html/zh_CN
 ```
 
 Technical documentation under `document/` uses MyST Markdown (`.md`) only.
 Use MyST directives for Sphinx features such as `toctree`; do not add RST
-source files.
+source files. Public C and C++ API comments live with their component headers;
+Doxygen emits XML and Breathe renders it inside both Sphinx language trees.
+User-visible documentation changes should update both English and simplified
+Chinese pages in the same pull request.
 
 Portable code must not include Zephyr, POSIX, ROS, AimRT, XRobot, libxr or STM32
 HAL headers. Put platform behaviour behind an existing Interface and add an

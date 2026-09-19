@@ -1,10 +1,12 @@
+#include "aster_runtime/local_channel.hpp"
+
 #include <array>
 #include <atomic>
 #include <cassert>
 #include <cstdint>
 #include <thread>
 
-#include "aster/channel.hpp"
+#include "aster_module_cpp_interface/channel.hpp"
 #include "test_types.hpp"
 
 namespace {

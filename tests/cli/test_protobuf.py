@@ -105,11 +105,21 @@ def _compile_and_run(tmp_path: Path, source_text: str, *, sanitize: bool = False
         "-I",
         str(tmp_path),
         "-I",
-        str(REPOSITORY / "include"),
+        str(REPOSITORY / "src/interface"),
+        "-I",
+        str(REPOSITORY / "src/runtime"),
     ]
     if sanitize:
         command.extend(["-fsanitize=address,undefined", "-fno-omit-frame-pointer"])
     command.extend([str(source), "-o", str(executable)])
+    if '"aster_runtime/' in source_text:
+        command.extend(
+            [
+                str(REPOSITORY / "src/core/execution.cpp"),
+                str(REPOSITORY / "src/platform/linux/execution.cpp"),
+            ]
+        )
+        command.extend(map(str, sorted((REPOSITORY / "src/core/service").glob("*.cpp"))))
     subprocess.run(command, check=True, capture_output=True, text=True)
     subprocess.run([str(executable)], check=True, capture_output=True, text=True)
 
@@ -214,7 +224,7 @@ def test_generates_fixed_capacity_cpp_and_hash(tmp_path: Path) -> None:
                 "-I",
                 str(tmp_path),
                 "-I",
-                str(REPOSITORY / "include"),
+                str(REPOSITORY / "src/interface"),
                 str(source),
                 "-o",
                 str(tmp_path / "check"),
@@ -304,6 +314,8 @@ def test_generates_rpc_type_support_and_runs_local_rpc_contract(tmp_path: Path) 
         "#include <string_view>\n"
         "#include <type_traits>\n"
         '#include "calculator.pb.hpp"\n'
+        '#include "aster_runtime/core/executor.hpp"\n'
+        '#include "aster_runtime/local_rpc.hpp"\n'
         "class InlineExecutor final : public aster::Executor {\n"
         " public:\n"
         '  std::string_view Name() const noexcept override { return "inline"; }\n'
@@ -911,7 +923,7 @@ def test_orders_cross_package_message_dependencies(tmp_path: Path) -> None:
                 "-I",
                 str(tmp_path),
                 "-I",
-                str(REPOSITORY / "include"),
+                str(REPOSITORY / "src/interface"),
                 str(source),
                 "-o",
                 str(tmp_path / "check"),

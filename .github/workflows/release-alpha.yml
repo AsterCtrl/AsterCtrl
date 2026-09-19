@@ -51,7 +51,7 @@ jobs:
           Clang 18 format and tidy
           ASan and UBSan
           TSan
-          Sphinx/MyST documentation
+          Doxygen and bilingual Sphinx documentation
           Dependency pins and licenses
           Secret scan
           Source SBOM
@@ -133,16 +133,11 @@ jobs:
           uv sync --frozen --all-groups
       - name: Re-run graph and bounded protobuf acceptance
         run: |
-          uv run --package aster-cli pytest tests/cli
+          uv run --package aster-cli python -m pytest tests/cli
           uv run python scripts/ci/check_examples.py
       - name: Generate deterministic release locks
         run: |
           mkdir -p build/metadata/locks
-          uv run aster package lock examples/linux_local/workspace.yaml --release --output build/metadata/locks/linux-local.package.lock.yaml
-          uv run aster package lock examples/linux_zephyr_can/workspace.yaml --release --output build/metadata/locks/linux-zephyr-can.package.lock.yaml
-          uv run aster package lock examples/linux_zephyr_usb_cdc/workspace.yaml --release --output build/metadata/locks/linux-zephyr-usb-cdc.package.lock.yaml
-          uv run aster package lock examples/provider_swap/workspace.sim.yaml --release --output build/metadata/locks/provider-sim.package.lock.yaml
-          uv run aster package lock examples/provider_swap/workspace.real.yaml --release --output build/metadata/locks/provider-real.package.lock.yaml
           uv run aster resolve examples/linux_local/workspace.yaml examples/linux_local/deployment.yaml --release --output build/metadata/locks/linux-local.deployment.lock.yaml
           uv run aster resolve examples/linux_zephyr_can/workspace.yaml examples/linux_zephyr_can/deployment.yaml --release --output build/metadata/locks/linux-zephyr-can.deployment.lock.yaml
           uv run aster resolve examples/linux_zephyr_usb_cdc/workspace.yaml examples/linux_zephyr_usb_cdc/deployment.yaml --release --output build/metadata/locks/linux-zephyr-usb-cdc.deployment.lock.yaml
@@ -150,11 +145,14 @@ jobs:
           uv run aster resolve examples/provider_swap/workspace.real.yaml examples/provider_swap/deployment.real.yaml --release --output build/metadata/locks/provider-real.deployment.lock.yaml
       - name: Package release metadata
         run: |
-          cp -R schemas build/metadata/
+          cp -R tools/aster_cli/src/aster_cli/schemas build/metadata/
           cp CHANGELOG.md build/metadata/
           cp scripts/ci/ROLLBACK.md build/metadata/
           cp scripts/ci/alpha-release-notes.md build/metadata/RELEASE_NOTES.md
-          cp -R document/development build/metadata/development-log
+          mkdir -p build/metadata/development-log
+          cp -R document/sphinx-en/development build/metadata/development-log/en
+          cp -R document/sphinx-cn/development build/metadata/development-log/cn
+          cp cmake/GetYamlCpp.cmake build/metadata/
           cp west.yml uv.lock build/metadata/
           tar -C build -czf "build/asterctrl-${GITHUB_REF_NAME}-metadata.tar.gz" metadata
       - name: Upload release metadata

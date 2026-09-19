@@ -18,7 +18,10 @@ SUFFIXES = {".h", ".hh", ".hpp", ".c", ".cc", ".cpp", ".cxx"}
 
 def scan(root: Path) -> list[str]:
     violations: list[str] = []
-    portable_roots = (root / "include" / "aster", root / "src" / "core")
+    portable_roots = (
+        root / "src/interface/aster_module_cpp_interface",
+        root / "src/core",
+    )
     excluded_parts = {"platform", "transport", "transports"}
     for source_root in portable_roots:
         if not source_root.exists():

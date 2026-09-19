@@ -3,8 +3,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include "aster/runtime.hpp"
-#include "aster/sim/runtime_services.hpp"
+#include "aster_runtime/core_adapter.hpp"
+#include "aster_runtime/runtime.hpp"
+#include "aster_runtime/sim/runtime_services.hpp"
 #include "composition.generated.hpp"
 
 int main() {
@@ -14,7 +15,7 @@ int main() {
   if (!aster::IsOk(clock.Set(42'000U))) {
     return 1;
   }
-  const aster::CoreRef core(aster::CoreHandles{
+  const aster::CoreAdapter core_adapter(aster::CoreHandles{
       .configurator = {},
       .logger = {},
       .executor = {},
@@ -25,6 +26,7 @@ int main() {
       .allocator = {},
       .hardware = {},
   });
+  const auto core = core_adapter.ref();
   aster::generated::Composition composition(core);
   aster::Runtime runtime(composition.Modules());
   if (!aster::IsOk(runtime.Initialize()) || !aster::IsOk(runtime.Start())) {

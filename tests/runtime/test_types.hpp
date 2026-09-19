@@ -4,8 +4,8 @@
 #include <cstdint>
 #include <span>
 
-#include "aster/rpc.hpp"
-#include "aster/type_support.hpp"
+#include "aster_module_cpp_interface/rpc.hpp"
+#include "aster_module_cpp_interface/type_support.hpp"
 
 namespace test {
 

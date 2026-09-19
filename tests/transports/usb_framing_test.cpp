@@ -3,7 +3,7 @@
 #include <cassert>
 #include <cstddef>
 
-#include "aster/transport/usb/framing.hpp"
+#include "aster_runtime/transport/usb/framing.hpp"
 
 namespace {
 

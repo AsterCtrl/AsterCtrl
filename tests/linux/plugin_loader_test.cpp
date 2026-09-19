@@ -1,4 +1,4 @@
-#include "aster/platform/linux/plugin_loader.hpp"
+#include "aster_runtime/platform/linux/plugin_loader.hpp"
 
 #include <unistd.h>
 
@@ -10,7 +10,18 @@
 #include <fstream>
 #include <string>
 
-#include "aster/runtime.hpp"
+#include "aster_runtime/core/allocator.hpp"
+#include "aster_runtime/core/clock.hpp"
+#include "aster_runtime/core/configurator.hpp"
+#include "aster_runtime/core/executor.hpp"
+#include "aster_runtime/core/hardware.hpp"
+#include "aster_runtime/core/logger.hpp"
+#include "aster_runtime/core/parameter.hpp"
+#include "aster_runtime/core_adapter.hpp"
+#include "aster_runtime/local_channel.hpp"
+#include "aster_runtime/local_rpc.hpp"
+#include "aster_runtime/platform/linux/supervisor.hpp"
+#include "aster_runtime/runtime.hpp"
 
 #ifndef ASTER_TEST_PLUGIN_PATH
 #error ASTER_TEST_PLUGIN_PATH must be defined
@@ -20,22 +31,17 @@
 #error ASTER_INVALID_PLUGIN_PATH must be defined
 #endif
 
+#ifndef ASTER_TEST_CPP_PACKAGE_PATH
+#error ASTER_TEST_CPP_PACKAGE_PATH must be defined
+#endif
+
 namespace {
 
 class TestConfigurator final : public aster::Configurator {
  public:
-  aster::Status Get(std::string_view key, std::span<std::byte> output,
-                    std::size_t& written) const noexcept override {
-    written = 0;
-    if (key != "answer") {
-      return aster::Status::kNotFound;
-    }
-    constexpr std::uint32_t answer = 42;
-    if (output.size() < sizeof(answer)) {
-      return aster::Status::kCapacityExceeded;
-    }
-    std::memcpy(output.data(), &answer, sizeof(answer));
-    written = sizeof(answer);
+  aster::Status Get(std::string_view key, aster::ValueView& output) const noexcept override {
+    if (key != "answer") return aster::Status::kNotFound;
+    output = aster::ValueView(std::uint32_t{42});
     return aster::Status::kOk;
   }
 };
@@ -43,14 +49,18 @@ class TestConfigurator final : public aster::Configurator {
 class TestLogger final : public aster::Logger {
  public:
   aster::Status Write(aster::LogLevel level, std::string_view message,
-                      const aster::ExecutionContext&) noexcept override {
+                      const aster::ExecutionContext& caller) noexcept override {
     last_level = level;
     last_message.assign(message);
+    last_executor.assign(caller.executor_name());
+    last_timestamp = caller.timestamp_ns();
     return aster::Status::kOk;
   }
 
   aster::LogLevel last_level{aster::LogLevel::kTrace};
   std::string last_message;
+  std::string last_executor;
+  std::uint64_t last_timestamp{};
 };
 
 class TestClock final : public aster::Clock {
@@ -78,12 +88,11 @@ class TestExecutor final : public aster::Executor {
 
 class TestParameters final : public aster::ParameterStore {
  public:
-  aster::Status Get(std::string_view, std::string_view, std::span<std::byte>,
-                    std::size_t& written) const noexcept override {
-    written = 0;
+  aster::Status Get(std::string_view, aster::ValueView&,
+                    std::span<std::byte>) const noexcept override {
     return aster::Status::kNotFound;
   }
-  aster::Status Set(std::string_view, std::string_view, std::span<const std::byte>,
+  aster::Status Set(std::string_view, aster::ValueView,
                     const aster::ExecutionContext&) noexcept override {
     return aster::Status::kNotFound;
   }
@@ -126,7 +135,7 @@ int main() {
   TestHardware hardware;
   aster::LocalChannel<1, 1, 1> channel;
   aster::LocalRpc<1, 4, 4, 8> rpc{aster::ExecutorRef(executor)};
-  const aster::CoreRef core({
+  const aster::CoreAdapter core_adapter({
       .configurator = aster::ConfiguratorRef(configurator),
       .logger = aster::LoggerRef(logger),
       .executor = aster::ExecutorRef(executor),
@@ -137,13 +146,19 @@ int main() {
       .allocator = aster::AllocatorRef(allocator),
       .hardware = aster::HardwareManagerRef(hardware),
   });
+  const auto core = core_adapter.ref();
   aster::platform::linux::PluginLoader loader;
-  assert(loader.Open(ASTER_TEST_PLUGIN_PATH, core) == aster::Status::kOk);
+  assert(loader.Open(ASTER_TEST_PLUGIN_PATH) == aster::Status::kOk);
   assert(loader.is_open());
   assert(loader.name() == "test-plugin");
   assert(loader.version() == "1.0.0");
+  assert(loader.module_names().size() == 1);
+  assert(loader.module_names()[0] == "test.Module");
+  assert(loader.modules().empty());
+  assert(loader.CreateModule("missing.Module", "missing", core) == aster::Status::kNotFound);
+  assert(loader.CreateModule("test.Module", "loaded", core) == aster::Status::kOk);
   assert(loader.modules().size() == 1);
-  assert(loader.modules()[0].module->Info().name == "loaded");
+  assert(loader.modules()[0].module.Info().name == "loaded");
 
   std::array<aster::RegistrySlot, 2> registries{{{&channel}, {&rpc}}};
   aster::Runtime runtime(loader.modules(), registries);
@@ -162,11 +177,57 @@ int main() {
   std::ifstream input(trace);
   std::string events;
   input >> events;
-  assert(events == "ITSBP");
+  assert(events == "ITSB");
+
+  aster::platform::linux::PluginLoader generated;
+  assert(generated.Open(ASTER_TEST_CPP_PACKAGE_PATH) == aster::Status::kOk);
+  assert(generated.name() == "generated-package");
+  assert(generated.version() == "1.2.3");
+  assert(generated.module_names().size() == 3);
+  assert(generated.module_names()[0] == "test.GeneratedModule");
+  assert(generated.CreateModule("test.GeneratedModule", "generated-a", core) == aster::Status::kOk);
+  assert(generated.CreateModule("test.GeneratedModule", "generated-b", core) == aster::Status::kOk);
+  assert(generated.CreateModule("test.GeneratedModule", "generated-b", core) ==
+         aster::Status::kAlreadyExists);
+  assert(generated.modules().size() == 2);
+  assert(generated.modules()[0].module.Info().type == "test.GeneratedModule");
+  assert(generated.modules()[1].module.Info().type == "test.GeneratedModule");
+  assert(generated.CreateModule("test.WrongType", "wrong-type", core) ==
+         aster::Status::kTypeMismatch);
+  assert(generated.modules().size() == 2);
+  aster::Runtime generated_runtime(generated.modules());
+  assert(generated_runtime.Initialize() == aster::Status::kOk);
+  assert(logger.last_message == "generated initialized");
+  assert(logger.last_executor == "lifecycle");
+  assert(logger.last_timestamp == 123);
+  assert(generated_runtime.Start() == aster::Status::kOk);
+  generated_runtime.Shutdown();
+  generated.Close();
+
+  // The same exported type can have multiple instances with distinct CoreRefs.
+  // Observe the logs emitted by the loaded Modules, not the loader's storage.
+  {
+    TestLogger first_logger;
+    TestLogger second_logger;
+    const aster::CoreAdapter first_core(
+        {.logger = aster::LoggerRef(first_logger), .instance_name = "first"});
+    const aster::CoreAdapter second_core(
+        {.logger = aster::LoggerRef(second_logger), .instance_name = "second"});
+    const std::array<aster::platform::linux::PackageModule, 2> instances{{
+        {"test.GeneratedModule", "first", first_core.ref()},
+        {"test.GeneratedModule", "second", second_core.ref()},
+    }};
+    aster::platform::linux::Supervisor supervisor(core, {});
+    assert(supervisor.LoadPackage(ASTER_TEST_CPP_PACKAGE_PATH, instances) == aster::Status::kOk);
+    assert(supervisor.Start({}) == aster::Status::kOk);
+    assert(first_logger.last_message == "first");
+    assert(second_logger.last_message == "second");
+    supervisor.Shutdown();
+  }
 
   aster::platform::linux::PluginLoader invalid;
-  assert(invalid.Open(ASTER_INVALID_PLUGIN_PATH, {}) == aster::Status::kVersionMismatch);
+  assert(invalid.Open(ASTER_INVALID_PLUGIN_PATH) == aster::Status::kVersionMismatch);
   assert(!invalid.is_open());
-  assert(invalid.Open("/does/not/exist/libaster.so", {}) == aster::Status::kNotFound);
+  assert(invalid.Open("/does/not/exist/libaster.so") == aster::Status::kNotFound);
   std::filesystem::remove(trace, error);
 }

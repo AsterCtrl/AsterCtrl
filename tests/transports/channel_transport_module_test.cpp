@@ -1,4 +1,4 @@
-#include "aster/transport/channel_transport_module.hpp"
+#include "aster_runtime/transport/channel_transport_module.hpp"
 
 #include <array>
 #include <cassert>
@@ -7,8 +7,12 @@
 #include <span>
 #include <string_view>
 
-#include "aster/channel.hpp"
-#include "aster/runtime.hpp"
+#include "aster_module_cpp_interface/channel.hpp"
+#include "aster_runtime/core/clock.hpp"
+#include "aster_runtime/core/executor.hpp"
+#include "aster_runtime/core_adapter.hpp"
+#include "aster_runtime/local_channel.hpp"
+#include "aster_runtime/runtime.hpp"
 
 namespace {
 
@@ -111,14 +115,14 @@ class TestTransport final : public aster::transport::Transport {
   bool started_{};
 };
 
-class SinkModule final : public aster::Module {
+class SinkModule final : public aster::ModuleBase {
  public:
   [[nodiscard]] aster::ModuleInfo Info() const noexcept override {
     return {"sink", "example.Sink", "tests", {0, 1, 0}};
   }
 
   aster::Status Initialize(aster::CoreRef core) noexcept override {
-    return core.channel().RegisterSubscriber(Descriptor(), Receive, this);
+    return core.channel().RegisterSubscriber<Receive>(Descriptor(), this);
   }
   aster::Status Start() noexcept override { return aster::Status::kOk; }
   void Shutdown() noexcept override {}
@@ -147,7 +151,8 @@ void OwnsTransportLifecycleAndRoutesIngress() {
   handles.executor = aster::ExecutorRef(executor);
   handles.channel = aster::ChannelRef(channel);
   handles.clock = aster::ClockRef(clock);
-  const aster::CoreRef core(handles);
+  const aster::CoreAdapter core_adapter(handles);
+  const auto core = core_adapter.ref();
   std::array modules{aster::ModuleSlot{&transport_module, core, "usb0"},
                      aster::ModuleSlot{&sink, core, "sink"}};
   std::array registries{aster::RegistrySlot{&channel}};

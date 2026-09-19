@@ -7,13 +7,13 @@
 
 #include <cstdint>
 
-#include "aster/channel.hpp"
-#include "aster/module.hpp"
+#include "aster_module_cpp_interface/channel.hpp"
+#include "aster_module_cpp_interface/module.hpp"
 #include "state.pb.hpp"
 
 namespace examples {
 
-class StateSink final : public aster::Module {
+class StateSink final : public aster::ModuleBase {
  public:
   [[nodiscard]] aster::ModuleInfo Info() const noexcept override {
     return {"state-sink", "examples.StateSink", "demo", {0, 2, 0}};

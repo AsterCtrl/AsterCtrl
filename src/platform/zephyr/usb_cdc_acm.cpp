@@ -1,4 +1,4 @@
-#include "aster/platform/zephyr/usb_cdc_acm.hpp"
+#include "aster_runtime/platform/zephyr/usb_cdc_acm.hpp"
 
 #include <zephyr/drivers/uart.h>
 

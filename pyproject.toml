@@ -6,6 +6,7 @@ dependencies = ["aster-cli"]
 
 [dependency-groups]
 dev = [
+  "breathe==4.36.0",
   "furo==2025.7.19",
   "myst-parser==4.0.1",
   "pip-licenses==5.0.0",

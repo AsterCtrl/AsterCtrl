@@ -1,4 +1,4 @@
-#include "aster/platform/zephyr/can_device.hpp"
+#include "aster_runtime/platform/zephyr/can_device.hpp"
 
 #include <cerrno>
 #include <cstddef>

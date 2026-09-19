@@ -141,11 +141,12 @@ def _zephyr_fixed_ram(capacities: dict[str, int]) -> int:
     message_size = capacities["maximum_message_size"]
     return (
         capacities["arena_bytes"]
+        + 512  # canonical Core Adapter and service tables
         + 512  # executor object, thread control block, semaphores, and message queue
         + capacities["executor_queue_depth"] * 32
         + capacities["can_tx_queue_depth"] * 32
         + capacities["transport_storage_bytes"]
-        + modules * 32  # ModuleSlot storage
+        + modules * 192  # ModuleSlot plus the per-Instance Configurator Core overlay
         + (modules + 3) * 8  # RegistrySlot storage
         + channels * (96 + capacities["subscriber_capacity"] * 16)  # topics and subscribers
         + rpc_services * 160  # service descriptors and callbacks

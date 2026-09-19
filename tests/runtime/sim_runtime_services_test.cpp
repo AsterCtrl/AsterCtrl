@@ -1,6 +1,6 @@
 #include <cassert>
 
-#include "aster/sim/runtime_services.hpp"
+#include "aster_runtime/sim/runtime_services.hpp"
 
 int main() {
   aster::sim::ManualClock clock;

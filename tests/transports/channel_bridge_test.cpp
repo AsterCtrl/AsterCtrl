@@ -1,4 +1,4 @@
-#include "aster/transport/channel_bridge.hpp"
+#include "aster_runtime/transport/channel_bridge.hpp"
 
 #include <algorithm>
 #include <array>
@@ -6,8 +6,9 @@
 #include <cstddef>
 #include <cstdint>
 
-#include "aster/channel.hpp"
-#include "aster/transport/local.hpp"
+#include "aster_module_cpp_interface/channel.hpp"
+#include "aster_runtime/local_channel.hpp"
+#include "aster_runtime/transport/local.hpp"
 
 namespace {
 
@@ -48,7 +49,8 @@ void BridgesChannelThroughTheTransportInterface() {
   assert(source.RegisterPublisher(Descriptor()) == aster::Status::kOk);
   assert(egress.Bind(aster::ChannelRef(source), Descriptor()) == aster::Status::kOk);
   assert(ingress.Bind(aster::ChannelRef(destination), router, Descriptor()) == aster::Status::kOk);
-  assert(destination.RegisterSubscriber(Descriptor(), Receive, &capture) == aster::Status::kOk);
+  assert(aster::ChannelRef(destination).RegisterSubscriber<Receive>(Descriptor(), &capture) ==
+         aster::Status::kOk);
   assert(source.Seal() == aster::Status::kOk);
   assert(destination.Seal() == aster::Status::kOk);
   assert(router.Seal() == aster::Status::kOk);
@@ -76,7 +78,8 @@ void RejectsExpiredPacketsWithoutPublishingThem() {
   assert(source.RegisterPublisher(Descriptor()) == aster::Status::kOk);
   assert(egress.Bind(aster::ChannelRef(source), Descriptor()) == aster::Status::kOk);
   assert(ingress.Bind(aster::ChannelRef(destination), router, Descriptor()) == aster::Status::kOk);
-  assert(destination.RegisterSubscriber(Descriptor(), Receive, &capture) == aster::Status::kOk);
+  assert(aster::ChannelRef(destination).RegisterSubscriber<Receive>(Descriptor(), &capture) ==
+         aster::Status::kOk);
   assert(source.Seal() == aster::Status::kOk);
   assert(destination.Seal() == aster::Status::kOk);
   assert(router.Seal() == aster::Status::kOk);
