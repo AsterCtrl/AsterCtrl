@@ -62,7 +62,7 @@ class QueueingModule final : public aster::ModuleBase {
   aster::Status Initialize(aster::CoreRef core) noexcept override {
     core_ = core;
     const aster::ExecutionContext caller{"initialize", aster::ExecutionKind::kThread, 0};
-    return core_.executor().TryPost({RecordExecutorCallback, &probe_}, caller);
+    return core_.executor().TryPost(aster::WorkItem::Bind<RecordExecutorCallback>(&probe_), caller);
   }
 
   aster::Status Start() noexcept override {
@@ -70,7 +70,7 @@ class QueueingModule final : public aster::ModuleBase {
       return aster::Status::kInternal;
     }
     const aster::ExecutionContext caller{"start", aster::ExecutionKind::kThread, 0};
-    return core_.executor().TryPost({RecordExecutorCallback, &probe_}, caller);
+    return core_.executor().TryPost(aster::WorkItem::Bind<RecordExecutorCallback>(&probe_), caller);
   }
 
   void Shutdown() noexcept override {
@@ -104,7 +104,8 @@ class GateObserverModule final : public aster::ModuleBase {
     }
     if (test_isr_capacity_) {
       const aster::ExecutionContext interrupt{"isr", aster::ExecutionKind::kInterrupt, 0};
-      capacity_status_ = core_.executor().TryPost({RecordExecutorCallback, &probe_}, interrupt);
+      capacity_status_ = core_.executor().TryPost(
+          aster::WorkItem::Bind<RecordExecutorCallback>(&probe_), interrupt);
       if (capacity_status_ != aster::Status::kCapacityExceeded) {
         return aster::Status::kInternal;
       }
@@ -175,9 +176,14 @@ bool RunExecutorLifecycleSmoke() {
   }
 
   const aster::ExecutionContext interrupt{"isr", aster::ExecutionKind::kInterrupt, 0};
-  const auto deadline = successful.core().clock().NowNs() + 1'000'000'000ULL;
-  if (successful.core().executor().TryPostAt(deadline, {RecordExecutorCallback, &success_probe},
-                                             interrupt) != aster::Status::kOk) {
+  std::uint64_t now_ns{};
+  if (successful.core().clock().NowNs(now_ns) != aster::Status::kOk) {
+    return false;
+  }
+  const auto deadline = now_ns + 1'000'000'000ULL;
+  if (successful.core().executor().TryPostAt(
+          deadline, aster::WorkItem::Bind<RecordExecutorCallback>(&success_probe), interrupt) !=
+      aster::Status::kOk) {
     return false;
   }
   successful.Shutdown();
@@ -185,7 +191,8 @@ bool RunExecutorLifecycleSmoke() {
       success_probe.callbacks.load(std::memory_order_acquire) != 2 ||
       success_probe.callbacks_after_shutdown.load(std::memory_order_acquire) != 0 ||
       success_probe.shutdowns.load(std::memory_order_acquire) != 2 ||
-      successful.core().executor().TryPost({RecordExecutorCallback, &success_probe}, interrupt) !=
+      successful.core().executor().TryPost(
+          aster::WorkItem::Bind<RecordExecutorCallback>(&success_probe), interrupt) !=
           aster::Status::kInvalidState) {
     return false;
   }
